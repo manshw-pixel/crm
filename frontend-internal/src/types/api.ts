@@ -29,6 +29,7 @@ export interface AccountOut {
   employee_count: number | null
   ticket_trend: number | null
   csm_sentiment: number | null
+  notes: string | null
   created_at: string
   updated_at: string
 }
