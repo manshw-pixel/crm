@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from typing import Optional
 from decimal import Decimal
 from datetime import date, datetime
@@ -16,6 +16,15 @@ class AccountCreate(BaseModel):
     industry: Optional[str] = None
     employee_count: Optional[int] = None
     notes: Optional[str] = None
+    ticket_trend: Optional[int] = None
+    csm_sentiment: Optional[int] = None
+
+    @field_validator("ticket_trend", "csm_sentiment", mode="before")
+    @classmethod
+    def validate_sentiment_range(cls, v):
+        if v is not None and not (1 <= v <= 5):
+            raise ValueError("Must be between 1 and 5")
+        return v
 
 class AccountUpdate(BaseModel):
     name: Optional[str] = None
@@ -31,6 +40,15 @@ class AccountUpdate(BaseModel):
     industry: Optional[str] = None
     employee_count: Optional[int] = None
     notes: Optional[str] = None
+    ticket_trend: Optional[int] = None
+    csm_sentiment: Optional[int] = None
+
+    @field_validator("ticket_trend", "csm_sentiment", mode="before")
+    @classmethod
+    def validate_sentiment_range(cls, v):
+        if v is not None and not (1 <= v <= 5):
+            raise ValueError("Must be between 1 and 5")
+        return v
 
 class AccountOut(BaseModel):
     id: int
@@ -44,6 +62,8 @@ class AccountOut(BaseModel):
     health_score: int
     churn_risk_tier: ChurnRiskTier
     industry: Optional[str] = None
+    ticket_trend: Optional[int] = None
+    csm_sentiment: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 
