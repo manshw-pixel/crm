@@ -13,5 +13,5 @@ def test_create_and_decode_access_token():
 
 def test_decode_token_invalid_raises():
     import pytest
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="Invalid token"):
         decode_token("not.a.valid.token")
