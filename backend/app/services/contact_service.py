@@ -18,7 +18,7 @@ async def create_contact(db: AsyncSession, account_id: int, data: ContactCreate)
     return contact
 
 async def update_contact(db: AsyncSession, contact: Contact, data: ContactUpdate) -> Contact:
-    for field, value in data.model_dump(exclude_none=True).items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(contact, field, value)
     await db.commit()
     await db.refresh(contact)

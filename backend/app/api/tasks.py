@@ -24,6 +24,10 @@ async def create_task(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    from app.services import account_service
+    account = await account_service.get_account(db, body.account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
     return await task_service.create_task(db, body)
 
 @router.patch("/{task_id}", response_model=TaskOut)

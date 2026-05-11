@@ -59,4 +59,4 @@ async def test_update_account(client, csm_user):
 @pytest.mark.asyncio
 async def test_unauthenticated_returns_403(client):
     resp = await client.get("/accounts")
-    assert resp.status_code in (401, 403)
+    assert resp.status_code in (401, 403)  # HTTPBearer may return 401 or 403 when Authorization header is missing

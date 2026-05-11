@@ -30,7 +30,7 @@ async def create_task(db: AsyncSession, data: TaskCreate) -> Task:
     return task
 
 async def update_task(db: AsyncSession, task: Task, data: TaskUpdate) -> Task:
-    for field, value in data.model_dump(exclude_none=True).items():
+    for field, value in data.model_dump(exclude_unset=True).items():
         setattr(task, field, value)
     await db.commit()
     await db.refresh(task)
