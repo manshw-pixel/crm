@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 from datetime import datetime
 
@@ -10,7 +10,7 @@ class ScoringConfigOut(BaseModel):
     model_config = {"from_attributes": True}
 
 class ScoringConfigUpdate(BaseModel):
-    weight: float
+    weight: float = Field(ge=0.0, le=1.0)
 
 class HealthScoreOut(BaseModel):
     account_id: int

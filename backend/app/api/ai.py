@@ -6,13 +6,10 @@ from app.core.database import get_db
 from app.core.dependencies import require_roles
 from app.models.user import UserRole
 from app.schemas.ai import TrainResponse, ModelInfoResponse, NarrativeResponse
-from app.ai.churn_engine import ChurnEngine
-from app.ai.ml_model import MLModel
+from app.ai.churn_engine import ChurnEngine, get_ml_model
 
 router = APIRouter(prefix="/ai", tags=["ai"])
 
-_MODELS_DIR = os.path.join(os.path.dirname(__file__), "../../ml_models")
-_ml_model = MLModel(models_dir=_MODELS_DIR)
 _engine = ChurnEngine()
 
 @router.post("/narrative/{account_id}", response_model=NarrativeResponse)
@@ -36,11 +33,14 @@ async def train_model(
     current_user=Depends(require_roles(UserRole.admin)),
 ):
     import tempfile, shutil
+    ml_model = get_ml_model()
+    if ml_model is None:
+        raise HTTPException(status_code=503, detail="ML model not available")
     with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
         shutil.copyfileobj(training_data.file, tmp)
         tmp_path = tmp.name
     try:
-        result = _ml_model.train(tmp_path)
+        result = ml_model.train(tmp_path)
     except ValueError as e:
         raise HTTPException(status_code=422, detail=str(e))
     finally:
@@ -51,4 +51,7 @@ async def train_model(
 async def model_info(
     current_user=Depends(require_roles(UserRole.csm, UserRole.admin)),
 ):
-    return ModelInfoResponse(**_ml_model.model_info())
+    ml_model = get_ml_model()
+    if ml_model is None:
+        return ModelInfoResponse(model_loaded=False)
+    return ModelInfoResponse(**ml_model.model_info())

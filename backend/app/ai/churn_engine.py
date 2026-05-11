@@ -23,6 +23,11 @@ except Exception as e:
     _ml_model = None
 
 
+def get_ml_model():
+    """Return the shared MLModel instance (may be None if import failed)."""
+    return _ml_model
+
+
 class ChurnEngine:
     async def run(self, account_id: int, db: AsyncSession, force_narrative: bool = False) -> dict | None:
         account = await db.get(Account, account_id)
@@ -35,7 +40,8 @@ class ChurnEngine:
 
         ml_result = None
         if _ml_model:
-            features = self._build_ml_features(account, signals)
+            avg_30, avg_60, avg_90 = await self._compute_score_averages(account_id, db)
+            features = self._build_ml_features(account, signals, avg_30, avg_60, avg_90)
             ml_result = _ml_model.predict(features)
 
         if ml_result:
@@ -59,7 +65,7 @@ class ChurnEngine:
                 signal_scores=rule_result.signal_scores,
                 weights=weights,
                 ml_result=ml_result,
-                open_tasks=signals.open_high_priority_tasks,
+                open_tasks=await self._count_open_tasks(account_id, db),
                 high_priority_tasks=signals.open_high_priority_tasks,
                 nps_scores=nps_scores,
                 notes=notes,
@@ -148,7 +154,33 @@ class ChurnEngine:
             csm_sentiment=account.csm_sentiment or 3,
         )
 
-    def _build_ml_features(self, account: Account, signals: SignalValues) -> dict:
+    async def _compute_score_averages(self, account_id: int, db: AsyncSession) -> tuple[float, float, float]:
+        from datetime import date
+        now = datetime.now(timezone.utc)
+        async def avg_for_days(days: int) -> float:
+            cutoff = now - timedelta(days=days)
+            result = await db.execute(
+                select(func.avg(HealthScoreLog.score))
+                .where(HealthScoreLog.account_id == account_id, HealthScoreLog.created_at >= cutoff)
+            )
+            val = result.scalar_one_or_none()
+            return float(val) if val is not None else 50.0
+        avg_30 = await avg_for_days(30)
+        avg_60 = await avg_for_days(60)
+        avg_90 = await avg_for_days(90)
+        return avg_30, avg_60, avg_90
+
+    async def _count_open_tasks(self, account_id: int, db: AsyncSession) -> int:
+        from app.models.task import Task, TaskStatus
+        result = await db.execute(
+            select(func.count()).where(
+                Task.account_id == account_id,
+                Task.status == TaskStatus.open,
+            )
+        )
+        return result.scalar_one()
+
+    def _build_ml_features(self, account: Account, signals: SignalValues, avg_30: float = 50.0, avg_60: float = 50.0, avg_90: float = 50.0) -> dict:
         tier_map = {"smb": 0, "mid_market": 1, "enterprise": 2}
         arr = float(account.arr) if account.arr else 0
         arr_band = 0 if arr < 50_000 else (1 if arr < 200_000 else 2)
@@ -162,9 +194,9 @@ class ChurnEngine:
             "account_age_days": 365,
             "tier_encoded": tier_map.get(account.tier.value, 0),
             "arr_band_encoded": arr_band,
-            "avg_score_30d": account.health_score or 50,
-            "avg_score_60d": account.health_score or 50,
-            "avg_score_90d": account.health_score or 50,
+            "avg_score_30d": avg_30,
+            "avg_score_60d": avg_60,
+            "avg_score_90d": avg_90,
         }
 
     async def _gather_narrative_context(self, account_id: int, db: AsyncSession):
