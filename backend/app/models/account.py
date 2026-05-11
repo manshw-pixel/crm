@@ -34,3 +34,5 @@ class Account(Base, TimestampMixin):
     industry: Mapped[str | None] = mapped_column(String(255), nullable=True)
     employee_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    ticket_trend: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1–5 manual entry
+    csm_sentiment: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 1–5 manual entry

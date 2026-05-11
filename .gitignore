@@ -10,3 +10,5 @@ build/
 ml_models/
 *.sqlite3
 *.log
+backend/ml_models/*.joblib
+backend/ml_models/model_meta.json

@@ -10,3 +10,4 @@ from app.models.success_plan import SuccessPlan, Milestone, MilestoneComment, Pl
 from app.models.playbook import PlaybookTemplate, PlaybookRun, PlaybookTriggerType, PlaybookRunStatus
 from app.models.opportunity import Opportunity, OpportunityType, OpportunityStage
 from app.models.survey import Survey, SurveyType
+from app.models.scoring_config import ScoringConfig, DEFAULT_WEIGHTS, SIGNAL_NAMES
