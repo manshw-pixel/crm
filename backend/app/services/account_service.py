@@ -2,6 +2,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.models.account import Account
 from app.schemas.account import AccountCreate, AccountUpdate
+import logging
+
+logger = logging.getLogger(__name__)
 
 async def list_accounts(
     db: AsyncSession,
@@ -36,4 +39,11 @@ async def update_account(db: AsyncSession, account: Account, data: AccountUpdate
         setattr(account, field, value)
     await db.commit()
     await db.refresh(account)
+    # Trigger health recalculation after update (best-effort)
+    try:
+        from app.services.scoring_service import recalculate_health
+        await recalculate_health(account.id, db, force_narrative=False)
+        await db.refresh(account)
+    except Exception as e:
+        logger.warning(f"Health recalculation failed for account {account.id}: {e}")
     return account
