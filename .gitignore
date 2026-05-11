@@ -1,0 +1,11 @@
+backend/.env
+backend/.env.local
+**/__pycache__/
+**/.pytest_cache/
+*.pyc
+*.egg-info/
+dist/
+build/
+.DS_Store
+ml_models/
+*.sqlite3
