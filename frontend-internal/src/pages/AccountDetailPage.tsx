@@ -98,10 +98,22 @@ export default function AccountDetailPage() {
 /* ── Overview Tab ─────────────────────────────────────────── */
 
 function OverviewTab({ accountId }: { accountId: number }) {
-  const { data: account, refetch } = useAccount(accountId)
+  const { data: account } = useAccount(accountId)
   const updateAccount = useUpdateAccount(accountId)
   const [editing, setEditing] = useState(false)
-  const { register, handleSubmit, reset } = useForm<AccountUpdate>()
+  const { register, handleSubmit, reset } = useForm<AccountUpdate>({
+    defaultValues: {
+      name: account?.name,
+      industry: account?.industry ?? undefined,
+      arr: account?.arr ?? undefined,
+      mrr: account?.mrr ?? undefined,
+      renewal_date: account?.renewal_date ?? undefined,
+      employee_count: account?.employee_count ?? undefined,
+      csm_sentiment: account?.csm_sentiment ?? undefined,
+      ticket_trend: account?.ticket_trend ?? undefined,
+      notes: account?.notes ?? undefined,
+    }
+  })
 
   if (!account) return null
 
@@ -112,10 +124,22 @@ function OverviewTab({ accountId }: { accountId: number }) {
     }
     await updateAccount.mutateAsync(cleaned)
     setEditing(false)
-    refetch()
   }
 
-  const onCancel = () => { reset(); setEditing(false) }
+  const onCancel = () => {
+    reset({
+      name: account?.name,
+      industry: account?.industry ?? undefined,
+      arr: account?.arr ?? undefined,
+      mrr: account?.mrr ?? undefined,
+      renewal_date: account?.renewal_date ?? undefined,
+      employee_count: account?.employee_count ?? undefined,
+      csm_sentiment: account?.csm_sentiment ?? undefined,
+      ticket_trend: account?.ticket_trend ?? undefined,
+      notes: account?.notes ?? undefined,
+    })
+    setEditing(false)
+  }
 
   return (
     <div className="bg-white rounded-lg border p-6">

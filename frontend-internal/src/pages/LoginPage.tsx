@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Navigate } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { login } from '@/api/auth'
 import { useAuthStore } from '@/store/authStore'
@@ -8,9 +8,12 @@ interface FormData { email: string; password: string }
 
 export default function LoginPage() {
   const navigate = useNavigate()
-  const setAuth = useAuthStore((s) => s.setAuth)
+  const { accessToken, setAuth } = useAuthStore()
   const [error, setError] = useState<string | null>(null)
   const { register, handleSubmit, formState: { isSubmitting } } = useForm<FormData>()
+
+  // Already logged in — redirect to dashboard
+  if (accessToken) return <Navigate to="/" replace />
 
   const onSubmit = async (data: FormData) => {
     setError(null)

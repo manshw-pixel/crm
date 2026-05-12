@@ -7,7 +7,17 @@ export const client = axios.create({
 })
 
 let isRefreshing = false
-let refreshQueue: ((token: string) => void)[] = []
+
+type QueueEntry = { resolve: (token: string) => void; reject: (err: unknown) => void }
+let refreshQueue: QueueEntry[] = []
+
+function drainQueue(token: string | null, error?: unknown) {
+  refreshQueue.forEach(({ resolve, reject }) => {
+    if (token) resolve(token)
+    else reject(error)
+  })
+  refreshQueue = []
+}
 
 client.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken
@@ -32,10 +42,13 @@ client.interceptors.response.use(
     }
 
     if (isRefreshing) {
-      return new Promise((resolve) => {
-        refreshQueue.push((token) => {
-          original!.headers!.Authorization = `Bearer ${token}`
-          resolve(client(original!))
+      return new Promise((resolve, reject) => {
+        refreshQueue.push({
+          resolve: (token) => {
+            original!.headers!.Authorization = `Bearer ${token}`
+            resolve(client(original!))
+          },
+          reject,
         })
       })
     }
@@ -48,11 +61,11 @@ client.interceptors.response.use(
       )
       const { access_token, refresh_token, role, user_id } = res.data
       setAuth({ accessToken: access_token, refreshToken: refresh_token, role, userId: user_id })
-      refreshQueue.forEach((cb) => cb(access_token))
-      refreshQueue = []
+      drainQueue(access_token)
       original!.headers!.Authorization = `Bearer ${access_token}`
       return client(original!)
-    } catch {
+    } catch (refreshError) {
+      drainQueue(null, refreshError)
       clearAuth()
       window.location.href = '/login'
       return Promise.reject(error)
