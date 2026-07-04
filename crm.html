@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  html { font-size: 15px; }
+  html { font-size: 14px; }
   body { background: #f6f8fb; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: #334155; }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -323,7 +323,7 @@ function DistBar({ counts }) {
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "" }) => (
-  <div className={`nm p-5 ${className}`}>
+  <div className={`nm p-4 ${className}`}>
     {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-bold uppercase tracking-widest text-slate-700">{title}</h3>{right}</div>}
     {children}
   </div>
@@ -1262,8 +1262,8 @@ function App({ user }) {
             onClick={() => sb.auth.signOut()}>Sign out</button>
         </div>
       </aside>
-      <main className="ml-52 min-w-0 flex-1 px-8 py-6">
-      <div className="mb-6 flex items-center gap-3">
+      <main className="ml-52 min-w-0 flex-1 px-6 py-5">
+      <div className="mb-5 flex items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
         <div className="nm-inset ml-auto flex items-center gap-0.5 !rounded-lg p-0.5">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
