@@ -646,8 +646,6 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
         {scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      <div className="grid gap-3 min-[1060px]:grid-cols-4">
-      <div className="space-y-3 min-[1060px]:col-span-3">
       <div className="grid grid-cols-3 gap-3">
         <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts · converted at your rates`} />
         <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
@@ -715,27 +713,6 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
           );
         })}
       </Card>
-      </div>
-      <div className="space-y-3">
-        <Card title="View">
-          <div className="space-y-1.5">
-            {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All accounts"]].map(([k, label]) => (
-              <button key={k} onClick={() => setScopeSel(k)}
-                className={`w-full rounded-lg px-3 py-1.5 text-left text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "nm-btn !rounded-lg text-slate-600"}`}>{label}</button>
-            ))}
-          </div>
-        </Card>
-        <Card title={`🔔 Renewals ≤ 30d (${renewalsDue.length})`}>
-          {renewalsDue.length === 0 && <div className="text-xs text-slate-500">Nothing due in the next 30 days. 🎉</div>}
-          {renewalsDue.map(a => (
-            <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-1 py-1.5 text-left text-xs hover:bg-slate-50">
-              <span className="truncate pr-2 font-medium">{a.name}</span>
-              <span className={`shrink-0 rounded px-1.5 py-0.5 font-semibold ${daysUntil(a.renewalDate) <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{daysUntil(a.renewalDate)}d</span>
-            </button>
-          ))}
-        </Card>
-      </div>
-      </div>
     </div>
   );
 }
@@ -1304,13 +1281,13 @@ function App({ user }) {
       <main className={`${collapsed ? "ml-14" : "ml-52"} min-w-0 flex-1 px-6 py-5 transition-all`}>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
-        {view !== "Dashboard" && <div className="nm-inset ml-auto flex items-center gap-0.5 !rounded-lg p-0.5">
+        <div className="nm-inset ml-auto flex items-center gap-0.5 !rounded-lg p-0.5">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
           ))}
-        </div>}
-        {view !== "Dashboard" && <div className="relative ml-1">
+        </div>
+        <div className="relative ml-1">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewals due within 30 days"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
             {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{renewalsDue.length}</span>}
@@ -1331,7 +1308,7 @@ function App({ user }) {
               ))}
             </div>
           )}
-        </div>}
+        </div>
       </div>
       {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
