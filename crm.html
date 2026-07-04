@@ -44,7 +44,11 @@ const iso = d => new Date(d).toISOString().slice(0, 10);
 const addDays = n => iso(Date.now() + n * DAY);
 const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
-const fmtMoney = n => "$" + (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : n);
+const CURRENCIES = ["USD", "INR", "PHP"];
+const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
+const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
+const toUSD = (n, cur, rates) => (cur === "USD" || !cur) ? n : n * (rates?.[cur] ?? 0);
+const fmtMoney = (n, cur = "USD") => (CUR_SYM[cur] || "$") + (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : Math.round(n));
 const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const uid = () => Math.random().toString(36).slice(2, 10);
 
@@ -144,17 +148,27 @@ function seedData() {
     { id: uid(), accountId: "a7", type: "upsell", value: 12000, stage: "Discovery", closeDate: addDays(90) },
     { id: uid(), accountId: "a5", type: "upsell", value: 45000, stage: "Stalled", closeDate: addDays(120) },
   ];
-  return { accounts, contacts, activities, tasks, opportunities, settings: { weights: { ...DEFAULT_WEIGHTS } } };
+  accounts.forEach(a => a.currency = "USD");
+  Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
+  Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
+  return { accounts, contacts, activities, tasks, opportunities, settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], settings: { weights: { ...DEFAULT_WEIGHTS } } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
 
 /* ------------------------------ store ------------------------------ */
 const LS_KEY = "csm-crm-v2";
 function loadState() {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) { const s = JSON.parse(raw); if (s.accounts && s.settings) return s; }
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s.accounts && s.settings) {
+        s.accounts.forEach(a => { if (!a.currency) a.currency = "USD"; });
+        s.settings.rates = { ...DEFAULT_RATES, ...(s.settings.rates || {}) };
+        return s;
+      }
+    }
   } catch (e) {}
   return emptyData();
 }
@@ -182,6 +196,7 @@ function reducer(state, action) {
       }) };
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
+    case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     default: return state;
   }
 }
@@ -281,7 +296,7 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 
 const F = ({ label, children }) => <label className="text-xs text-slate-500">{label}<div>{children}</div></label>;
 function NewAccountForm({ dispatch, onDone }) {
-  const [v, setV] = useState({ name: "", tier: "Enterprise", arr: 0, industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active" });
+  const [v, setV] = useState({ name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
@@ -291,7 +306,8 @@ function NewAccountForm({ dispatch, onDone }) {
     }}>
       <F label="Name *"><Input autoFocus value={v.name} onChange={e => set("name", e.target.value)} /></F>
       <F label="Tier"><Select value={v.tier} onChange={e => set("tier", e.target.value)} options={["Enterprise", "Mid", "SMB"]} className="w-full" /></F>
-      <F label="ARR ($)"><Input type="number" min="0" value={v.arr} onChange={e => set("arr", e.target.value)} /></F>
+      <F label="ARR"><Input type="number" min="0" value={v.arr} onChange={e => set("arr", e.target.value)} /></F>
+      <F label="Billing currency"><Select value={v.currency} onChange={e => set("currency", e.target.value)} options={CURRENCIES} className="w-full" /></F>
       <F label="Industry"><Input value={v.industry} onChange={e => set("industry", e.target.value)} /></F>
       <F label="CSM owner"><Input value={v.csm} onChange={e => set("csm", e.target.value)} /></F>
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>
@@ -336,9 +352,9 @@ function AddOppForm({ acct, dispatch, onDone }) {
 
 /* ------------------------------- Dashboard ------------------------------- */
 function Dashboard({ st, scored, dispatch, openAccount }) {
-  const totalARR = scored.reduce((s, a) => s + a.arr, 0);
+  const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   const atRisk = scored.filter(a => a.risk === "Red");
-  const arrAtRisk = atRisk.reduce((s, a) => s + a.arr, 0);
+  const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
   const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7);
   const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
   const counts = { Green: 0, Yellow: 0, Red: 0 };
@@ -350,8 +366,8 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
         Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.
       </div>}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Total ARR" value={fmtMoney(totalARR)} sub={`${scored.length} accounts`} />
-        <Stat label="ARR at risk" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
+        <Stat label="Total ARR (USD)" value={fmtMoney(totalARR)} sub={`${scored.length} accounts · converted at your rates`} />
+        <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
         <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" />
         <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} />
         <Card title="Health distribution"><DistBar counts={counts} /></Card>
@@ -360,12 +376,12 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
         <Card title="Renewals due">
           {[["0–30 days", buckets[0]], ["31–60 days", buckets[1]], ["61–90 days", buckets[2]]].map(([label, list]) => (
             <div key={label} className="mb-2">
-              <div className="text-xs font-semibold text-slate-400">{label} · {fmtMoney(list.reduce((s, a) => s + a.arr, 0))}</div>
+              <div className="text-xs font-semibold text-slate-400">{label} · {fmtMoney(list.reduce((s, a) => s + a.arrUSD, 0))} USD</div>
               {list.length === 0 && <div className="text-xs text-slate-400 italic">none</div>}
               {list.map(a => (
                 <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
                   <span>{a.name}</span>
-                  <span className="flex items-center gap-2 text-xs text-slate-500">{fmtMoney(a.arr)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
+                  <span className="flex items-center gap-2 text-xs text-slate-500">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
                 </button>
               ))}
             </div>
@@ -402,9 +418,9 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
 
 /* ------------------------------ Account list ------------------------------ */
 function exportCSV(rows) {
-  const cols = ["name", "tier", "arr", "industry", "csm", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus"];
+  const cols = ["name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus"];
   const esc = v => `"${String(v).replace(/"/g, '""')}"`;
-  const csv = [cols.join(","), ...rows.map(a => cols.map(c => esc(c === "daysToRenewal" ? daysUntil(a.renewalDate) : a[c])).join(","))].join("\n");
+  const csv = [cols.join(","), ...rows.map(a => cols.map(c => esc(c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : a[c])).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
@@ -420,7 +436,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
-    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : a[sort.k];
+    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
     return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
   }, [scored, q, tier, risk, csm, renew, sort]);
   const Th = ({ k, children, className = "" }) => (
@@ -456,7 +472,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
                 <tr key={a.id} className="cursor-pointer border-b border-slate-100 hover:bg-indigo-50/40" onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5 font-medium">{a.name}</td>
                   <td className="px-2">{a.tier}</td>
-                  <td className="px-2">{fmtMoney(a.arr)}</td>
+                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-400">≈{fmtMoney(a.arrUSD)}</span>}</td>
                   <td className="px-2 text-slate-500">{a.industry}</td>
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
@@ -490,7 +506,7 @@ function AccountDetail({ st, scored, id, dispatch, back }) {
         <Btn onClick={back}>← Back</Btn>
         <h2 className="text-xl font-bold">{a.name}</h2>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        <span className="text-sm text-slate-500">{a.tier} · {a.industry} · {fmtMoney(a.arr)} ARR · CSM {a.csm}</span>
+        <span className="text-sm text-slate-500">{a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}</span>
         <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
       </div>
       <div className="flex flex-wrap gap-2">
@@ -552,7 +568,7 @@ function AccountDetail({ st, scored, id, dispatch, back }) {
           {opps.map(o => (
             <div key={o.id} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
               <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
-              <span className="flex-1 font-medium">{fmtMoney(o.value)}</span>
+              <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
               <span className="text-xs text-slate-500">{o.stage}</span>
               <span className="text-xs text-slate-400">close {fmtDate(o.closeDate)}</span>
             </div>
@@ -577,13 +593,13 @@ function Renewals({ scored, openAccount }) {
       {months.map(m => (
         <div key={m.key} className="w-56 shrink-0 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
           <div className="mb-2 flex justify-between text-xs font-semibold text-slate-500">
-            <span>{m.label}</span><span>{m.items.length ? fmtMoney(m.items.reduce((s, a) => s + a.arr, 0)) : ""}</span>
+            <span>{m.label}</span><span>{m.items.length ? fmtMoney(m.items.reduce((s, a) => s + a.arrUSD, 0)) + " USD" : ""}</span>
           </div>
           {m.items.length === 0 && <div className="text-xs italic text-slate-300">—</div>}
           {m.items.map(a => (
             <button key={a.id} onClick={() => openAccount(a.id)} className="mb-2 w-full rounded border border-slate-200 p-2 text-left hover:bg-indigo-50/40">
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
-              <div className="mt-0.5 text-xs text-slate-500">{fmtMoney(a.arr)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
+              <div className="mt-0.5 text-xs text-slate-500">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
             </button>
           ))}
         </div>
@@ -593,8 +609,9 @@ function Renewals({ scored, openAccount }) {
 }
 
 /* ------------------------------- Settings ------------------------------- */
-function Settings({ st, dispatch }) {
+function Settings({ st, dispatch, user }) {
   const w = st.settings.weights;
+  const rates = st.settings.rates;
   const total = Object.values(w).reduce((a, b) => a + b, 0);
   const fileRef = useRef();
   const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
@@ -624,6 +641,18 @@ function Settings({ st, dispatch }) {
         ))}
         <div className="mt-2 text-xs text-slate-400">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
       </Card>
+      <Card title="Currency conversion (to USD)">
+        {CURRENCIES.filter(c => c !== "USD").map(c => (
+          <div key={c} className="mb-2 flex items-center gap-2 text-sm">
+            <span className="w-24">1 {c} ({CUR_SYM[c]}) =</span>
+            <Input type="number" step="0.0001" min="0" value={rates[c]}
+              onChange={e => dispatch({ type: "SET_RATES", rates: { ...rates, [c]: +e.target.value || 0 } })} className="w-28" />
+            <span className="text-slate-500">USD</span>
+          </div>
+        ))}
+        <p className="mt-2 text-xs text-slate-400">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
+      </Card>
+      <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
@@ -642,47 +671,101 @@ function Settings({ st, dispatch }) {
 /* Local-only gate: passcode hash lives in this browser's localStorage.
    It keeps casual eyes out on a shared machine — it is NOT server-grade auth,
    and the data itself is unencrypted in localStorage. */
-const AUTH_KEY = "csm-crm-auth";
+const USERS_KEY = "csm-crm-users";
+const MAX_ADMINS = 2;
 function hashStr(s) { let h = 5381; for (const c of s) h = ((h << 5) + h + c.charCodeAt(0)) | 0; return String(h); }
+function loadUsers() {
+  try { const u = JSON.parse(localStorage.getItem(USERS_KEY)); if (Array.isArray(u) && u.length) return u; } catch (e) {}
+  try { // migrate the old single-passcode gate: that person becomes the first admin
+    const old = JSON.parse(localStorage.getItem("csm-crm-auth"));
+    if (old && old.hash) { const u = [{ id: uid(), name: old.name || "Admin", role: "admin", hash: old.hash }]; localStorage.setItem(USERS_KEY, JSON.stringify(u)); return u; }
+  } catch (e) {}
+  return null;
+}
+const saveUsers = u => localStorage.setItem(USERS_KEY, JSON.stringify(u));
 function Login({ onOk }) {
-  const saved = useMemo(() => { try { return JSON.parse(localStorage.getItem(AUTH_KEY)); } catch (e) { return null; } }, []);
-  const [name, setName] = useState(saved?.name || "");
+  const [users] = useState(loadUsers);
+  const [sel, setSel] = useState(users ? users[0].name : "");
+  const [name, setName] = useState("");
   const [pass, setPass] = useState(""); const [pass2, setPass2] = useState("");
   const [err, setErr] = useState("");
-  const setup = !saved;
+  const setup = !users;
   const submit = e => {
     e.preventDefault();
     if (setup) {
+      if (!name.trim()) return setErr("Enter your name.");
       if (pass.length < 4) return setErr("Passcode must be at least 4 characters.");
       if (pass !== pass2) return setErr("Passcodes don't match.");
-      localStorage.setItem(AUTH_KEY, JSON.stringify({ name: name.trim() || "CSM", hash: hashStr(pass) }));
-      onOk();
+      const u = { id: uid(), name: name.trim(), role: "admin", hash: hashStr(pass) };
+      saveUsers([u]); onOk(u);
     } else {
-      if (hashStr(pass) === saved.hash) onOk(); else setErr("Wrong passcode.");
+      const u = users.find(x => x.name === sel);
+      if (u && hashStr(pass) === u.hash) onOk(u); else setErr("Wrong passcode.");
     }
   };
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-md">
         <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
-        <p className="mb-4 mt-1 text-xs text-slate-500">{setup ? "First run — set a name and passcode for this browser." : `Welcome back${saved.name ? ", " + saved.name : ""}.`}</p>
-        {setup && <label className="mb-2 block text-xs font-semibold text-slate-500">Your name
-          <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>}
+        <p className="mb-4 mt-1 text-xs text-slate-500">{setup ? "First run — create the first admin account for this browser." : "Sign in to continue."}</p>
+        {setup
+          ? <label className="mb-2 block text-xs font-semibold text-slate-500">Your name (admin)
+              <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>
+          : <label className="mb-2 block text-xs font-semibold text-slate-500">User
+              <Select value={sel} onChange={e => setSel(e.target.value)} options={users.map(u => u.name)} className="mt-1 w-full" /></label>}
         <label className="mb-2 block text-xs font-semibold text-slate-500">Passcode
           <Input type="password" value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" autoFocus={!setup} /></label>
         {setup && <label className="mb-2 block text-xs font-semibold text-slate-500">Confirm passcode
           <Input type="password" value={pass2} onChange={e => { setPass2(e.target.value); setErr(""); }} className="mt-1" /></label>}
         {err && <div className="mb-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
-        <button type="submit" className="mt-2 w-full rounded bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700">{setup ? "Create & enter" : "Sign in"}</button>
-        <p className="mt-3 text-[10px] leading-4 text-slate-400">Local-only gate for this browser — your data never leaves this machine. Forgot the passcode? Clear the <code>{AUTH_KEY}</code> key in DevTools → Application → Local Storage.</p>
+        <button type="submit" className="mt-2 w-full rounded bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700">{setup ? "Create admin & enter" : "Sign in"}</button>
+        <p className="mt-3 text-[10px] leading-4 text-slate-400">Local-only gate for this browser — your data never leaves this machine. Admins manage users and rates in Settings. Locked out? Clear the <code>{USERS_KEY}</code> key in DevTools → Application → Local Storage.</p>
       </form>
     </div>
+  );
+}
+function UsersCard({ me }) {
+  const [users, setUsers] = useState(loadUsers() || []);
+  const [v, setV] = useState({ name: "", role: "user", pass: "" });
+  const [err, setErr] = useState("");
+  const admins = users.filter(u => u.role === "admin").length;
+  const update = next => { setUsers(next); saveUsers(next); };
+  const add = e => {
+    e.preventDefault(); setErr("");
+    if (!v.name.trim()) return setErr("Name required.");
+    if (users.some(u => u.name.toLowerCase() === v.name.trim().toLowerCase())) return setErr("That name already exists.");
+    if (v.pass.length < 4) return setErr("Passcode must be at least 4 characters.");
+    if (v.role === "admin" && admins >= MAX_ADMINS) return setErr(`Maximum ${MAX_ADMINS} admins.`);
+    update([...users, { id: uid(), name: v.name.trim(), role: v.role, hash: hashStr(v.pass) }]);
+    setV({ name: "", role: "user", pass: "" });
+  };
+  return (
+    <Card title={`Users (${users.length})`}>
+      {users.map(u => (
+        <div key={u.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+          <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-400"> (you)</span>}</span>
+          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500"}`}>{u.role}</span>
+          {u.id !== me.id && <button className="text-xs text-rose-500 hover:underline"
+            onClick={() => { if (u.role === "admin" && admins <= 1) return alert("At least one admin must remain.");
+              if (confirm(`Remove ${u.name}?`)) update(users.filter(x => x.id !== u.id)); }}>remove</button>}
+        </div>
+      ))}
+      <form onSubmit={add} className="mt-3 flex flex-wrap items-center gap-2">
+        <Input placeholder="Name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} className="w-32" />
+        <Select value={v.role} onChange={e => setV({ ...v, role: e.target.value })} options={["user", "admin"]} />
+        <Input type="password" placeholder="Passcode" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} className="w-32" />
+        <Btn kind="primary" type="submit">Add user</Btn>
+      </form>
+      {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
+      <p className="mt-2 text-xs text-slate-400">Up to {MAX_ADMINS} admins; any number of users. Users can work with accounts but cannot open Settings.</p>
+    </Card>
   );
 }
 
 /* --------------------------------- App --------------------------------- */
 const VIEWS = ["Dashboard", "Accounts", "Renewals", "Settings"];
-function App() {
+function App({ user }) {
+  const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, dispatch] = useReducer(reducer, undefined, loadState);
   const [view, setView] = useState("Dashboard");
   const [acctId, setAcctId] = useState(null);
@@ -693,43 +776,43 @@ function App() {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === "/") { e.preventDefault(); setView("Accounts"); setAcctId(null); setTimeout(() => searchRef.current?.focus(), 50); }
       const i = "12345".indexOf(e.key);
-      if (i >= 0 && i < VIEWS.length) { setView(VIEWS[i]); setAcctId(null); }
+      if (i >= 0 && i < views.length) { setView(views[i]); setAcctId(null); }
       if (e.key === "Escape") setAcctId(null);
     };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
   const scored = useMemo(() => st.accounts.map(a => {
     const score = healthScore(a, st.activities, st.settings.weights);
-    return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score) };
+    return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
   const openAccount = id => { setView("Accounts"); setAcctId(id); };
   return (
     <div className="mx-auto max-w-7xl p-4">
       <div className="mb-4 flex items-center gap-1">
         <h1 className="mr-4 text-lg font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
-        {VIEWS.map((v, i) => (
+        {views.map((v, i) => (
           <button key={v} onClick={() => { setView(v); setAcctId(null); }}
             className={`rounded px-3 py-1.5 text-sm font-medium ${view === v ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-200"}`}>
             {v} <span className="text-[10px] opacity-50">{i + 1}</span>
           </button>
         ))}
-        <span className="ml-auto text-xs text-slate-400">local-only · autosaved</span>
+        <span className="ml-auto text-xs text-slate-400">{user.name} · {user.role} · local-only</span>
         <button className="ml-3 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
-          onClick={() => { sessionStorage.removeItem("csm-crm-session"); location.reload(); }}>Lock 🔒</button>
+          onClick={() => { sessionStorage.removeItem("csm-crm-session"); location.reload(); }}>Sign out 🔒</button>
       </div>
       {view === "Dashboard" && <Dashboard st={st} scored={scored} dispatch={dispatch} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} />
         : <AccountList scored={scored} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} />)}
       {view === "Renewals" && <Renewals scored={scored} openAccount={openAccount} />}
-      {view === "Settings" && <Settings st={st} dispatch={dispatch} />}
+      {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
     </div>
   );
 }
 function Root() {
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem("csm-crm-session") === "1");
-  if (!authed) return <Login onOk={() => { sessionStorage.setItem("csm-crm-session", "1"); setAuthed(true); }} />;
-  return <App />;
+  const [user, setUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem("csm-crm-session")); } catch (e) { return null; } });
+  if (!user) return <Login onOk={u => { const s = { id: u.id, name: u.name, role: u.role }; sessionStorage.setItem("csm-crm-session", JSON.stringify(s)); setUser(s); }} />;
+  return <App user={user} />;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
