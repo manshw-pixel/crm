@@ -27,3 +27,11 @@ backend/uvicorn*.log
 
 # node
 node_modules/
+
+# internal business docs (not part of the CRM project)
+*.pptx
+*.xlsx
+raw/
+ProHance_*
+create_prohance_pptx.py
+generate_ppt.py
