@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CS CRM — Portfolio</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  html { font-size: 14px; }
+  ::-webkit-scrollbar { height: 8px; width: 8px; }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+</style>
+</head>
+<body class="bg-slate-100 text-slate-800">
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+/*
+ * ============================================================================
+ * HEALTH SCORE LOGIC
+ * ----------------------------------------------------------------------------
+ * score = w.usage*usage + w.sentiment*sentiment + w.tickets*ticketScore
+ *       + w.recency*recencyScore + w.nps*npsNorm          (weights sum to 1)
+ *
+ *   usage, sentiment : stored per-account, 0..100
+ *   ticketScore      : 100 - min(openTickets*10, 100)
+ *   recencyScore     : 100 if last activity <=7 days ago, linear to 0 at 60d
+ *   npsNorm          : (nps + 100) / 2   (NPS -100..100 -> 0..100)
+ *
+ * Risk: score >=70 Green | 40..69 Yellow | <40 Red
+ *
+ * TO EXTEND: add a key to DEFAULT_WEIGHTS + a component fn in scoreComponents()
+ * — the weight sliders, formula display, and normalization pick it up
+ * automatically.
+ * ============================================================================
+ */
+const { useState, useEffect, useReducer, useMemo, useRef } = React;
+
+const DAY = 86400000;
+const today = () => new Date();
+const iso = d => new Date(d).toISOString().slice(0, 10);
+const addDays = n => iso(Date.now() + n * DAY);
+const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
+const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
+const fmtMoney = n => "$" + (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : n);
+const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+const uid = () => Math.random().toString(36).slice(2, 10);
+
+const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
+const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
+
+function lastActivityDate(accountId, activities) {
+  const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
+  return a.length ? a[0].date : null;
+}
+function scoreComponents(acct, activities) {
+  const la = lastActivityDate(acct.id, activities);
+  const ds = la ? daysSince(la) : 999;
+  return {
+    usage: acct.inputs.usage,
+    sentiment: acct.inputs.sentiment,
+    tickets: 100 - Math.min(acct.inputs.tickets * 10, 100),
+    recency: ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53)),
+    nps: Math.round((acct.inputs.nps + 100) / 2),
+  };
+}
+function healthScore(acct, activities, weights) {
+  const c = scoreComponents(acct, activities);
+  const tw = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
+  return Math.round(Object.keys(weights).reduce((s, k) => s + (weights[k] / tw) * (c[k] ?? 0), 0));
+}
+const riskOf = s => (s >= 70 ? "Green" : s >= 40 ? "Yellow" : "Red");
+const RISK_STYLE = {
+  Green: "bg-emerald-100 text-emerald-700 border-emerald-300",
+  Yellow: "bg-amber-100 text-amber-700 border-amber-300",
+  Red: "bg-rose-100 text-rose-700 border-rose-300",
+};
+const RISK_HEX = { Green: "#10b981", Yellow: "#f59e0b", Red: "#f43f5e" };
+
+function flagsFor(acct, activities, score) {
+  const f = [];
+  const la = lastActivityDate(acct.id, activities);
+  if (!la || daysSince(la) >= 30) f.push("No activity 30d+");
+  const dr = daysUntil(acct.renewalDate);
+  if (dr >= 0 && dr < 60) f.push(`Renewal in ${dr}d`);
+  const old = acct.history.filter(h => daysSince(h.d) >= 25);
+  if (old.length && old[old.length - 1].s - score >= 10) f.push(`Health ↓${old[old.length - 1].s - score}`);
+  return f;
+}
+
+/* ------------------------------- seed data ------------------------------- */
+function seedData() {
+  const mk = (id, name, tier, arr, industry, csm, startOff, renewOff, status, inputs, hist) => ({
+    id, name, tier, arr, industry, csm, contractStatus: status,
+    startDate: addDays(startOff), renewalDate: addDays(renewOff), inputs,
+    history: hist.map(([off, s]) => ({ d: addDays(off), s })),
+  });
+  const accounts = [
+    mk("a1", "Northwind Analytics", "Enterprise", 240000, "Data & BI", "Priya", -700, 45, "Active", { usage: 82, sentiment: 75, tickets: 2, nps: 40 }, [[-90,74],[-60,76],[-30,78],[-7,79]]),
+    mk("a2", "Bluepeak Logistics", "Enterprise", 180000, "Logistics", "Priya", -420, 130, "Active", { usage: 44, sentiment: 38, tickets: 7, nps: -20 }, [[-90,61],[-60,55],[-30,48],[-7,41]]),
+    mk("a3", "Cobalt Health", "Mid", 96000, "Healthcare", "Marco", -380, 25, "In negotiation", { usage: 68, sentiment: 62, tickets: 3, nps: 20 }, [[-90,66],[-60,64],[-30,63],[-7,62]]),
+    mk("a4", "Fernwood Retail", "Mid", 72000, "Retail", "Marco", -600, 200, "Active", { usage: 91, sentiment: 85, tickets: 1, nps: 60 }, [[-90,80],[-60,83],[-30,86],[-7,88]]),
+    mk("a5", "Quartz Financial", "Enterprise", 310000, "FinTech", "Sana", -900, 80, "Active", { usage: 58, sentiment: 50, tickets: 5, nps: 0 }, [[-90,63],[-60,60],[-30,55],[-7,52]]),
+    mk("a6", "Helio Studios", "SMB", 24000, "Media", "Sana", -200, 55, "Active", { usage: 35, sentiment: 30, tickets: 4, nps: -40 }, [[-90,45],[-60,40],[-30,36],[-7,33]]),
+    mk("a7", "Trellis EdTech", "SMB", 30000, "Education", "Marco", -300, 160, "Active", { usage: 77, sentiment: 70, tickets: 0, nps: 30 }, [[-90,70],[-60,72],[-30,74],[-7,75]]),
+    mk("a8", "Argon Manufacturing", "Mid", 120000, "Manufacturing", "Priya", -500, 100, "Auto-renew", { usage: 62, sentiment: 66, tickets: 2, nps: 10 }, [[-90,64],[-60,65],[-30,66],[-7,66]]),
+  ];
+  const contacts = [
+    { id: uid(), accountId: "a1", name: "Dana Whitfield", role: "VP Analytics", email: "dana@northwind.io", isChampion: true, sentiment: "Positive" },
+    { id: uid(), accountId: "a1", name: "Tom Erikson", role: "IT Admin", email: "tom@northwind.io", isChampion: false, sentiment: "Neutral" },
+    { id: uid(), accountId: "a2", name: "Luis Baraja", role: "Ops Director", email: "luis@bluepeak.com", isChampion: false, sentiment: "Negative" },
+    { id: uid(), accountId: "a3", name: "Amara Osei", role: "CIO", email: "amara@cobalthealth.org", isChampion: true, sentiment: "Neutral" },
+    { id: uid(), accountId: "a4", name: "Jenny Park", role: "Head of Ecom", email: "jenny@fernwood.shop", isChampion: true, sentiment: "Positive" },
+    { id: uid(), accountId: "a5", name: "Robert Klein", role: "COO", email: "rk@quartzfin.com", isChampion: false, sentiment: "Neutral" },
+    { id: uid(), accountId: "a6", name: "Mia Torres", role: "Founder", email: "mia@heliostudios.tv", isChampion: false, sentiment: "Negative" },
+    { id: uid(), accountId: "a7", name: "Sam Idowu", role: "Product Lead", email: "sam@trellis.ed", isChampion: true, sentiment: "Positive" },
+    { id: uid(), accountId: "a8", name: "Karen Voss", role: "Plant Manager", email: "kv@argonmfg.com", isChampion: false, sentiment: "Neutral" },
+  ];
+  const activities = [
+    { id: uid(), accountId: "a1", type: "QBR", date: addDays(-12), summary: "Q2 QBR — strong adoption, discussed analytics add-on." },
+    { id: uid(), accountId: "a1", type: "email", date: addDays(-3), summary: "Sent renewal quote and add-on pricing." },
+    { id: uid(), accountId: "a2", type: "ticket", date: addDays(-38), summary: "Escalation: API latency in EU region." },
+    { id: uid(), accountId: "a3", type: "call", date: addDays(-9), summary: "Renewal negotiation call — pushing for multi-year discount." },
+    { id: uid(), accountId: "a4", type: "note", date: addDays(-5), summary: "Champion promoted to Director — congratulated, very engaged." },
+    { id: uid(), accountId: "a5", type: "call", date: addDays(-21), summary: "Usage review — seat utilization down 15% QoQ." },
+    { id: uid(), accountId: "a6", type: "email", date: addDays(-44), summary: "No reply to two check-in emails." },
+    { id: uid(), accountId: "a7", type: "QBR", date: addDays(-15), summary: "First QBR — happy, exploring LMS integration." },
+    { id: uid(), accountId: "a8", type: "call", date: addDays(-6), summary: "Routine check-in, stable usage." },
+  ];
+  const tasks = [
+    { id: uid(), accountId: "a1", title: "Send renewal contract", due: addDays(3), priority: "High", status: "Open", owner: "Priya" },
+    { id: uid(), accountId: "a2", title: "Schedule exec escalation call", due: addDays(1), priority: "High", status: "Open", owner: "Priya" },
+    { id: uid(), accountId: "a3", title: "Prepare multi-year proposal", due: addDays(5), priority: "High", status: "Open", owner: "Marco" },
+    { id: uid(), accountId: "a5", title: "Run adoption workshop", due: addDays(10), priority: "Medium", status: "Open", owner: "Sana" },
+    { id: uid(), accountId: "a6", title: "Try phone outreach to founder", due: addDays(2), priority: "High", status: "Open", owner: "Sana" },
+    { id: uid(), accountId: "a4", title: "Intro expansion (2 new regions)", due: addDays(14), priority: "Low", status: "Open", owner: "Marco" },
+    { id: uid(), accountId: "a8", title: "Confirm auto-renew terms", due: addDays(30), priority: "Low", status: "Open", owner: "Priya" },
+  ];
+  const opportunities = [
+    { id: uid(), accountId: "a1", type: "upsell", value: 60000, stage: "Proposal", closeDate: addDays(40) },
+    { id: uid(), accountId: "a4", type: "cross-sell", value: 24000, stage: "Discovery", closeDate: addDays(75) },
+    { id: uid(), accountId: "a7", type: "upsell", value: 12000, stage: "Discovery", closeDate: addDays(90) },
+    { id: uid(), accountId: "a5", type: "upsell", value: 45000, stage: "Stalled", closeDate: addDays(120) },
+  ];
+  return { accounts, contacts, activities, tasks, opportunities, settings: { weights: { ...DEFAULT_WEIGHTS } } };
+}
+
+/* ------------------------------ store ------------------------------ */
+const LS_KEY = "csm-crm-v1";
+function loadState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) { const s = JSON.parse(raw); if (s.accounts && s.settings) return s; }
+  } catch (e) {}
+  return seedData();
+}
+function reducer(state, action) {
+  switch (action.type) {
+    case "REPLACE": return action.state;
+    case "ADD_ACTIVITY": return { ...state, activities: [...state.activities, action.item] };
+    case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
+    case "TOGGLE_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: t.status === "Done" ? "Open" : "Done" } : t) };
+    case "UPDATE_INPUTS": {
+      return { ...state, accounts: state.accounts.map(a => {
+        if (a.id !== action.id) return a;
+        const upd = { ...a, inputs: { ...a.inputs, ...action.inputs } };
+        const s = healthScore(upd, state.activities, state.settings.weights);
+        return { ...upd, history: [...a.history, { d: iso(Date.now()), s }] };
+      }) };
+    }
+    case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
+    default: return state;
+  }
+}
+
+/* ----------------------------- tiny charts ----------------------------- */
+function Sparkline({ points, w = 220, h = 48 }) {
+  if (!points.length) return null;
+  const vals = points.map(p => p.s);
+  const min = Math.min(...vals, 0), max = Math.max(...vals, 100);
+  const xy = points.map((p, i) => [8 + (i * (w - 16)) / Math.max(points.length - 1, 1), h - 6 - ((p.s - min) / (max - min || 1)) * (h - 12)]);
+  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const last = points[points.length - 1].s;
+  return (
+    <svg width={w} height={h}>
+      <path d={d} fill="none" stroke={RISK_HEX[riskOf(last)]} strokeWidth="2" />
+      {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2.5" fill={RISK_HEX[riskOf(points[i].s)]} />)}
+    </svg>
+  );
+}
+function DistBar({ counts }) {
+  const total = counts.Green + counts.Yellow + counts.Red || 1;
+  return (
+    <div>
+      <div className="flex h-4 w-full overflow-hidden rounded">
+        {["Green", "Yellow", "Red"].map(k => counts[k] > 0 && (
+          <div key={k} style={{ width: (100 * counts[k]) / total + "%", background: RISK_HEX[k] }} title={`${k}: ${counts[k]}`} />
+        ))}
+      </div>
+      <div className="mt-1 flex gap-4 text-xs text-slate-500">
+        {["Green", "Yellow", "Red"].map(k => <span key={k}><span className="inline-block h-2 w-2 rounded-full mr-1" style={{ background: RISK_HEX[k] }}></span>{k} {counts[k]}</span>)}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------ UI atoms ------------------------------ */
+const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
+const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
+const Card = ({ title, right, children, className = "" }) => (
+  <div className={`rounded-lg border border-slate-200 bg-white p-4 shadow-sm ${className}`}>
+    {(title || right) && <div className="mb-2 flex items-center justify-between"><h3 className="text-sm font-semibold text-slate-600">{title}</h3>{right}</div>}
+    {children}
+  </div>
+);
+const Stat = ({ label, value, sub, tone }) => (
+  <Card>
+    <div className="text-xs uppercase tracking-wide text-slate-400">{label}</div>
+    <div className={`mt-1 text-2xl font-bold ${tone || "text-slate-800"}`}>{value}</div>
+    {sub && <div className="text-xs text-slate-500">{sub}</div>}
+  </Card>
+);
+const Btn = ({ children, onClick, kind = "default", type = "button" }) => (
+  <button type={type} onClick={onClick} className={`rounded px-2.5 py-1 text-xs font-semibold ${kind === "primary" ? "bg-indigo-600 text-white hover:bg-indigo-700" : "border border-slate-300 bg-white hover:bg-slate-50"}`}>{children}</button>
+);
+const Input = p => <input {...p} className={"w-full rounded border border-slate-300 px-2 py-1 text-sm " + (p.className || "")} />;
+const Select = ({ options, ...p }) => (
+  <select {...p} className={"rounded border border-slate-300 bg-white px-2 py-1 text-sm " + (p.className || "")}>
+    {options.map(o => <option key={o} value={o}>{o}</option>)}
+  </select>
+);
+
+/* ---------------------------- quick actions ---------------------------- */
+function LogActivityForm({ acct, dispatch, onDone }) {
+  const [type, setType] = useState("call");
+  const [summary, setSummary] = useState("");
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!summary.trim()) return;
+      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim() } }); onDone(); }}>
+      <Select value={type} onChange={e => setType(e.target.value)} options={["call", "email", "QBR", "ticket", "note"]} />
+      <Input autoFocus placeholder="Summary…" value={summary} onChange={e => setSummary(e.target.value)} className="flex-1 min-w-[200px]" />
+      <Btn kind="primary" type="submit">Log</Btn><Btn onClick={onDone}>Cancel</Btn>
+    </form>
+  );
+}
+function AddTaskForm({ acct, dispatch, onDone }) {
+  const [title, setTitle] = useState(""); const [due, setDue] = useState(addDays(7)); const [priority, setPriority] = useState("Medium");
+  return (
+    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!title.trim()) return;
+      dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner: acct.csm } }); onDone(); }}>
+      <Input autoFocus placeholder="Task title…" value={title} onChange={e => setTitle(e.target.value)} className="flex-1 min-w-[200px]" />
+      <Input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-auto" />
+      <Select value={priority} onChange={e => setPriority(e.target.value)} options={["High", "Medium", "Low"]} />
+      <Btn kind="primary" type="submit">Add</Btn><Btn onClick={onDone}>Cancel</Btn>
+    </form>
+  );
+}
+function UpdateHealthForm({ acct, dispatch, onDone }) {
+  const [v, setV] = useState({ ...acct.inputs });
+  const num = (k, min, max) => <label className="text-xs text-slate-500">{k}<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: +e.target.value })} className="w-20" /></label>;
+  return (
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: v }); onDone(); }}>
+      {num("usage", 0, 100)}{num("sentiment", 0, 100)}{num("tickets", 0, 50)}{num("nps", -100, 100)}
+      <Btn kind="primary" type="submit">Save</Btn><Btn onClick={onDone}>Cancel</Btn>
+    </form>
+  );
+}
+
+/* ------------------------------- Dashboard ------------------------------- */
+function Dashboard({ st, scored, dispatch, openAccount }) {
+  const totalARR = scored.reduce((s, a) => s + a.arr, 0);
+  const atRisk = scored.filter(a => a.risk === "Red");
+  const arrAtRisk = atRisk.reduce((s, a) => s + a.arr, 0);
+  const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7);
+  const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
+  const counts = { Green: 0, Yellow: 0, Red: 0 };
+  scored.forEach(a => counts[a.risk]++);
+  const flagged = scored.filter(a => a.flags.length);
+  return (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Stat label="Total ARR" value={fmtMoney(totalARR)} sub={`${scored.length} accounts`} />
+        <Stat label="ARR at risk" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
+        <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" />
+        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} />
+        <Card title="Health distribution"><DistBar counts={counts} /></Card>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title="Renewals due">
+          {[["0–30 days", buckets[0]], ["31–60 days", buckets[1]], ["61–90 days", buckets[2]]].map(([label, list]) => (
+            <div key={label} className="mb-2">
+              <div className="text-xs font-semibold text-slate-400">{label} · {fmtMoney(list.reduce((s, a) => s + a.arr, 0))}</div>
+              {list.length === 0 && <div className="text-xs text-slate-400 italic">none</div>}
+              {list.map(a => (
+                <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
+                  <span>{a.name}</span>
+                  <span className="flex items-center gap-2 text-xs text-slate-500">{fmtMoney(a.arr)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
+                </button>
+              ))}
+            </div>
+          ))}
+        </Card>
+        <Card title="Alerts & flags">
+          {flagged.length === 0 && <div className="text-sm text-slate-400">No flags. 🎉</div>}
+          {flagged.map(a => (
+            <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-slate-50">
+              <span className="text-sm">{a.name} <HealthChip score={a.score} /></span>
+              <span className="flex flex-wrap justify-end gap-1">{a.flags.map(f => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-xs text-rose-600 border border-rose-200">{f}</span>)}</span>
+            </button>
+          ))}
+        </Card>
+      </div>
+      <Card title="Tasks due this week">
+        {weekTasks.length === 0 && <div className="text-sm text-slate-400">Nothing due.</div>}
+        {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
+          const a = scored.find(x => x.id === t.accountId);
+          return (
+            <div key={t.id} className="flex items-center gap-3 border-b border-slate-100 py-1.5 last:border-0 text-sm">
+              <input type="checkbox" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+              <span className="flex-1">{t.title}</span>
+              <button className="text-indigo-600 hover:underline text-xs" onClick={() => openAccount(t.accountId)}>{a?.name}</button>
+              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-500"}`}>{fmtDate(t.due)}</span>
+              <span className="w-14 text-xs text-slate-400">{t.priority}</span>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
+/* ------------------------------ Account list ------------------------------ */
+function exportCSV(rows) {
+  const cols = ["name", "tier", "arr", "industry", "csm", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus"];
+  const esc = v => `"${String(v).replace(/"/g, '""')}"`;
+  const csv = [cols.join(","), ...rows.map(a => cols.map(c => esc(c === "daysToRenewal" ? daysUntil(a.renewalDate) : a[c])).join(","))].join("\n");
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+  const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
+  el.click(); URL.revokeObjectURL(url);
+}
+function AccountList({ scored, openAccount, searchRef }) {
+  const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
+  const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
+  const [sort, setSort] = useState({ k: "score", dir: 1 });
+  const csms = ["All", ...new Set(scored.map(a => a.csm))];
+  const rows = useMemo(() => {
+    let r = scored.filter(a =>
+      (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
+      (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
+      (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
+    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : a[sort.k];
+    return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
+  }, [scored, q, tier, risk, csm, renew, sort]);
+  const Th = ({ k, children, className = "" }) => (
+    <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-xs font-semibold text-slate-500 hover:text-slate-800 ${className}`}
+        onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
+      {children}{sort.k === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
+    </th>
+  );
+  return (
+    <Card title={`Accounts (${rows.length})`} right={<Btn onClick={() => exportCSV(rows)}>Export CSV</Btn>}>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
+        <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
+        <Select value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
+        <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
+        <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
+        <span className="text-xs text-slate-400">renew ≤ days</span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200">
+            <Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-xs font-semibold text-slate-500">Flags</th>
+          </tr></thead>
+          <tbody>
+            {rows.map(a => {
+              const d = daysUntil(a.renewalDate);
+              return (
+                <tr key={a.id} className="cursor-pointer border-b border-slate-100 hover:bg-indigo-50/40" onClick={() => openAccount(a.id)}>
+                  <td className="px-2 py-1.5 font-medium">{a.name}</td>
+                  <td className="px-2">{a.tier}</td>
+                  <td className="px-2">{fmtMoney(a.arr)}</td>
+                  <td className="px-2 text-slate-500">{a.industry}</td>
+                  <td className="px-2">{a.csm}</td>
+                  <td className="px-2"><HealthChip score={a.score} /></td>
+                  <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-500"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[10px] text-rose-600">{f}</span>)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
+/* ------------------------------ Account detail ------------------------------ */
+function AccountDetail({ st, scored, id, dispatch, back }) {
+  const a = scored.find(x => x.id === id);
+  const [form, setForm] = useState(null);
+  useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
+  if (!a) return null;
+  const acts = st.activities.filter(x => x.accountId === id).sort((x, y) => y.date.localeCompare(x.date));
+  const tasks = st.tasks.filter(t => t.accountId === id && t.status !== "Done");
+  const contacts = st.contacts.filter(c => c.accountId === id);
+  const opps = st.opportunities.filter(o => o.accountId === id);
+  const d = daysUntil(a.renewalDate);
+  const comps = scoreComponents(a, st.activities);
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-3">
+        <Btn onClick={back}>← Back</Btn>
+        <h2 className="text-xl font-bold">{a.name}</h2>
+        <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
+        <span className="text-sm text-slate-500">{a.tier} · {a.industry} · {fmtMoney(a.arr)} ARR · CSM {a.csm}</span>
+        <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "bg-amber-100 text-amber-700" : "bg-slate-200 text-slate-600"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
+        <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
+        <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
+        {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
+      </div>
+      {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <Card title="Health trend">
+          <Sparkline points={[...a.history, { d: iso(Date.now()), s: a.score }]} />
+          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
+            {Object.keys(comps).map(k => <div key={k} className="flex justify-between"><span>{WEIGHT_LABELS[k]}</span><span className="font-mono">{comps[k]}</span></div>)}
+          </div>
+        </Card>
+        <Card title={`Open tasks (${tasks.length})`}>
+          {tasks.length === 0 && <div className="text-sm text-slate-400">None open.</div>}
+          {tasks.map(t => (
+            <div key={t.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+              <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+              <span className="flex-1">{t.title}</span>
+              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-500"}`}>{fmtDate(t.due)}</span>
+              <span className="text-xs text-slate-400">{t.priority}</span>
+            </div>
+          ))}
+        </Card>
+        <Card title={`Contacts (${contacts.length})`}>
+          {contacts.map(c => (
+            <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
+              <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
+                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-400"}`}>{c.sentiment}</span></div>
+              <div className="text-xs text-slate-500">{c.role} · {c.email}</div>
+            </div>
+          ))}
+        </Card>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title={`Activity timeline (${acts.length})`}>
+          {acts.length === 0 && <div className="text-sm text-slate-400">No activity yet.</div>}
+          {acts.map(x => (
+            <div key={x.id} className="flex gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+              <span className="w-14 shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-center text-xs font-semibold text-slate-500">{x.type}</span>
+              <span className="flex-1">{x.summary}</span>
+              <span className="shrink-0 text-xs text-slate-400">{fmtDate(x.date)}</span>
+            </div>
+          ))}
+        </Card>
+        <Card title={`Open opportunities (${opps.length})`}>
+          {opps.length === 0 && <div className="text-sm text-slate-400">None.</div>}
+          {opps.map(o => (
+            <div key={o.id} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
+              <span className="flex-1 font-medium">{fmtMoney(o.value)}</span>
+              <span className="text-xs text-slate-500">{o.stage}</span>
+              <span className="text-xs text-slate-400">close {fmtDate(o.closeDate)}</span>
+            </div>
+          ))}
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------- Renewals ------------------------------- */
+function Renewals({ scored, openAccount }) {
+  const months = [];
+  const now = new Date(); now.setDate(1);
+  for (let i = 0; i < 12; i++) {
+    const m = new Date(now.getFullYear(), now.getMonth() + i, 1);
+    const key = m.toISOString().slice(0, 7);
+    months.push({ key, label: m.toLocaleDateString("en-US", { month: "short", year: "numeric" }), items: scored.filter(a => a.renewalDate.slice(0, 7) === key) });
+  }
+  return (
+    <div className="flex gap-3 overflow-x-auto pb-3">
+      {months.map(m => (
+        <div key={m.key} className="w-56 shrink-0 rounded-lg border border-slate-200 bg-white p-3 shadow-sm">
+          <div className="mb-2 flex justify-between text-xs font-semibold text-slate-500">
+            <span>{m.label}</span><span>{m.items.length ? fmtMoney(m.items.reduce((s, a) => s + a.arr, 0)) : ""}</span>
+          </div>
+          {m.items.length === 0 && <div className="text-xs italic text-slate-300">—</div>}
+          {m.items.map(a => (
+            <button key={a.id} onClick={() => openAccount(a.id)} className="mb-2 w-full rounded border border-slate-200 p-2 text-left hover:bg-indigo-50/40">
+              <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
+              <div className="mt-0.5 text-xs text-slate-500">{fmtMoney(a.arr)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/* ------------------------------- Settings ------------------------------- */
+function Settings({ st, dispatch }) {
+  const w = st.settings.weights;
+  const total = Object.values(w).reduce((a, b) => a + b, 0);
+  const fileRef = useRef();
+  const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
+  const doExport = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
+    const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
+    el.click(); URL.revokeObjectURL(url);
+  };
+  const doImport = e => {
+    const f = e.target.files[0]; if (!f) return;
+    const r = new FileReader();
+    r.onload = () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; dispatch({ type: "REPLACE", state: s }); alert("Imported."); } catch { alert("Invalid JSON file."); } };
+    r.readAsText(f); e.target.value = "";
+  };
+  return (
+    <div className="grid gap-4 lg:grid-cols-2">
+      <Card title="Health score weights">
+        <div className="mb-3 rounded bg-slate-50 p-2 font-mono text-xs text-slate-600">
+          score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}
+        </div>
+        {Object.keys(w).map(k => (
+          <div key={k} className="mb-2 flex items-center gap-3 text-sm">
+            <span className="w-40">{WEIGHT_LABELS[k]}</span>
+            <input type="range" min="0" max="100" value={w[k]} onChange={e => setW(k, e.target.value)} className="flex-1" />
+            <span className="w-12 text-right font-mono text-xs">{(100 * w[k] / total).toFixed(0)}%</span>
+          </div>
+        ))}
+        <div className="mt-2 text-xs text-slate-400">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
+      </Card>
+      <Card title="Data">
+        <div className="flex flex-wrap gap-2">
+          <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
+          <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
+          <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
+          <Btn onClick={() => { if (confirm("Replace all data with the seed dataset?")) dispatch({ type: "REPLACE", state: seedData() }); }}>Reset to seed data</Btn>
+        </div>
+        <p className="mt-3 text-xs text-slate-500">All data lives in this browser (localStorage, key <code>csm-crm-v1</code>). Nothing is sent anywhere. Export JSON for backup or to move between machines.</p>
+      </Card>
+    </div>
+  );
+}
+
+/* --------------------------------- App --------------------------------- */
+const VIEWS = ["Dashboard", "Accounts", "Renewals", "Settings"];
+function App() {
+  const [st, dispatch] = useReducer(reducer, undefined, loadState);
+  const [view, setView] = useState("Dashboard");
+  const [acctId, setAcctId] = useState(null);
+  const searchRef = useRef();
+  useEffect(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(st)); } catch (e) {} }, [st]);
+  useEffect(() => {
+    const h = e => {
+      if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
+      if (e.key === "/") { e.preventDefault(); setView("Accounts"); setAcctId(null); setTimeout(() => searchRef.current?.focus(), 50); }
+      const i = "12345".indexOf(e.key);
+      if (i >= 0 && i < VIEWS.length) { setView(VIEWS[i]); setAcctId(null); }
+      if (e.key === "Escape") setAcctId(null);
+    };
+    window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
+  }, []);
+  const scored = useMemo(() => st.accounts.map(a => {
+    const score = healthScore(a, st.activities, st.settings.weights);
+    return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score) };
+  }), [st]);
+  const openAccount = id => { setView("Accounts"); setAcctId(id); };
+  return (
+    <div className="mx-auto max-w-7xl p-4">
+      <div className="mb-4 flex items-center gap-1">
+        <h1 className="mr-4 text-lg font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
+        {VIEWS.map((v, i) => (
+          <button key={v} onClick={() => { setView(v); setAcctId(null); }}
+            className={`rounded px-3 py-1.5 text-sm font-medium ${view === v ? "bg-indigo-600 text-white" : "text-slate-600 hover:bg-slate-200"}`}>
+            {v} <span className="text-[10px] opacity-50">{i + 1}</span>
+          </button>
+        ))}
+        <span className="ml-auto text-xs text-slate-400">local-only · autosaved</span>
+      </div>
+      {view === "Dashboard" && <Dashboard st={st} scored={scored} dispatch={dispatch} openAccount={openAccount} />}
+      {view === "Accounts" && (acctId
+        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} />
+        : <AccountList scored={scored} openAccount={openAccount} searchRef={searchRef} />)}
+      {view === "Renewals" && <Renewals scored={scored} openAccount={openAccount} />}
+      {view === "Settings" && <Settings st={st} dispatch={dispatch} />}
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+</script>
+</body>
+</html>
