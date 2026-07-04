@@ -110,6 +110,7 @@ const RISK_STYLE = {
 const RISK_HEX = { Green: "#10b981", Yellow: "#f59e0b", Red: "#f43f5e" };
 
 function flagsFor(acct, activities, score) {
+  if (acct.churn) return [];
   const f = [];
   const la = lastActivityDate(acct.id, activities);
   if ((!la || daysSince(la) >= 30) && daysSince(acct.startDate) >= 30) f.push("No activity 30d+");
@@ -117,6 +118,8 @@ function flagsFor(acct, activities, score) {
   if (dr >= 0 && dr < 60) f.push(`Renewal in ${dr}d`);
   const old = acct.history.filter(h => daysSince(h.d) >= 25);
   if (old.length && old[old.length - 1].s - score >= 10) f.push(`Health ↓${old[old.length - 1].s - score}`);
+  const iu = daysSince(acct.inputsUpdatedAt || acct.startDate);
+  if (iu >= 45) f.push(`Inputs stale ${iu}d`);
   return f;
 }
 
@@ -174,13 +177,14 @@ function seedData() {
     { id: uid(), accountId: "a7", type: "upsell", value: 12000, stage: "Discovery", closeDate: addDays(90) },
     { id: uid(), accountId: "a5", type: "upsell", value: 45000, stage: "Stalled", closeDate: addDays(120) },
   ];
-  accounts.forEach(a => a.currency = "USD");
+  accounts.forEach(a => { a.currency = "USD"; a.inputsUpdatedAt = addDays(-10); });
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
-  return { accounts, contacts, activities, tasks, opportunities, settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } };
+  accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
 
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
@@ -190,14 +194,16 @@ async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
     sb.from("settings").select("data").eq("id", 1),
+    sb.from("profiles").select("id,name,role"),
   ]);
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
-  const [ac, co, act, ta, op, se] = res.map(r => r.data.map(x => x.data));
+  const [ac, co, act, ta, op, se] = res.slice(0, 6).map(r => r.data.map(x => x.data));
   ac.forEach(a => { if (!a.currency) a.currency = "USD"; });
   const saved = (se && se[0]) || {};
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
+    team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) } },
   };
 }
@@ -212,7 +218,7 @@ function persist(action, next) {
     case "ADD_ACTIVITY": return up("activities", action.item);
     case "ADD_TASK": return up("tasks", action.item);
     case "TOGGLE_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
-    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
       ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
@@ -245,6 +251,10 @@ function reducer(state, action) {
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", renewals: [...(a.renewals || []), action.entry] }
       : a) };
+    case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
+      ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
+    case "REACTIVATE_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
+      ? { ...a, contractStatus: "Active", churn: null } : a) };
     case "DELETE_ACCOUNT": return { ...state,
       accounts: state.accounts.filter(a => a.id !== action.id),
       contacts: state.contacts.filter(c => c.accountId !== action.id),
@@ -259,7 +269,7 @@ function reducer(state, action) {
     case "UPDATE_INPUTS": {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
-        const upd = { ...a, inputs: { ...a.inputs, ...action.inputs } };
+        const upd = { ...a, inputs: { ...a.inputs, ...action.inputs }, inputsUpdatedAt: iso(Date.now()) };
         const s = healthScore(upd, state.activities, state.settings.weights);
         return { ...upd, history: [...a.history, { d: iso(Date.now()), s }] };
       }) };
@@ -340,15 +350,40 @@ function LogActivityForm({ acct, dispatch, onDone }) {
     </form>
   );
 }
-function AddTaskForm({ acct, dispatch, onDone }) {
+function AddTaskForm({ acct, dispatch, onDone, team = [], user }) {
   const [title, setTitle] = useState(""); const [due, setDue] = useState(addDays(7)); const [priority, setPriority] = useState("Medium");
+  const [owner, setOwner] = useState(user ? user.name : acct.csm);
+  const owners = [...new Set([user ? user.name : null, ...team.map(u => u.name), acct.csm].filter(Boolean))];
   return (
     <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!title.trim()) return;
-      dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner: acct.csm } }); onDone(); }}>
+      dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner } }); onDone(); }}>
       <Input autoFocus placeholder="Task title…" value={title} onChange={e => setTitle(e.target.value)} className="flex-1 min-w-[200px]" />
       <Input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-auto" />
       <Select value={priority} onChange={e => setPriority(e.target.value)} options={["High", "Medium", "Low"]} />
+      <Select value={owner} onChange={e => setOwner(e.target.value)} options={owners} />
       <Btn kind="primary" type="submit">Add</Btn><Btn onClick={onDone}>Cancel</Btn>
+    </form>
+  );
+}
+const CHURN_REASONS = ["Price", "Product fit", "Champion left", "Competitor", "Business closed", "Other"];
+function ChurnForm({ acct, user, dispatch, onDone }) {
+  const [date, setDate] = useState(iso(Date.now()));
+  const [reason, setReason] = useState("Price");
+  const [note, setNote] = useState("");
+  return (
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => {
+      e.preventDefault();
+      dispatch({ type: "CHURN_ACCOUNT", id: acct.id,
+        entry: { date, reason, note: note.trim(), arr: acct.arr, currency: acct.currency, by: user.name } });
+      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "churn", date,
+        summary: `Account churned (${reason}${note.trim() ? " — " + note.trim() : ""}) · ${fmtMoney(acct.arr, acct.currency)} ARR lost · by ${user.name}` } });
+      onDone();
+    }}>
+      <label className="text-xs text-slate-700">Churn date<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-auto" /></label>
+      <label className="text-xs text-slate-700">Reason<Select value={reason} onChange={e => setReason(e.target.value)} options={CHURN_REASONS} /></label>
+      <Input placeholder="Note (optional)" value={note} onChange={e => setNote(e.target.value)} className="w-56" />
+      <button type="submit" className="rounded-full bg-rose-500 px-3.5 py-1.5 text-xs font-bold text-white shadow-md hover:bg-rose-600">Confirm churn — {fmtMoney(acct.arr, acct.currency)} lost</button>
+      <Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
 }
@@ -364,7 +399,8 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 }
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
-function AccountForm({ dispatch, onDone, existing }) {
+function AccountForm({ dispatch, onDone, existing, team = [] }) {
+  const csmOptions = [...new Set(["", ...team.map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
   const [v, setV] = useState(existing
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus }
     : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active" });
@@ -374,7 +410,7 @@ function AccountForm({ dispatch, onDone, existing }) {
       e.preventDefault(); if (!v.name.trim()) return;
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0 };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
-      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0 }, history: [] } });
+      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0 }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
     }}>
       <F label="Name *"><Input autoFocus value={v.name} onChange={e => set("name", e.target.value)} /></F>
@@ -382,7 +418,7 @@ function AccountForm({ dispatch, onDone, existing }) {
       <F label="ARR"><Input type="number" min="0" value={v.arr} onChange={e => set("arr", e.target.value)} /></F>
       <F label="Billing currency"><Select value={v.currency} onChange={e => set("currency", e.target.value)} options={CURRENCIES} className="w-full" /></F>
       <F label="Industry"><Input value={v.industry} onChange={e => set("industry", e.target.value)} /></F>
-      <F label="CSM owner"><Input value={v.csm} onChange={e => set("csm", e.target.value)} /></F>
+      <F label="CSM owner"><Select value={v.csm} onChange={e => set("csm", e.target.value)} options={csmOptions} className="w-full" /></F>
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>
       <F label="Renewal date"><Input type="date" value={v.renewalDate} onChange={e => set("renewalDate", e.target.value)} /></F>
       <F label="Contract status"><Select value={v.contractStatus} onChange={e => set("contractStatus", e.target.value)} options={["Active", "Auto-renew", "In negotiation", "Churn risk"]} className="w-full" /></F>
@@ -445,25 +481,56 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
 }
 
 /* ------------------------------- Dashboard ------------------------------- */
-function Dashboard({ st, scored, dispatch, openAccount }) {
+function Dashboard({ st, scored, all, scope, user, dispatch, openAccount }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
-  const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7);
+  const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));
   const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
   const counts = { Green: 0, Yellow: 0, Red: 0 };
   scored.forEach(a => counts[a.risk]++);
   const flagged = scored.filter(a => a.flags.length);
+  // trailing-12-month revenue retention (USD, from churn events and renewal deltas)
+  const rates = st.settings.rates;
+  const yearAgo = Date.now() - 365 * DAY;
+  let churnedARR = 0, expansion = 0, contraction = 0;
+  all.forEach(a => {
+    if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
+    (a.renewals || []).forEach(r => {
+      if (new Date(r.completedOn).getTime() >= yearAgo) {
+        const d = toUSD(r.arr - r.prevArr, a.currency, rates);
+        if (d >= 0) expansion += d; else contraction -= d;
+      }
+    });
+  });
+  const base = totalARR + churnedARR - expansion + contraction;
+  const pct = x => (100 * x).toFixed(0) + "%";
+  const grr = base > 0 ? (base - churnedARR - contraction) / base : null;
+  const nrr = base > 0 ? (base - churnedARR - contraction + expansion) / base : null;
+  // per-person open-task rollup (whole team, regardless of scope)
+  const byOwner = {};
+  st.tasks.filter(t => t.status !== "Done").forEach(t => {
+    const o = t.owner || "Unassigned";
+    byOwner[o] = byOwner[o] || { open: 0, overdue: 0, next: null };
+    byOwner[o].open++;
+    if (daysUntil(t.due) < 0) byOwner[o].overdue++;
+    if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
+  });
+  const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
   return (
     <div className="space-y-4">
       {scored.length === 0 && <div className="nm-sm p-4 text-sm text-indigo-500">
-        Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.
+        {scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
+          : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat label="Total ARR (USD)" value={fmtMoney(totalARR)} sub={`${scored.length} accounts · converted at your rates`} />
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts · converted at your rates`} />
         <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
         <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" />
-        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} />
+        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} />
+        <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" />
+        <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} expansion · −${fmtMoney(contraction)} contraction`} />
+        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${all.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} />
         <Card title="Health distribution"><DistBar counts={counts} /></Card>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -491,7 +558,20 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
           ))}
         </Card>
       </div>
-      <Card title="Tasks due this week">
+      <Card title="Team tasks by owner">
+        {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
+        {owners.map(([name, o]) => (
+          <div key={name} className="flex items-center gap-3 border-b border-white/70 py-1.5 text-sm last:border-0">
+            <span className="w-40 font-bold text-slate-700">{name}{name === user.name && <span className="font-normal text-slate-400"> (you)</span>}</span>
+            <span className="text-slate-600">{o.open} open</span>
+            {o.overdue > 0
+              ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600">{o.overdue} overdue</span>
+              : <span className="text-xs text-emerald-600">on track</span>}
+            <span className="ml-auto text-xs text-slate-500">next due {fmtDate(o.next)}</span>
+          </div>
+        ))}
+      </Card>
+      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"}>
         {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
         {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
           const a = scored.find(x => x.id === t.accountId);
@@ -519,20 +599,22 @@ function exportCSV(rows) {
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
 }
-function AccountList({ scored, openAccount, searchRef, dispatch }) {
+function AccountList({ scored, openAccount, searchRef, dispatch, team }) {
   const [adding, setAdding] = useState(false);
+  const [showChurned, setShowChurned] = useState(false);
+  const churnedCount = scored.filter(a => a.churn).length;
   const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
   const [sort, setSort] = useState({ k: "score", dir: 1 });
   const csms = ["All", ...new Set(scored.map(a => a.csm))];
   const rows = useMemo(() => {
-    let r = scored.filter(a =>
+    let r = scored.filter(a => (showChurned || !a.churn) &&
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
     return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
-  }, [scored, q, tier, risk, csm, renew, sort]);
+  }, [scored, q, tier, risk, csm, renew, sort, showChurned]);
   const Th = ({ k, children, className = "" }) => (
     <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
@@ -541,7 +623,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
   );
   return (
     <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2"><Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn><Btn onClick={() => exportCSV(rows)}>Export CSV</Btn></div>}>
-      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
+      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
         <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
@@ -549,6 +631,8 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
         <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
         <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
         <span className="text-xs text-slate-500">renew ≤ days</span>
+        {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
+          <input type="checkbox" checked={showChurned} onChange={e => setShowChurned(e.target.checked)} />show churned ({churnedCount})</label>}
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
@@ -563,8 +647,8 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
             {rows.map(a => {
               const d = daysUntil(a.renewalDate);
               return (
-                <tr key={a.id} className="cursor-pointer border-b border-white/70 hover:bg-white/60" onClick={() => openAccount(a.id)}>
-                  <td className="px-2 py-1.5 font-medium">{a.name}</td>
+                <tr key={a.id} className={`cursor-pointer border-b border-white/70 hover:bg-white/60 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
+                  <td className="px-2 py-1.5 font-medium">{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
                   <td className="px-2">{a.tier}</td>
                   <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}</td>
                   <td className="px-2 text-slate-700">{a.industry}</td>
@@ -583,7 +667,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
 }
 
 /* ------------------------------ Account detail ------------------------------ */
-function AccountDetail({ st, scored, id, dispatch, back, user }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
   const a = scored.find(x => x.id === id);
   const [form, setForm] = useState(null);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
@@ -607,23 +691,37 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
         <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
         <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
-        <Btn kind="primary" onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>
+        {!a.churn && <Btn kind="primary" onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
         <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
+        {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
+        {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
+          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id });
+            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
           onClick={() => { if (confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) { dispatch({ type: "DELETE_ACCOUNT", id: a.id }); back(); } }}>Delete account</button>}
       </div>
+      {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
+        <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
+        <span className="text-slate-700">{fmtDate(a.churn.date)} · {a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
+        <span className="ml-auto text-xs text-slate-500">{fmtMoney(a.churn.arr, a.churn.currency)} ARR lost · recorded by {a.churn.by}</span>
+      </div>}
       {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
-        : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
-        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
+          {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); return (
+            <div className={`mb-2 text-xs font-bold ${iu >= 45 ? "text-rose-500" : iu >= 30 ? "text-amber-600" : "text-slate-500"}`}>
+              Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? " — refresh via ✎ Update health" : ""}
+            </div>); })()}
           <Sparkline points={[...a.history, { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
             {Object.keys(comps).map(k => <div key={k} className="flex justify-between"><span>{WEIGHT_LABELS[k]}</span><span className="font-mono">{comps[k]}</span></div>)}
@@ -731,7 +829,7 @@ function Settings({ st, dispatch, user }) {
     el.click(); URL.revokeObjectURL(url);
   };
   const bulkReplace = async state => {
-    try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state }); }
+    try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state: { ...state, team: st.team } }); }
     catch (ex) { alert("Bulk update failed: " + ex.message); }
   };
   const doImport = e => {
@@ -915,9 +1013,14 @@ function App({ user }) {
     const score = healthScore(a, st.activities, st.settings.weights);
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
+  const [scopeSel, setScopeSel] = useState(null);
+  const myCount = scored.filter(a => a.csm === user.name).length;
+  const scope = scopeSel ?? (myCount > 0 ? "mine" : "all");
+  const visible = scope === "mine" ? scored.filter(a => a.csm === user.name) : scored; // includes churned
+  const active = visible.filter(a => !a.churn);
   const openAccount = id => { setView("Accounts"); setAcctId(id); };
   const [notifOpen, setNotifOpen] = useState(false);
-  const renewalsDue = scored
+  const renewalsDue = active
     .filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 30; })
     .sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate));
   return (
@@ -930,7 +1033,13 @@ function App({ user }) {
             {v} <span className="text-[11px] opacity-50">{i + 1}</span>
           </button>
         ))}
-        <div className="relative ml-auto">
+        <div className="nm-inset ml-auto flex items-center gap-1 !rounded-full p-1">
+          {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
+            <button key={k} onClick={() => setScopeSel(k)}
+              className={`rounded-full px-3 py-1 text-xs font-bold ${scope === k ? "grad text-white" : "text-slate-600 hover:text-slate-800"}`}>{label}</button>
+          ))}
+        </div>
+        <div className="relative ml-3">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewals due within 30 days"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
             {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{renewalsDue.length}</span>}
@@ -956,11 +1065,11 @@ function App({ user }) {
         <button className="nm-btn ml-3 px-3 py-1.5 text-xs font-bold text-slate-700"
           onClick={() => sb.auth.signOut()}>Sign out 🔒</button>
       </div>
-      {view === "Dashboard" && <Dashboard st={st} scored={scored} dispatch={dispatch} openAccount={openAccount} />}
+      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} scope={scope} user={user} dispatch={dispatch} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
-        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} />
-        : <AccountList scored={scored} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} />)}
-      {view === "Renewals" && <Renewals scored={scored} openAccount={openAccount} />}
+        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} />
+        : <AccountList scored={visible} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} />)}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
     </div>
   );
