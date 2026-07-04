@@ -7,6 +7,7 @@
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://cdn.tailwindcss.com"></script>
 <style>
   html { font-size: 14px; }
@@ -36,7 +37,18 @@
  * automatically.
  * ============================================================================
  */
-const { useState, useEffect, useReducer, useMemo, useRef } = React;
+const { useState, useEffect, useReducer, useMemo, useRef, useCallback } = React;
+
+/* ==================== TEAM CONFIG — EDIT THESE TWO LINES ====================
+ * 1. Create a free project at https://supabase.com
+ * 2. Run supabase-setup.sql in its SQL Editor
+ * 3. Paste Project Settings -> API -> "Project URL" and "anon public" key here.
+ * The anon key is safe to publish; access is enforced by database rules. */
+const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL";
+const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_KEY";
+/* =========================================================================== */
+const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
+const sb = CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
 const DAY = 86400000;
 const today = () => new Date();
@@ -156,21 +168,60 @@ function seedData() {
 
 const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
 
-/* ------------------------------ store ------------------------------ */
-const LS_KEY = "csm-crm-v2";
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) {
-      const s = JSON.parse(raw);
-      if (s.accounts && s.settings) {
-        s.accounts.forEach(a => { if (!a.currency) a.currency = "USD"; });
-        s.settings.rates = { ...DEFAULT_RATES, ...(s.settings.rates || {}) };
-        return s;
-      }
-    }
-  } catch (e) {}
-  return emptyData();
+/* ------------------------------ store (Supabase) ------------------------------ */
+const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
+const dbError = (where, error) => { console.error(where, error); alert(`Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`); };
+
+async function fetchAll() {
+  const res = await Promise.all([
+    ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
+    sb.from("settings").select("data").eq("id", 1),
+  ]);
+  const bad = res.find(r => r.error);
+  if (bad) throw bad.error;
+  const [ac, co, act, ta, op, se] = res.map(r => r.data.map(x => x.data));
+  ac.forEach(a => { if (!a.currency) a.currency = "USD"; });
+  const saved = (se && se[0]) || {};
+  return {
+    accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
+    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) } },
+  };
+}
+
+/* write-through: mirror a just-reduced action into Supabase */
+function persist(action, next) {
+  const up = (t, item) => sb.from(t).upsert({ id: item.id, data: item, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError(t, error));
+  switch (action.type) {
+    case "ADD_ACCOUNT": return up("accounts", action.item);
+    case "ADD_CONTACT": return up("contacts", action.item);
+    case "ADD_OPP": return up("opportunities", action.item);
+    case "ADD_ACTIVITY": return up("activities", action.item);
+    case "ADD_TASK": return up("tasks", action.item);
+    case "TOGGLE_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
+    case "UPDATE_INPUTS": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "DELETE_ACCOUNT":
+      sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
+      ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
+        sb.from(t).delete().eq("data->>accountId", action.id).then(({ error }) => error && dbError(t, error)));
+      return;
+    case "SET_WEIGHTS": case "SET_RATES":
+      return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
+  }
+}
+
+/* bulk replace (sample data / clear / JSON import) — admin only, RLS enforced */
+async function replaceAllRemote(state) {
+  for (const t of ENTITY_TABLES) {
+    const { error } = await sb.from(t).delete().neq("id", "");
+    if (error) throw error;
+  }
+  const key = { accounts: "accounts", contacts: "contacts", activities: "activities", tasks: "tasks", opportunities: "opportunities" };
+  for (const t of ENTITY_TABLES) {
+    const rows = state[key[t]].map(item => ({ id: item.id, data: item }));
+    if (rows.length) { const { error } = await sb.from(t).insert(rows); if (error) throw error; }
+  }
+  const { error } = await sb.from("settings").upsert({ id: 1, data: state.settings });
+  if (error) throw error;
 }
 function reducer(state, action) {
   switch (action.type) {
@@ -489,7 +540,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
 }
 
 /* ------------------------------ Account detail ------------------------------ */
-function AccountDetail({ st, scored, id, dispatch, back }) {
+function AccountDetail({ st, scored, id, dispatch, back, user }) {
   const a = scored.find(x => x.id === id);
   const [form, setForm] = useState(null);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
@@ -516,8 +567,8 @@ function AccountDetail({ st, scored, id, dispatch, back }) {
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
-        <button className="ml-auto rounded border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
-          onClick={() => { if (confirm(`Delete ${a.name} and all its contacts, activities, tasks and opportunities?`)) { dispatch({ type: "DELETE_ACCOUNT", id: a.id }); back(); } }}>Delete account</button>
+        {user.role === "admin" && <button className="ml-auto rounded border border-rose-300 bg-white px-2.5 py-1 text-xs font-semibold text-rose-600 hover:bg-rose-50"
+          onClick={() => { if (confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) { dispatch({ type: "DELETE_ACCOUNT", id: a.id }); back(); } }}>Delete account</button>}
       </div>
       {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -620,10 +671,14 @@ function Settings({ st, dispatch, user }) {
     const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
     el.click(); URL.revokeObjectURL(url);
   };
+  const bulkReplace = async state => {
+    try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state }); }
+    catch (ex) { alert("Bulk update failed: " + ex.message); }
+  };
   const doImport = e => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
-    r.onload = () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; dispatch({ type: "REPLACE", state: s }); alert("Imported."); } catch { alert("Invalid JSON file."); } };
+    r.onload = async () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; await bulkReplace(s); alert("Imported for the whole team."); } catch (ex) { alert(ex && ex.message ? "Import failed: " + ex.message : "Invalid JSON file."); } };
     r.readAsText(f); e.target.value = "";
   };
   return (
@@ -658,86 +713,94 @@ function Settings({ st, dispatch, user }) {
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
           <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
           <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
-          <Btn onClick={() => { if (confirm("Replace all data with the sample dataset?")) dispatch({ type: "REPLACE", state: seedData() }); }}>Load sample data</Btn>
-          <Btn onClick={() => { if (confirm("Delete ALL accounts and data? Export JSON first if you want a backup.")) dispatch({ type: "REPLACE", state: emptyData() }); }}>Clear all data</Btn>
+          <Btn onClick={() => { if (confirm("Replace the team's data with the sample dataset? This affects everyone.")) bulkReplace(seedData()); }}>Load sample data</Btn>
+          <Btn onClick={() => { if (confirm("Delete ALL of the team's accounts and data? Export JSON first if you want a backup.")) bulkReplace(emptyData()); }}>Clear all data</Btn>
         </div>
-        <p className="mt-3 text-xs text-slate-500">All data lives in this browser (localStorage, key <code>csm-crm-v1</code>). Nothing is sent anywhere. Export JSON for backup or to move between machines.</p>
+        <p className="mt-3 text-xs text-slate-500">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
       </Card>
     </div>
   );
 }
 
-/* --------------------------------- Login --------------------------------- */
-/* Local-only gate: passcode hash lives in this browser's localStorage.
-   It keeps casual eyes out on a shared machine — it is NOT server-grade auth,
-   and the data itself is unencrypted in localStorage. */
-const USERS_KEY = "csm-crm-users";
-const MAX_ADMINS = 2;
-function hashStr(s) { let h = 5381; for (const c of s) h = ((h << 5) + h + c.charCodeAt(0)) | 0; return String(h); }
-function loadUsers() {
-  try { const u = JSON.parse(localStorage.getItem(USERS_KEY)); if (Array.isArray(u) && u.length) return u; } catch (e) {}
-  try { // migrate the old single-passcode gate: that person becomes the first admin
-    const old = JSON.parse(localStorage.getItem("csm-crm-auth"));
-    if (old && old.hash) { const u = [{ id: uid(), name: old.name || "Admin", role: "admin", hash: old.hash }]; localStorage.setItem(USERS_KEY, JSON.stringify(u)); return u; }
-  } catch (e) {}
-  return null;
+/* --------------------------------- Auth (Supabase) --------------------------------- */
+function SetupScreen() {
+  return (
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="w-full max-w-lg rounded-xl border border-slate-200 bg-white p-6 shadow-md">
+        <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span> <span className="text-sm font-normal text-slate-400">team edition — not configured yet</span></h1>
+        <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+          <li>Create a free project at <b>supabase.com</b> (pick a region near your team).</li>
+          <li>Open its <b>SQL Editor</b>, paste the contents of <code>supabase-setup.sql</code>, and click Run.</li>
+          <li>In <b>Project Settings → API</b>, copy the <b>Project URL</b> and <b>anon public</b> key.</li>
+          <li>Open <code>crm.html</code> in a text editor and paste both into the <code>TEAM CONFIG</code> block near the top.</li>
+          <li>Reload this page — you'll see the sign-up screen. The first person to sign up becomes admin.</li>
+        </ol>
+        <p className="mt-4 text-xs text-slate-400">Full instructions: <code>TEAM-SETUP.md</code> in the repository.</p>
+      </div>
+    </div>
+  );
 }
-const saveUsers = u => localStorage.setItem(USERS_KEY, JSON.stringify(u));
-function Login({ onOk }) {
-  const [users] = useState(loadUsers);
-  const [sel, setSel] = useState(users ? users[0].name : "");
-  const [name, setName] = useState("");
-  const [pass, setPass] = useState(""); const [pass2, setPass2] = useState("");
-  const [err, setErr] = useState("");
-  const setup = !users;
-  const submit = e => {
-    e.preventDefault();
-    if (setup) {
-      if (!name.trim()) return setErr("Enter your name.");
-      if (pass.length < 4) return setErr("Passcode must be at least 4 characters.");
-      if (pass !== pass2) return setErr("Passcodes don't match.");
-      const u = { id: uid(), name: name.trim(), role: "admin", hash: hashStr(pass) };
-      saveUsers([u]); onOk(u);
-    } else {
-      const u = users.find(x => x.name === sel);
-      if (u && hashStr(pass) === u.hash) onOk(u); else setErr("Wrong passcode.");
-    }
+function AuthScreen() {
+  const [mode, setMode] = useState("signin"); // signin | signup | reset
+  const [name, setName] = useState(""); const [email, setEmail] = useState(""); const [pass, setPass] = useState("");
+  const [err, setErr] = useState(""); const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false);
+  const submit = async e => {
+    e.preventDefault(); setErr(""); setMsg(""); setBusy(true);
+    try {
+      if (mode === "signup") {
+        const { error } = await sb.auth.signUp({ email, password: pass, options: { data: { name: name.trim() || email.split("@")[0] } } });
+        if (error) throw error;
+        setMsg("Account created. If nothing happens, check your email for a confirmation link, then sign in.");
+        setMode("signin");
+      } else if (mode === "reset") {
+        const { error } = await sb.auth.resetPasswordForEmail(email);
+        if (error) throw error;
+        setMsg("Password-reset email sent (check spam too).");
+        setMode("signin");
+      } else {
+        const { error } = await sb.auth.signInWithPassword({ email, password: pass });
+        if (error) throw error;
+      }
+    } catch (ex) { setErr(ex.message); }
+    setBusy(false);
   };
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <form onSubmit={submit} className="w-full max-w-sm rounded-xl border border-slate-200 bg-white p-6 shadow-md">
         <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
-        <p className="mb-4 mt-1 text-xs text-slate-500">{setup ? "First run — create the first admin account for this browser." : "Sign in to continue."}</p>
-        {setup
-          ? <label className="mb-2 block text-xs font-semibold text-slate-500">Your name (admin)
-              <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>
-          : <label className="mb-2 block text-xs font-semibold text-slate-500">User
-              <Select value={sel} onChange={e => setSel(e.target.value)} options={users.map(u => u.name)} className="mt-1 w-full" /></label>}
-        <label className="mb-2 block text-xs font-semibold text-slate-500">Passcode
-          <Input type="password" value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" autoFocus={!setup} /></label>
-        {setup && <label className="mb-2 block text-xs font-semibold text-slate-500">Confirm passcode
-          <Input type="password" value={pass2} onChange={e => { setPass2(e.target.value); setErr(""); }} className="mt-1" /></label>}
+        <p className="mb-4 mt-1 text-xs text-slate-500">
+          {mode === "signup" ? "Create your account — the first person to sign up becomes admin." :
+           mode === "reset" ? "We'll email you a password-reset link." : "Sign in with your team account."}
+        </p>
+        {mode === "signup" && <label className="mb-2 block text-xs font-semibold text-slate-500">Your name
+          <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>}
+        <label className="mb-2 block text-xs font-semibold text-slate-500">Email
+          <Input type="email" required value={email} onChange={e => { setEmail(e.target.value); setErr(""); }} className="mt-1" autoFocus={mode !== "signup"} /></label>
+        {mode !== "reset" && <label className="mb-2 block text-xs font-semibold text-slate-500">Password
+          <Input type="password" required minLength={6} value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" /></label>}
         {err && <div className="mb-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
-        <button type="submit" className="mt-2 w-full rounded bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700">{setup ? "Create admin & enter" : "Sign in"}</button>
-        <p className="mt-3 text-[10px] leading-4 text-slate-400">Local-only gate for this browser — your data never leaves this machine. Admins manage users and rates in Settings. Locked out? Clear the <code>{USERS_KEY}</code> key in DevTools → Application → Local Storage.</p>
+        {msg && <div className="mb-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
+        <button type="submit" disabled={busy} className="mt-2 w-full rounded bg-indigo-600 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-50">
+          {busy ? "…" : mode === "signup" ? "Sign up" : mode === "reset" ? "Send reset link" : "Sign in"}</button>
+        <div className="mt-3 flex justify-between text-xs text-indigo-600">
+          <button type="button" className="hover:underline" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setMsg(""); }}>
+            {mode === "signup" ? "Have an account? Sign in" : "New here? Sign up"}</button>
+          {mode === "signin" && <button type="button" className="hover:underline" onClick={() => { setMode("reset"); setErr(""); setMsg(""); }}>Forgot password?</button>}
+        </div>
+        <p className="mt-3 text-[10px] leading-4 text-slate-400">Shared team CRM — data lives in your team's Supabase project. Roles: admins manage settings and users; everyone else works with accounts.</p>
       </form>
     </div>
   );
 }
 function UsersCard({ me }) {
-  const [users, setUsers] = useState(loadUsers() || []);
-  const [v, setV] = useState({ name: "", role: "user", pass: "" });
+  const [users, setUsers] = useState([]);
   const [err, setErr] = useState("");
-  const admins = users.filter(u => u.role === "admin").length;
-  const update = next => { setUsers(next); saveUsers(next); };
-  const add = e => {
-    e.preventDefault(); setErr("");
-    if (!v.name.trim()) return setErr("Name required.");
-    if (users.some(u => u.name.toLowerCase() === v.name.trim().toLowerCase())) return setErr("That name already exists.");
-    if (v.pass.length < 4) return setErr("Passcode must be at least 4 characters.");
-    if (v.role === "admin" && admins >= MAX_ADMINS) return setErr(`Maximum ${MAX_ADMINS} admins.`);
-    update([...users, { id: uid(), name: v.name.trim(), role: v.role, hash: hashStr(v.pass) }]);
-    setV({ name: "", role: "user", pass: "" });
+  const load = () => sb.from("profiles").select("id,name,role,created_at").order("created_at").then(({ data, error }) => error ? setErr(error.message) : setUsers(data || []));
+  useEffect(() => { load(); }, []);
+  const setRole = async (u, role) => {
+    setErr("");
+    const { error } = await sb.from("profiles").update({ role }).eq("id", u.id);
+    if (error) setErr(error.message); else load();
   };
   return (
     <Card title={`Users (${users.length})`}>
@@ -745,32 +808,40 @@ function UsersCard({ me }) {
         <div key={u.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
           <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-400"> (you)</span>}</span>
           <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500"}`}>{u.role}</span>
-          {u.id !== me.id && <button className="text-xs text-rose-500 hover:underline"
-            onClick={() => { if (u.role === "admin" && admins <= 1) return alert("At least one admin must remain.");
-              if (confirm(`Remove ${u.name}?`)) update(users.filter(x => x.id !== u.id)); }}>remove</button>}
+          {u.id !== me.id && (u.role === "user"
+            ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
+            : <button className="text-xs text-rose-500 hover:underline" onClick={() => setRole(u, "user")}>demote</button>)}
         </div>
       ))}
-      <form onSubmit={add} className="mt-3 flex flex-wrap items-center gap-2">
-        <Input placeholder="Name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} className="w-32" />
-        <Select value={v.role} onChange={e => setV({ ...v, role: e.target.value })} options={["user", "admin"]} />
-        <Input type="password" placeholder="Passcode" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} className="w-32" />
-        <Btn kind="primary" type="submit">Add user</Btn>
-      </form>
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
-      <p className="mt-2 text-xs text-slate-400">Up to {MAX_ADMINS} admins; any number of users. Users can work with accounts but cannot open Settings.</p>
+      <p className="mt-2 text-xs text-slate-400">Colleagues join by signing up on the login screen (they start as <b>user</b>). The database allows at most 2 admins and always keeps at least 1. To remove someone entirely, delete them in the Supabase dashboard → Authentication → Users.</p>
     </Card>
   );
 }
-
 /* --------------------------------- App --------------------------------- */
 const VIEWS = ["Dashboard", "Accounts", "Renewals", "Settings"];
 function App({ user }) {
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
-  const [st, dispatch] = useReducer(reducer, undefined, loadState);
+  const [st, setSt] = useState(emptyData);
+  const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("Dashboard");
   const [acctId, setAcctId] = useState(null);
   const searchRef = useRef();
-  useEffect(() => { try { localStorage.setItem(LS_KEY, JSON.stringify(st)); } catch (e) {} }, [st]);
+  const dispatch = useCallback(action => setSt(prev => {
+    const next = reducer(prev, action);
+    if (action.type !== "REPLACE") persist(action, next);
+    return next;
+  }), []);
+  const refetch = useCallback(() => fetchAll()
+    .then(s => { setSt(s); setLoaded(true); })
+    .catch(e => { console.error(e); alert("Could not load shared data: " + e.message); }), []);
+  useEffect(() => { refetch(); }, [refetch]);
+  useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
+    let timer = null;
+    const ch = sb.channel("crm-live").on("postgres_changes", { event: "*", schema: "public" },
+      () => { clearTimeout(timer); timer = setTimeout(refetch, 800); }).subscribe();
+    return () => { clearTimeout(timer); sb.removeChannel(ch); };
+  }, [refetch]);
   useEffect(() => {
     const h = e => {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
@@ -796,13 +867,13 @@ function App({ user }) {
             {v} <span className="text-[10px] opacity-50">{i + 1}</span>
           </button>
         ))}
-        <span className="ml-auto text-xs text-slate-400">{user.name} · {user.role} · local-only</span>
+        <span className="ml-auto text-xs text-slate-400">{user.name} · {user.role}{loaded ? " · shared" : " · loading…"}</span>
         <button className="ml-3 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
-          onClick={() => { sessionStorage.removeItem("csm-crm-session"); location.reload(); }}>Sign out 🔒</button>
+          onClick={() => sb.auth.signOut()}>Sign out 🔒</button>
       </div>
       {view === "Dashboard" && <Dashboard st={st} scored={scored} dispatch={dispatch} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
-        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} />
+        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} />
         : <AccountList scored={scored} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} />)}
       {view === "Renewals" && <Renewals scored={scored} openAccount={openAccount} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
@@ -810,9 +881,25 @@ function App({ user }) {
   );
 }
 function Root() {
-  const [user, setUser] = useState(() => { try { return JSON.parse(sessionStorage.getItem("csm-crm-session")); } catch (e) { return null; } });
-  if (!user) return <Login onOk={u => { const s = { id: u.id, name: u.name, role: u.role }; sessionStorage.setItem("csm-crm-session", JSON.stringify(s)); setUser(s); }} />;
-  return <App user={user} />;
+  const [ready, setReady] = useState(false);
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  useEffect(() => {
+    if (!CONFIGURED) return;
+    sb.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
+    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+  useEffect(() => {
+    if (!session) { setProfile(null); return; }
+    sb.from("profiles").select("id,name,role").eq("id", session.user.id).single()
+      .then(({ data, error }) => error ? alert("Could not load your profile: " + error.message) : setProfile(data));
+  }, [session]);
+  if (!CONFIGURED) return <SetupScreen />;
+  if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>;
+  if (!session) return <AuthScreen />;
+  if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading profile…</div>;
+  return <App user={profile} />;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
