@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
-  html { font-size: 14px; }
+  html { font-size: 12.5px; }
   body { background: #f6f8fb; font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: #334155; }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -646,7 +646,7 @@ function Dashboard({ st, scored, all, scope, user, dispatch, openAccount }) {
         {scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      <div className="grid grid-cols-2 gap-3 min-[1180px]:grid-cols-4">
+      <div className="grid grid-cols-2 gap-3 min-[1060px]:grid-cols-4">
         <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts · converted at your rates`} />
         <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
         <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" />
