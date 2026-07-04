@@ -1281,7 +1281,7 @@ function App({ user }) {
       <main className={`${collapsed ? "ml-14" : "ml-52"} min-w-0 flex-1 px-6 py-5 transition-all`}>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
-        <div className="nm-inset ml-auto flex items-center gap-0.5 !rounded-lg p-0.5">
+        <div className="nm-inset ml-3 flex items-center gap-0.5 !rounded-lg p-0.5">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
