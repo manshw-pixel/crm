@@ -53,14 +53,10 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ---------- admin-count guard: max 2 admins, never zero ----------
+-- ---------- admin guard: any number of admins, but never zero ----------
 create or replace function public.guard_admin_count()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if new.role = 'admin'
-     and (select count(*) from profiles where role = 'admin' and id <> new.id) >= 2 then
-    raise exception 'Maximum 2 admins allowed';
-  end if;
   if tg_op = 'UPDATE' and old.role = 'admin' and new.role <> 'admin'
      and (select count(*) from profiles where role = 'admin' and id <> old.id) = 0 then
     raise exception 'At least one admin must remain';
