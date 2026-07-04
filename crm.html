@@ -217,7 +217,8 @@ function persist(action, next) {
     case "ADD_OPP": return up("opportunities", action.item);
     case "ADD_ACTIVITY": return up("activities", action.item);
     case "ADD_TASK": return up("tasks", action.item);
-    case "TOGGLE_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
+    case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
+    case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
@@ -268,7 +269,9 @@ function reducer(state, action) {
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
     case "ADD_ACTIVITY": return { ...state, activities: [...state.activities, action.item] };
+    case "EDIT_ACTIVITY": return { ...state, activities: state.activities.map(x => x.id === action.id ? { ...x, ...action.patch } : x) };
     case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
+    case "EDIT_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
     case "TOGGLE_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: t.status === "Done" ? "Open" : "Done" } : t) };
     case "UPDATE_INPUTS": {
       return { ...state, accounts: state.accounts.map(a => {
@@ -365,10 +368,22 @@ const AttachmentLinks = ({ items }) => !items || !items.length ? null : (
 );
 
 /* ---------------------------- quick actions ---------------------------- */
-function LogActivityForm({ acct, dispatch, onDone }) {
-  const [type, setType] = useState("call");
-  const [summary, setSummary] = useState("");
-  const [details, setDetails] = useState("");
+const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
+  <div className="flex flex-wrap items-center gap-1.5">
+    {kept.map(at => (
+      <span key={at.path || at.url} className="nm-inset inline-flex items-center gap-1 !rounded-full px-2 py-0.5 text-[11px] font-bold text-indigo-600">
+        📎 {at.name}
+        <button type="button" title="Remove attachment" className="text-rose-500 hover:text-rose-700"
+          onClick={() => setKept(kept.filter(k => k !== at))}>✕</button>
+      </span>
+    ))}
+  </div>
+);
+function LogActivityForm({ acct, dispatch, onDone, existing }) {
+  const [type, setType] = useState(existing ? existing.type : "call");
+  const [summary, setSummary] = useState(existing ? existing.summary : "");
+  const [details, setDetails] = useState(existing ? existing.details || "" : "");
+  const [kept, setKept] = useState(existing ? existing.attachments || [] : []);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
   return (
@@ -376,54 +391,65 @@ function LogActivityForm({ acct, dispatch, onDone }) {
       e.preventDefault(); if (!summary.trim() || busy) return;
       setBusy(true);
       try {
-        const attachments = await uploadFiles(fileRef.current.files, acct.id);
-        dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim(), details: details.trim(), attachments } });
+        const uploaded = await uploadFiles(fileRef.current.files, acct.id);
+        const attachments = [...kept, ...uploaded];
+        if (existing) dispatch({ type: "EDIT_ACTIVITY", id: existing.id, patch: { type, summary: summary.trim(), details: details.trim(), attachments } });
+        else dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim(), details: details.trim(), attachments } });
         onDone();
       } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
     }}>
       <div className="flex flex-wrap items-center gap-2">
-        <Select value={type} onChange={e => setType(e.target.value)} options={["call", "email", "QBR", "ticket", "note"]} />
+        {existing && <span className="text-xs font-bold text-slate-500">Editing activity from {fmtDate(existing.date)}</span>}
+        <Select value={type} onChange={e => setType(e.target.value)} options={["call", "email", "QBR", "ticket", "note", "renewal", "churn"]} />
         <Input autoFocus placeholder="Summary…" value={summary} onChange={e => setSummary(e.target.value)} className="flex-1 min-w-[200px]" />
       </div>
+      <KeptAttachments kept={kept} setKept={setKept} />
       <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
         className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
       <div className="flex flex-wrap items-center gap-2">
         <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
         <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
-        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : "Log"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
+        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : existing ? "Save changes" : "Log"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
       </div>
     </form>
   );
 }
-function AddTaskForm({ acct, dispatch, onDone, team = [], user }) {
-  const [title, setTitle] = useState(""); const [due, setDue] = useState(addDays(7)); const [priority, setPriority] = useState("Medium");
-  const [owner, setOwner] = useState(user ? user.name : acct.csm);
-  const [details, setDetails] = useState("");
+function AddTaskForm({ acct, dispatch, onDone, team = [], user, existing }) {
+  const [title, setTitle] = useState(existing ? existing.title : "");
+  const [due, setDue] = useState(existing ? existing.due : addDays(7));
+  const [priority, setPriority] = useState(existing ? existing.priority : "Medium");
+  const [owner, setOwner] = useState(existing ? existing.owner : user ? user.name : acct.csm);
+  const [details, setDetails] = useState(existing ? existing.details || "" : "");
+  const [kept, setKept] = useState(existing ? existing.attachments || [] : []);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
-  const owners = [...new Set([user ? user.name : null, ...team.map(u => u.name), acct.csm].filter(Boolean))];
+  const owners = [...new Set([user ? user.name : null, ...team.map(u => u.name), acct.csm, existing ? existing.owner : null].filter(Boolean))];
   return (
     <form className="space-y-2" onSubmit={async e => {
       e.preventDefault(); if (!title.trim() || busy) return;
       setBusy(true);
       try {
-        const attachments = await uploadFiles(fileRef.current.files, acct.id);
-        dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner, details: details.trim(), attachments } });
+        const uploaded = await uploadFiles(fileRef.current.files, acct.id);
+        const attachments = [...kept, ...uploaded];
+        if (existing) dispatch({ type: "EDIT_TASK", id: existing.id, patch: { title: title.trim(), due, priority, owner, details: details.trim(), attachments } });
+        else dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner, details: details.trim(), attachments } });
         onDone();
       } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
     }}>
       <div className="flex flex-wrap items-center gap-2">
+        {existing && <span className="text-xs font-bold text-slate-500">Editing task</span>}
         <Input autoFocus placeholder="Task title…" value={title} onChange={e => setTitle(e.target.value)} className="flex-1 min-w-[200px]" />
         <Input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-auto" />
         <Select value={priority} onChange={e => setPriority(e.target.value)} options={["High", "Medium", "Low"]} />
         <Select value={owner} onChange={e => setOwner(e.target.value)} options={owners} />
       </div>
+      <KeptAttachments kept={kept} setKept={setKept} />
       <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
         className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
       <div className="flex flex-wrap items-center gap-2">
         <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
         <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
-        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : "Add"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
+        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : existing ? "Save changes" : "Add"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
       </div>
     </form>
   );
@@ -813,6 +839,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "adjust" ? <AdjustArrForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form && form.t === "editActivity" ? <LogActivityForm acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form && form.t === "editTask" ? <AddTaskForm acct={a} existing={form.item} team={team} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
@@ -835,6 +863,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
                 <span className="text-xs text-slate-500">{t.owner}</span>
                 <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
                 <span className="text-xs text-slate-500">{t.priority}</span>
+                <button title="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>
               </div>
               {t.details && <div className="ml-6 mt-1 whitespace-pre-wrap text-xs text-slate-600">{t.details}</div>}
               {t.attachments && t.attachments.length > 0 && <div className="ml-6 mt-1"><AttachmentLinks items={t.attachments} /></div>}
@@ -856,10 +885,11 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
           {acts.length === 0 && <div className="text-sm text-slate-500">No activity yet.</div>}
           {acts.map(x => (
             <div key={x.id} className="border-b border-slate-100 py-1.5 last:border-0">
-              <div className="flex gap-3 text-sm">
+              <div className="flex items-center gap-3 text-sm">
                 <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
                 <span className="flex-1">{x.summary}</span>
                 <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
+                <button title="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>
               </div>
               {x.details && <div className="ml-[76px] mt-1 whitespace-pre-wrap text-xs text-slate-600">{x.details}</div>}
               {x.attachments && x.attachments.length > 0 && <div className="ml-[76px] mt-1"><AttachmentLinks items={x.attachments} /></div>}
