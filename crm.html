@@ -655,19 +655,19 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
         {scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      <div className="grid grid-cols-2 gap-3 min-[1060px]:grid-cols-4">
+      <div className="grid grid-cols-3 gap-3">
         <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts`} />
         <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
+        <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" />
+      </div>
+      <div className="grid grid-cols-3 gap-3">
         <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" />
         <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} />
+        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${all.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} />
       </div>
-      <div className="grid grid-cols-2 gap-3 min-[1060px]:grid-cols-4">
-        <StatSm label="At-risk accounts" value={atRisk.length} tone="text-rose-600" />
-        <StatSm label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : "text-slate-700"} sub={`${all.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} lost`} />
-        <StatSm label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : "text-slate-700"} sub={scope === "mine" ? "owned by you" : "whole team"} />
-        <StatSm label="Health"><div className="w-40"><DistBar counts={counts} /></div></StatSm>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-3 gap-3">
+        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} />
+        <Card title="Health distribution" className="!p-3"><DistBar counts={counts} /></Card>
         <Card title="Renewals due" className="!p-3">
           <div className="max-h-48 overflow-y-auto pr-1">
           {[["0–30 days", buckets[0]], ["31–60 days", buckets[1]], ["61–90 days", buckets[2]]].map(([label, list]) => (
@@ -684,6 +684,8 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
           ))}
           </div>
         </Card>
+      </div>
+      <div className="grid grid-cols-3 gap-3">
         <Card title="Alerts & flags" className="!p-3">
           <div className="max-h-48 overflow-y-auto pr-1">
           {flagged.length === 0 && <div className="text-sm text-slate-500">No flags. 🎉</div>}
@@ -695,8 +697,6 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
           ))}
           </div>
         </Card>
-      </div>
-      <div className="grid gap-3 lg:grid-cols-2">
       <Card title="Team tasks by owner" className="!p-3">
         <div className="max-h-40 overflow-y-auto pr-1">
         {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
