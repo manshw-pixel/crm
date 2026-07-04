@@ -198,7 +198,7 @@ function persist(action, next) {
     case "ADD_ACTIVITY": return up("activities", action.item);
     case "ADD_TASK": return up("tasks", action.item);
     case "TOGGLE_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
-    case "UPDATE_INPUTS": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
       ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
@@ -227,6 +227,7 @@ function reducer(state, action) {
   switch (action.type) {
     case "REPLACE": return action.state;
     case "ADD_ACCOUNT": return { ...state, accounts: [...state.accounts, action.item] };
+    case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
     case "DELETE_ACCOUNT": return { ...state,
       accounts: state.accounts.filter(a => a.id !== action.id),
       contacts: state.contacts.filter(c => c.accountId !== action.id),
@@ -346,13 +347,17 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 }
 
 const F = ({ label, children }) => <label className="text-xs text-slate-500">{label}<div>{children}</div></label>;
-function NewAccountForm({ dispatch, onDone }) {
-  const [v, setV] = useState({ name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active" });
+function AccountForm({ dispatch, onDone, existing }) {
+  const [v, setV] = useState(existing
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
       e.preventDefault(); if (!v.name.trim()) return;
-      dispatch({ type: "ADD_ACCOUNT", item: { ...v, name: v.name.trim(), arr: +v.arr || 0, id: uid(), inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0 }, history: [] } });
+      const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0 };
+      if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
+      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0 }, history: [] } });
       onDone();
     }}>
       <F label="Name *"><Input autoFocus value={v.name} onChange={e => set("name", e.target.value)} /></F>
@@ -365,8 +370,8 @@ function NewAccountForm({ dispatch, onDone }) {
       <F label="Renewal date"><Input type="date" value={v.renewalDate} onChange={e => set("renewalDate", e.target.value)} /></F>
       <F label="Contract status"><Select value={v.contractStatus} onChange={e => set("contractStatus", e.target.value)} options={["Active", "Auto-renew", "In negotiation", "Churn risk"]} className="w-full" /></F>
       <div className="col-span-2 flex items-center gap-2 md:col-span-4">
-        <Btn kind="primary" type="submit">Create account</Btn><Btn onClick={onDone}>Cancel</Btn>
-        <span className="text-xs text-slate-400">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>
+        <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
+        {!existing && <span className="text-xs text-slate-400">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
       </div>
     </form>
   );
@@ -498,7 +503,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
   );
   return (
     <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2"><Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn><Btn onClick={() => exportCSV(rows)}>Export CSV</Btn></div>}>
-      {adding && <div className="mb-4 rounded border border-indigo-200 bg-indigo-50/40 p-3"><NewAccountForm dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
+      {adding && <div className="mb-4 rounded border border-indigo-200 bg-indigo-50/40 p-3"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
         <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
@@ -564,6 +569,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
         <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
         <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
+        <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
@@ -574,6 +580,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
@@ -857,6 +864,10 @@ function App({ user }) {
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
   const openAccount = id => { setView("Accounts"); setAcctId(id); };
+  const [notifOpen, setNotifOpen] = useState(false);
+  const renewalsDue = scored
+    .filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 30; })
+    .sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate));
   return (
     <div className="mx-auto max-w-7xl p-4">
       <div className="mb-4 flex items-center gap-1">
@@ -867,7 +878,29 @@ function App({ user }) {
             {v} <span className="text-[10px] opacity-50">{i + 1}</span>
           </button>
         ))}
-        <span className="ml-auto text-xs text-slate-400">{user.name} · {user.role}{loaded ? " · shared" : " · loading…"}</span>
+        <div className="relative ml-auto">
+          <button onClick={() => setNotifOpen(o => !o)} title="Renewals due within 30 days"
+            className={`relative rounded px-2 py-1 text-base ${notifOpen ? "bg-slate-200" : "hover:bg-slate-200"}`}>🔔
+            {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{renewalsDue.length}</span>}
+          </button>
+          {notifOpen && (
+            <div className="absolute right-0 z-20 mt-1 w-80 rounded-lg border border-slate-200 bg-white p-2 shadow-lg">
+              <div className="px-2 py-1 text-xs font-semibold text-slate-500">Renewals due within 30 days</div>
+              {renewalsDue.length === 0 && <div className="px-2 py-2 text-sm text-slate-400">Nothing due in the next 30 days. 🎉</div>}
+              {renewalsDue.map(a => (
+                <button key={a.id} onClick={() => { setNotifOpen(false); openAccount(a.id); }}
+                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
+                  <span className="font-medium">{a.name}</span>
+                  <span className="flex items-center gap-2 text-xs">
+                    <span className="text-slate-500">{fmtDate(a.renewalDate)}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${daysUntil(a.renewalDate) <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{daysUntil(a.renewalDate)}d</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <span className="ml-3 text-xs text-slate-400">{user.name} · {user.role}{loaded ? " · shared" : " · loading…"}</span>
         <button className="ml-3 rounded border border-slate-300 bg-white px-2 py-1 text-xs text-slate-500 hover:bg-slate-50"
           onClick={() => sb.auth.signOut()}>Sign out 🔒</button>
       </div>
