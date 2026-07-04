@@ -778,9 +778,9 @@ function AccountList({ scored, openAccount, searchRef, dispatch, team }) {
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => setShowChurned(e.target.checked)} />show churned ({churnedCount})</label>}
       </div>
-      <div className="overflow-x-auto">
+      <div className="max-h-[65vh] overflow-auto">
         <table className="w-full text-sm">
-          <thead><tr className="border-b border-slate-200">
+          <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
             <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
@@ -1163,6 +1163,36 @@ function UsersCard({ me }) {
     const { error } = await sb.from("profiles").update({ role }).eq("id", u.id);
     if (error) setErr(error.message); else load();
   };
+  const [editing, setEditing] = useState(null); // {id, name}
+  const renameEverywhere = async (oldName, newName) => {
+    // keep account CSM assignments and task owners in sync with the new name
+    for (const [t, key] of [["accounts", "csm"], ["tasks", "owner"]]) {
+      const { data } = await sb.from(t).select("id,data");
+      for (const row of data || []) {
+        if (row.data && row.data[key] === oldName) {
+          row.data[key] = newName;
+          const { error } = await sb.from(t).upsert({ id: row.id, data: row.data });
+          if (error) throw error;
+        }
+      }
+    }
+  };
+  const saveRename = async u => {
+    const newName = editing.name.trim();
+    setErr(""); setMsg("");
+    if (!newName) return setErr("Name cannot be empty.");
+    if (newName === u.name) return setEditing(null);
+    if (users.some(x => x.id !== u.id && x.name === newName)) return setErr("That name is already taken.");
+    setBusy(true);
+    try {
+      const { error } = await sb.from("profiles").update({ name: newName }).eq("id", u.id);
+      if (error) throw error;
+      await renameEverywhere(u.name, newName);
+      setMsg(`Renamed ${u.name} → ${newName}; their accounts and tasks were updated too.`);
+      setEditing(null); load();
+    } catch (ex) { setErr(ex.message); }
+    setBusy(false);
+  };
   const addUser = async e => {
     e.preventDefault(); setErr(""); setMsg("");
     if (!v.name.trim() || !v.email.trim()) return setErr("Name and email are required.");
@@ -1187,7 +1217,18 @@ function UsersCard({ me }) {
     <Card title={`Users (${users.length})`}>
       {users.map(u => (
         <div key={u.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-          <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}</span>
+          {editing && editing.id === u.id ? (
+            <span className="flex flex-1 items-center gap-2">
+              <Input autoFocus value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); saveRename(u); } if (e.key === "Escape") setEditing(null); }} className="w-44 !py-0.5" />
+              <button className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => saveRename(u)}>{busy ? "…" : "save"}</button>
+              <button className="text-xs text-slate-500 hover:underline" onClick={() => setEditing(null)}>cancel</button>
+            </span>
+          ) : (
+            <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}
+              <button title="Rename user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name }); }}>✎</button>
+            </span>
+          )}
           <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
           {u.id !== me.id && (u.role === "user"
             ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
