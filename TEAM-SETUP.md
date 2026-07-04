@@ -41,6 +41,18 @@ In Supabase: **Authentication → Sign In / Providers → Email** — turn **off
 - In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
 
+## Optional: daily renewal email alerts
+
+Emails every team member a digest of accounts renewing within 30 days (daily at 09:00 IST, only when something is due).
+
+1. Create a free account at [brevo.com](https://www.brevo.com) (300 emails/day free).
+2. Brevo → **Senders & Domains → Senders** → add and verify the address alerts should come **from** (your own email works).
+3. Brevo → **SMTP & API → API Keys** → **Generate a new API key** → copy it.
+4. Open `renewal-alerts.sql`, paste the API key and your verified sender address into the two `EDIT ME` lines — **do this in the Supabase SQL Editor, not in the repo copy** (never commit the real key to GitHub).
+5. Run the whole script in Supabase **SQL Editor**. The last line fires a test immediately — its result text tells you whether an email was sent, and it lands in every signed-up user's inbox.
+
+To change the send time, edit the cron expression (`'30 3 * * *'` is UTC) and re-run the script. To stop alerts: `select cron.unschedule('crm-renewal-alerts');`
+
 ## Day-to-day notes
 
 - Changes save to the shared database immediately and other open browsers refresh within a second or two.
