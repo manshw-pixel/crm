@@ -218,7 +218,8 @@ function persist(action, next) {
     case "ADD_ACTIVITY": return up("activities", action.item);
     case "ADD_TASK": return up("tasks", action.item);
     case "TOGGLE_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
-    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
       ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
@@ -255,6 +256,9 @@ function reducer(state, action) {
       ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
     case "REACTIVATE_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? { ...a, contractStatus: "Active", churn: null } : a) };
+    case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
+      ? { ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] } : a) };
+    case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
       accounts: state.accounts.filter(a => a.id !== action.id),
       contacts: state.contacts.filter(c => c.accountId !== action.id),
@@ -480,6 +484,33 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
   );
 }
 
+const ADJUST_REASONS = ["Seat reduction", "Downgrade", "Discount", "Mid-term upsell", "Price increase", "Other"];
+function AdjustArrForm({ acct, user, dispatch, onDone }) {
+  const [newArr, setNewArr] = useState(acct.arr);
+  const [reason, setReason] = useState("Seat reduction");
+  const [note, setNote] = useState("");
+  const delta = (+newArr || 0) - acct.arr;
+  return (
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => {
+      e.preventDefault();
+      if (delta === 0) return onDone();
+      const kind = delta > 0 ? "expansion" : "contraction";
+      dispatch({ type: "ADJUST_ARR", id: acct.id, newArr: +newArr || 0,
+        entry: { id: uid(), date: iso(Date.now()), delta, kind, source: "adjustment", reason, note: note.trim(), by: user.name } });
+      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "note", date: iso(Date.now()),
+        summary: `ARR ${delta > 0 ? "increased" : "reduced"} ${fmtMoney(Math.abs(delta), acct.currency)} (${reason}${note.trim() ? " — " + note.trim() : ""}) · now ${fmtMoney(+newArr || 0, acct.currency)} · by ${user.name}` } });
+      onDone();
+    }}>
+      <label className="text-xs text-slate-700">New ARR ({acct.currency})<Input type="number" min="0" value={newArr} onChange={e => setNewArr(e.target.value)} className="w-36" /></label>
+      <label className="text-xs text-slate-700">Reason<Select value={reason} onChange={e => setReason(e.target.value)} options={ADJUST_REASONS} /></label>
+      <Input placeholder="Note (optional)" value={note} onChange={e => setNote(e.target.value)} className="w-56" />
+      <Btn kind="primary" type="submit">{delta === 0 ? "No change" : delta > 0 ? `Book +${fmtMoney(delta, acct.currency)} expansion` : `Book −${fmtMoney(-delta, acct.currency)} reduction`}</Btn>
+      <Btn onClick={onDone}>Cancel</Btn>
+      <span className="text-xs text-slate-500">Counts toward NRR/GRR immediately (renewals and won opportunities are booked automatically).</span>
+    </form>
+  );
+}
+
 /* ------------------------------- Dashboard ------------------------------- */
 function Dashboard({ st, scored, all, scope, user, dispatch, openAccount }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
@@ -499,6 +530,12 @@ function Dashboard({ st, scored, all, scope, user, dispatch, openAccount }) {
     (a.renewals || []).forEach(r => {
       if (new Date(r.completedOn).getTime() >= yearAgo) {
         const d = toUSD(r.arr - r.prevArr, a.currency, rates);
+        if (d >= 0) expansion += d; else contraction -= d;
+      }
+    });
+    (a.arrEvents || []).forEach(ev => { // won opportunities + manual ARR adjustments
+      if (new Date(ev.date).getTime() >= yearAgo) {
+        const d = toUSD(ev.delta, a.currency, rates);
         if (d >= 0) expansion += d; else contraction -= d;
       }
     });
@@ -695,6 +732,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
+        {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
         {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
           onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id });
@@ -715,6 +753,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "adjust" ? <AdjustArrForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
@@ -759,30 +798,72 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
             </div>
           ))}
         </Card>
-        <Card title={`Open opportunities (${opps.length})`}>
+        <Card title={`Opportunities (${opps.filter(o => !["Won", "Lost"].includes(o.stage)).length} open)`}>
           {opps.length === 0 && <div className="text-sm text-slate-500">None.</div>}
           {opps.map(o => (
-            <div key={o.id} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+            <div key={o.id} className={`flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0 ${["Won", "Lost"].includes(o.stage) ? "opacity-60" : ""}`}>
               <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
               <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
-              <span className="text-xs text-slate-700">{o.stage}</span>
+              <Select value={o.stage} options={["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"]}
+                className="!px-2 !py-0.5 text-xs" onChange={e => {
+                  const stage = e.target.value;
+                  if (stage === o.stage) return;
+                  if (stage === "Won") {
+                    if (!confirm(`Mark this ${o.type} as WON and book ${fmtMoney(o.value, a.currency)} expansion ARR onto ${a.name}?`)) return;
+                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                    dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
+                      entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
+                    dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
+                      summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                  } else if (o.stage === "Won") {
+                    if (!confirm("This opportunity was already booked as Won expansion. Changing its stage does NOT reverse the ARR — use ⇄ Adjust ARR for that. Continue?")) return;
+                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                  } else {
+                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                  }
+                }} />
               <span className="text-xs text-slate-500">close {fmtDate(o.closeDate)}</span>
             </div>
           ))}
         </Card>
       </div>
-      <Card title={`Renewal history (${(a.renewals || []).length})`}>
-        {(a.renewals || []).length === 0 && <div className="text-sm text-slate-500">No renewals completed yet. Use <b>✓ Complete renewal</b> when this account renews.</div>}
-        {(a.renewals || []).slice().reverse().map(r => (
-          <div key={r.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-            <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
-            <span className="text-slate-800">{fmtDate(r.completedOn)}</span>
-            <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(r.from)} → <b>{fmtDate(r.to)}</b></span>
-            <span className="text-xs">{fmtMoney(r.arr, a.currency)}{r.arr !== r.prevArr && <span className={r.arr > r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({r.arr > r.prevArr ? "▲" : "▼"} from {fmtMoney(r.prevArr, a.currency)})</span>}</span>
-            <span className="text-xs text-slate-500">by {r.by}</span>
-          </div>
-        ))}
-      </Card>
+      {(() => {
+        const events = [
+          ...(a.renewals || []).map(r => ({ id: r.id, date: r.completedOn, sort: r.completedOn, kind: "renewal", r })),
+          ...(a.arrEvents || []).map(ev => ({ id: ev.id, date: ev.date, sort: ev.date, kind: ev.kind, ev })),
+          ...(a.churn ? [{ id: "churn", date: a.churn.date, sort: a.churn.date, kind: "churn" }] : []),
+        ].sort((x, y) => y.sort.localeCompare(x.sort));
+        return (
+          <Card title={`Revenue history (${events.length})`}>
+            {events.length === 0 && <div className="text-sm text-slate-500">No revenue events yet — renewals, won opportunities, ARR adjustments and churn all land here.</div>}
+            {events.map(e => (
+              <div key={e.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+                {e.kind === "renewal" && <>
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
+                  <span className="text-slate-800">{fmtDate(e.date)}</span>
+                  <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
+                  <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
+                  <span className="text-xs text-slate-500">by {e.r.by}</span>
+                </>}
+                {(e.kind === "expansion" || e.kind === "contraction") && <>
+                  <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${e.kind === "expansion" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600"}`}>{e.kind === "expansion" ? "▲ expansion" : "▼ reduction"}</span>
+                  <span className="text-slate-800">{fmtDate(e.date)}</span>
+                  <span className="flex-1 text-xs text-slate-700">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
+                  <span className={`text-xs font-bold ${e.ev.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
+                  <span className="text-xs text-slate-500">by {e.ev.by}</span>
+                </>}
+                {e.kind === "churn" && <>
+                  <span className="rounded bg-rose-500 px-1.5 py-0.5 text-xs font-bold text-white">✖ churned</span>
+                  <span className="text-slate-800">{fmtDate(e.date)}</span>
+                  <span className="flex-1 text-xs text-slate-700">{a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
+                  <span className="text-xs font-bold text-rose-600">−{fmtMoney(a.churn.arr, a.churn.currency || a.currency)}</span>
+                  <span className="text-xs text-slate-500">by {a.churn.by}</span>
+                </>}
+              </div>
+            ))}
+          </Card>
+        );
+      })()}
     </div>
   );
 }
