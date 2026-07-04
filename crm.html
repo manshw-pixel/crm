@@ -44,8 +44,8 @@ const { useState, useEffect, useReducer, useMemo, useRef, useCallback } = React;
  * 2. Run supabase-setup.sql in its SQL Editor
  * 3. Paste Project Settings -> API -> "Project URL" and "anon public" key here.
  * The anon key is safe to publish; access is enforced by database rules. */
-const SUPABASE_URL = "PASTE_YOUR_SUPABASE_URL";
-const SUPABASE_ANON_KEY = "PASTE_YOUR_ANON_KEY";
+const SUPABASE_URL = "https://avrtiyfoxlvxwqdkrznd.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2cnRpeWZveGx2eHdxZGtyem5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTA1NjUsImV4cCI6MjA5ODcyNjU2NX0.D0rhXOgtn4Prfx_2opJHLhmsuCCEI3jTICw7DjfYX2Y";
 /* =========================================================================== */
 const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
 const sb = CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
