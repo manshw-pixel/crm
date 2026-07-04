@@ -12,7 +12,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800&display=swap" rel="stylesheet">
 <style>
-  html { font-size: 14px; }
+  html { font-size: 16px; }
   body { background: #e3ebf4; font-family: 'Nunito', ui-sans-serif, system-ui, sans-serif; }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-thumb { background: #c3cfdd; border-radius: 4px; }
@@ -29,7 +29,7 @@
   input[type=range] { accent-color: #7c6cf6; }
 </style>
 </head>
-<body class="text-slate-600">
+<body class="text-slate-700">
 <div id="root"></div>
 <script type="text/babel" data-presets="react">
 /*
@@ -294,7 +294,7 @@ function DistBar({ counts }) {
           <div key={k} style={{ width: (100 * counts[k]) / total + "%", background: RISK_HEX[k] }} title={`${k}: ${counts[k]}`} />
         ))}
       </div>
-      <div className="mt-1 flex gap-4 text-xs text-slate-500">
+      <div className="mt-1 flex gap-4 text-xs text-slate-700">
         {["Green", "Yellow", "Red"].map(k => <span key={k}><span className="inline-block h-2 w-2 rounded-full mr-1" style={{ background: RISK_HEX[k] }}></span>{k} {counts[k]}</span>)}
       </div>
     </div>
@@ -306,23 +306,23 @@ const Chip = ({ risk, children }) => <span className={`inline-flex items-center 
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "" }) => (
   <div className={`nm p-5 ${className}`}>
-    {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-bold uppercase tracking-widest text-slate-500">{title}</h3>{right}</div>}
+    {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-bold uppercase tracking-widest text-slate-700">{title}</h3>{right}</div>}
     {children}
   </div>
 );
 const Stat = ({ label, value, sub, tone }) => (
   <Card>
-    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">{label}</div>
+    <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
     <div className={`mt-1 text-2xl font-extrabold ${tone || "text-slate-700"}`}>{value}</div>
-    {sub && <div className="text-xs text-slate-400">{sub}</div>}
+    {sub && <div className="text-xs text-slate-500">{sub}</div>}
   </Card>
 );
 const Btn = ({ children, onClick, kind = "default", type = "button" }) => (
-  <button type={type} onClick={onClick} className={`px-3.5 py-1.5 text-xs font-bold ${kind === "primary" ? "grad rounded-full text-white" : "nm-btn text-slate-500"}`}>{children}</button>
+  <button type={type} onClick={onClick} className={`px-3.5 py-1.5 text-xs font-bold ${kind === "primary" ? "grad rounded-full text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
-const Input = p => <input {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-600 outline-none placeholder:text-slate-400 " + (p.className || "")} />;
+const Input = p => <input {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />;
 const Select = ({ options, ...p }) => (
-  <select {...p} className={"nm-inset border-0 px-3 py-1.5 text-sm text-slate-600 outline-none " + (p.className || "")}>
+  <select {...p} className={"nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none " + (p.className || "")}>
     {options.map(o => <option key={o} value={o}>{o}</option>)}
   </select>
 );
@@ -354,7 +354,7 @@ function AddTaskForm({ acct, dispatch, onDone }) {
 }
 function UpdateHealthForm({ acct, dispatch, onDone }) {
   const [v, setV] = useState({ ...acct.inputs });
-  const num = (k, min, max) => <label className="text-xs text-slate-500">{k}<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: +e.target.value })} className="w-20" /></label>;
+  const num = (k, min, max) => <label className="text-xs text-slate-700">{k}<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: +e.target.value })} className="w-20" /></label>;
   return (
     <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: v }); onDone(); }}>
       {num("usage", 0, 100)}{num("sentiment", 0, 100)}{num("tickets", 0, 50)}{num("nps", -100, 100)}
@@ -363,7 +363,7 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
   );
 }
 
-const F = ({ label, children }) => <label className="text-xs text-slate-500">{label}<div>{children}</div></label>;
+const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
 function AccountForm({ dispatch, onDone, existing }) {
   const [v, setV] = useState(existing
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus }
@@ -388,7 +388,7 @@ function AccountForm({ dispatch, onDone, existing }) {
       <F label="Contract status"><Select value={v.contractStatus} onChange={e => set("contractStatus", e.target.value)} options={["Active", "Auto-renew", "In negotiation", "Churn risk"]} className="w-full" /></F>
       <div className="col-span-2 flex items-center gap-2 md:col-span-4">
         <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
-        {!existing && <span className="text-xs text-slate-400">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
+        {!existing && <span className="text-xs text-slate-500">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
       </div>
     </form>
   );
@@ -403,7 +403,7 @@ function AddContactForm({ acct, dispatch, onDone }) {
       <Input placeholder="Role" value={v.role} onChange={e => set("role", e.target.value)} className="w-32" />
       <Input placeholder="Email" type="email" value={v.email} onChange={e => set("email", e.target.value)} className="w-44" />
       <Select value={v.sentiment} onChange={e => set("sentiment", e.target.value)} options={["Positive", "Neutral", "Negative"]} />
-      <label className="flex items-center gap-1 text-xs text-slate-500"><input type="checkbox" checked={v.isChampion} onChange={e => set("isChampion", e.target.checked)} />Champion</label>
+      <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" checked={v.isChampion} onChange={e => set("isChampion", e.target.checked)} />Champion</label>
       <Btn kind="primary" type="submit">Add</Btn><Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
@@ -436,10 +436,10 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
         summary: `Renewal completed by ${user.name} — ${fmtMoney(arr, acct.currency)} · next renewal ${fmtDate(newDate)}` } });
       onDone();
     }}>
-      <label className="text-xs text-slate-500">Renewed until<Input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-auto" /></label>
-      <label className="text-xs text-slate-500">ARR for new term ({acct.currency})<Input type="number" min="0" value={newArr} onChange={e => setNewArr(e.target.value)} className="w-32" /></label>
+      <label className="text-xs text-slate-700">Renewed until<Input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-auto" /></label>
+      <label className="text-xs text-slate-700">ARR for new term ({acct.currency})<Input type="number" min="0" value={newArr} onChange={e => setNewArr(e.target.value)} className="w-32" /></label>
       <Btn kind="primary" type="submit">Mark renewed</Btn><Btn onClick={onDone}>Cancel</Btn>
-      <span className="text-xs text-slate-400">Logs this renewal, moves the renewal date forward and updates ARR.</span>
+      <span className="text-xs text-slate-500">Logs this renewal, moves the renewal date forward and updates ARR.</span>
     </form>
   );
 }
@@ -470,19 +470,19 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
         <Card title="Renewals due">
           {[["0–30 days", buckets[0]], ["31–60 days", buckets[1]], ["61–90 days", buckets[2]]].map(([label, list]) => (
             <div key={label} className="mb-2">
-              <div className="text-xs font-semibold text-slate-400">{label} · {fmtMoney(list.reduce((s, a) => s + a.arrUSD, 0))} USD</div>
-              {list.length === 0 && <div className="text-xs text-slate-400 italic">none</div>}
+              <div className="text-xs font-semibold text-slate-500">{label} · {fmtMoney(list.reduce((s, a) => s + a.arrUSD, 0))} USD</div>
+              {list.length === 0 && <div className="text-xs text-slate-500 italic">none</div>}
               {list.map(a => (
                 <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-white/60">
                   <span>{a.name}</span>
-                  <span className="flex items-center gap-2 text-xs text-slate-500">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
+                  <span className="flex items-center gap-2 text-xs text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
                 </button>
               ))}
             </div>
           ))}
         </Card>
         <Card title="Alerts & flags">
-          {flagged.length === 0 && <div className="text-sm text-slate-400">No flags. 🎉</div>}
+          {flagged.length === 0 && <div className="text-sm text-slate-500">No flags. 🎉</div>}
           {flagged.map(a => (
             <button key={a.id} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-white/60">
               <span className="text-sm">{a.name} <HealthChip score={a.score} /></span>
@@ -492,7 +492,7 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
         </Card>
       </div>
       <Card title="Tasks due this week">
-        {weekTasks.length === 0 && <div className="text-sm text-slate-400">Nothing due.</div>}
+        {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
         {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
           const a = scored.find(x => x.id === t.accountId);
           return (
@@ -500,8 +500,8 @@ function Dashboard({ st, scored, dispatch, openAccount }) {
               <input type="checkbox" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
               <span className="flex-1">{t.title}</span>
               <button className="text-indigo-600 hover:underline text-xs" onClick={() => openAccount(t.accountId)}>{a?.name}</button>
-              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-500"}`}>{fmtDate(t.due)}</span>
-              <span className="w-14 text-xs text-slate-400">{t.priority}</span>
+              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
+              <span className="w-14 text-xs text-slate-500">{t.priority}</span>
             </div>
           );
         })}
@@ -534,7 +534,7 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
     return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
   }, [scored, q, tier, risk, csm, renew, sort]);
   const Th = ({ k, children, className = "" }) => (
-    <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400 hover:text-slate-600 ${className}`}
+    <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
       {children}{sort.k === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
     </th>
@@ -548,16 +548,16 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
         <Select value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
         <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
         <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
-        <span className="text-xs text-slate-400">renew ≤ days</span>
+        <span className="text-xs text-slate-500">renew ≤ days</span>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-slate-200">
             <Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-[10px] font-bold uppercase tracking-widest text-slate-400">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan="8" className="px-2 py-8 text-center text-sm text-slate-400">
+            {rows.length === 0 && <tr><td colSpan="8" className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
             {rows.map(a => {
@@ -566,12 +566,12 @@ function AccountList({ scored, openAccount, searchRef, dispatch }) {
                 <tr key={a.id} className="cursor-pointer border-b border-white/70 hover:bg-white/60" onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5 font-medium">{a.name}</td>
                   <td className="px-2">{a.tier}</td>
-                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-400">≈{fmtMoney(a.arrUSD)}</span>}</td>
-                  <td className="px-2 text-slate-500">{a.industry}</td>
+                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}</td>
+                  <td className="px-2 text-slate-700">{a.industry}</td>
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
-                  <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-500"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
-                  <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[10px] text-rose-600">{f}</span>)}</td>
+                  <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
               );
             })}
@@ -600,8 +600,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
         <Btn onClick={back}>← Back</Btn>
         <h2 className="text-xl font-bold">{a.name}</h2>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        <span className="text-sm text-slate-500">{a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}</span>
-        <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-500"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+        <span className="text-sm text-slate-700">{a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}</span>
+        <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
@@ -625,18 +625,18 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
           <Sparkline points={[...a.history, { d: iso(Date.now()), s: a.score }]} />
-          <div className="mt-2 space-y-0.5 text-xs text-slate-500">
+          <div className="mt-2 space-y-0.5 text-xs text-slate-700">
             {Object.keys(comps).map(k => <div key={k} className="flex justify-between"><span>{WEIGHT_LABELS[k]}</span><span className="font-mono">{comps[k]}</span></div>)}
           </div>
         </Card>
         <Card title={`Open tasks (${tasks.length})`}>
-          {tasks.length === 0 && <div className="text-sm text-slate-400">None open.</div>}
+          {tasks.length === 0 && <div className="text-sm text-slate-500">None open.</div>}
           {tasks.map(t => (
             <div key={t.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
               <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
               <span className="flex-1">{t.title}</span>
-              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-500"}`}>{fmtDate(t.due)}</span>
-              <span className="text-xs text-slate-400">{t.priority}</span>
+              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
+              <span className="text-xs text-slate-500">{t.priority}</span>
             </div>
           ))}
         </Card>
@@ -644,44 +644,44 @@ function AccountDetail({ st, scored, id, dispatch, back, user }) {
           {contacts.map(c => (
             <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
               <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
-                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-400"}`}>{c.sentiment}</span></div>
-              <div className="text-xs text-slate-500">{c.role} · {c.email}</div>
+                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span></div>
+              <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
             </div>
           ))}
         </Card>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title={`Activity timeline (${acts.length})`}>
-          {acts.length === 0 && <div className="text-sm text-slate-400">No activity yet.</div>}
+          {acts.length === 0 && <div className="text-sm text-slate-500">No activity yet.</div>}
           {acts.map(x => (
             <div key={x.id} className="flex gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-              <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-500">{x.type}</span>
+              <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
               <span className="flex-1">{x.summary}</span>
-              <span className="shrink-0 text-xs text-slate-400">{fmtDate(x.date)}</span>
+              <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
             </div>
           ))}
         </Card>
         <Card title={`Open opportunities (${opps.length})`}>
-          {opps.length === 0 && <div className="text-sm text-slate-400">None.</div>}
+          {opps.length === 0 && <div className="text-sm text-slate-500">None.</div>}
           {opps.map(o => (
             <div key={o.id} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
               <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
               <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
-              <span className="text-xs text-slate-500">{o.stage}</span>
-              <span className="text-xs text-slate-400">close {fmtDate(o.closeDate)}</span>
+              <span className="text-xs text-slate-700">{o.stage}</span>
+              <span className="text-xs text-slate-500">close {fmtDate(o.closeDate)}</span>
             </div>
           ))}
         </Card>
       </div>
       <Card title={`Renewal history (${(a.renewals || []).length})`}>
-        {(a.renewals || []).length === 0 && <div className="text-sm text-slate-400">No renewals completed yet. Use <b>✓ Complete renewal</b> when this account renews.</div>}
+        {(a.renewals || []).length === 0 && <div className="text-sm text-slate-500">No renewals completed yet. Use <b>✓ Complete renewal</b> when this account renews.</div>}
         {(a.renewals || []).slice().reverse().map(r => (
           <div key={r.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
             <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
-            <span className="text-slate-600">{fmtDate(r.completedOn)}</span>
-            <span className="flex-1 text-xs text-slate-500">term extended {fmtDate(r.from)} → <b>{fmtDate(r.to)}</b></span>
+            <span className="text-slate-800">{fmtDate(r.completedOn)}</span>
+            <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(r.from)} → <b>{fmtDate(r.to)}</b></span>
             <span className="text-xs">{fmtMoney(r.arr, a.currency)}{r.arr !== r.prevArr && <span className={r.arr > r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({r.arr > r.prevArr ? "▲" : "▼"} from {fmtMoney(r.prevArr, a.currency)})</span>}</span>
-            <span className="text-xs text-slate-400">by {r.by}</span>
+            <span className="text-xs text-slate-500">by {r.by}</span>
           </div>
         ))}
       </Card>
@@ -702,14 +702,14 @@ function Renewals({ scored, openAccount }) {
     <div className="flex gap-3 overflow-x-auto pb-3">
       {months.map(m => (
         <div key={m.key} className="nm w-56 shrink-0 p-4">
-          <div className="mb-2 flex justify-between text-xs font-semibold text-slate-500">
+          <div className="mb-2 flex justify-between text-xs font-semibold text-slate-700">
             <span>{m.label}</span><span>{m.items.length ? fmtMoney(m.items.reduce((s, a) => s + a.arrUSD, 0)) + " USD" : ""}</span>
           </div>
-          {m.items.length === 0 && <div className="text-xs italic text-slate-300">—</div>}
+          {m.items.length === 0 && <div className="text-xs italic text-slate-400">—</div>}
           {m.items.map(a => (
             <button key={a.id} onClick={() => openAccount(a.id)} className="nm-sm mb-3 w-full p-2.5 text-left hover:bg-white/60">
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
-              <div className="mt-0.5 text-xs text-slate-500">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
+              <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
             </button>
           ))}
         </div>
@@ -743,7 +743,7 @@ function Settings({ st, dispatch, user }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <Card title="Health score weights">
-        <div className="nm-inset mb-3 p-3 font-mono text-xs text-slate-500">
+        <div className="nm-inset mb-3 p-3 font-mono text-xs text-slate-700">
           score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}
         </div>
         {Object.keys(w).map(k => (
@@ -753,7 +753,7 @@ function Settings({ st, dispatch, user }) {
             <span className="w-12 text-right font-mono text-xs">{(100 * w[k] / total).toFixed(0)}%</span>
           </div>
         ))}
-        <div className="mt-2 text-xs text-slate-400">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
+        <div className="mt-2 text-xs text-slate-500">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
       </Card>
       <Card title="Currency conversion (to USD)">
         {CURRENCIES.filter(c => c !== "USD").map(c => (
@@ -761,10 +761,10 @@ function Settings({ st, dispatch, user }) {
             <span className="w-24">1 {c} ({CUR_SYM[c]}) =</span>
             <Input type="number" step="0.0001" min="0" value={rates[c]}
               onChange={e => dispatch({ type: "SET_RATES", rates: { ...rates, [c]: +e.target.value || 0 } })} className="w-28" />
-            <span className="text-slate-500">USD</span>
+            <span className="text-slate-700">USD</span>
           </div>
         ))}
-        <p className="mt-2 text-xs text-slate-400">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
+        <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
       <UsersCard me={user} />
       <Card title="Data">
@@ -775,7 +775,7 @@ function Settings({ st, dispatch, user }) {
           <Btn onClick={() => { if (confirm("Replace the team's data with the sample dataset? This affects everyone.")) bulkReplace(seedData()); }}>Load sample data</Btn>
           <Btn onClick={() => { if (confirm("Delete ALL of the team's accounts and data? Export JSON first if you want a backup.")) bulkReplace(emptyData()); }}>Clear all data</Btn>
         </div>
-        <p className="mt-3 text-xs text-slate-500">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
+        <p className="mt-3 text-xs text-slate-700">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
       </Card>
     </div>
   );
@@ -786,15 +786,15 @@ function SetupScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="nm w-full max-w-lg p-8">
-        <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span> <span className="text-sm font-normal text-slate-400">team edition — not configured yet</span></h1>
-        <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-slate-600">
+        <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span> <span className="text-sm font-normal text-slate-500">team edition — not configured yet</span></h1>
+        <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-slate-800">
           <li>Create a free project at <b>supabase.com</b> (pick a region near your team).</li>
           <li>Open its <b>SQL Editor</b>, paste the contents of <code>supabase-setup.sql</code>, and click Run.</li>
           <li>In <b>Project Settings → API</b>, copy the <b>Project URL</b> and <b>anon public</b> key.</li>
           <li>Open <code>crm.html</code> in a text editor and paste both into the <code>TEAM CONFIG</code> block near the top.</li>
           <li>Reload this page — you'll see the sign-up screen. The first person to sign up becomes admin.</li>
         </ol>
-        <p className="mt-4 text-xs text-slate-400">Full instructions: <code>TEAM-SETUP.md</code> in the repository.</p>
+        <p className="mt-4 text-xs text-slate-500">Full instructions: <code>TEAM-SETUP.md</code> in the repository.</p>
       </div>
     </div>
   );
@@ -827,15 +827,15 @@ function AuthScreen() {
     <div className="flex min-h-screen items-center justify-center p-4">
       <form onSubmit={submit} className="nm w-full max-w-sm p-8">
         <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
-        <p className="mb-4 mt-1 text-xs text-slate-500">
+        <p className="mb-4 mt-1 text-xs text-slate-700">
           {mode === "signup" ? "Create your account — the first person to sign up becomes admin." :
            mode === "reset" ? "We'll email you a password-reset link." : "Sign in with your team account."}
         </p>
-        {mode === "signup" && <label className="mb-2 block text-xs font-semibold text-slate-500">Your name
+        {mode === "signup" && <label className="mb-2 block text-xs font-semibold text-slate-700">Your name
           <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>}
-        <label className="mb-2 block text-xs font-semibold text-slate-500">Email
+        <label className="mb-2 block text-xs font-semibold text-slate-700">Email
           <Input type="email" required value={email} onChange={e => { setEmail(e.target.value); setErr(""); }} className="mt-1" autoFocus={mode !== "signup"} /></label>
-        {mode !== "reset" && <label className="mb-2 block text-xs font-semibold text-slate-500">Password
+        {mode !== "reset" && <label className="mb-2 block text-xs font-semibold text-slate-700">Password
           <Input type="password" required minLength={6} value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" /></label>}
         {err && <div className="mb-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
         {msg && <div className="mb-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
@@ -846,7 +846,7 @@ function AuthScreen() {
             {mode === "signup" ? "Have an account? Sign in" : "New here? Sign up"}</button>
           {mode === "signin" && <button type="button" className="hover:underline" onClick={() => { setMode("reset"); setErr(""); setMsg(""); }}>Forgot password?</button>}
         </div>
-        <p className="mt-3 text-[10px] leading-4 text-slate-400">Shared team CRM — data lives in your team's Supabase project. Roles: admins manage settings and users; everyone else works with accounts.</p>
+        <p className="mt-3 text-[11px] leading-4 text-slate-500">Shared team CRM — data lives in your team's Supabase project. Roles: admins manage settings and users; everyone else works with accounts.</p>
       </form>
     </div>
   );
@@ -865,15 +865,15 @@ function UsersCard({ me }) {
     <Card title={`Users (${users.length})`}>
       {users.map(u => (
         <div key={u.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-          <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-400"> (you)</span>}</span>
-          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-500"}`}>{u.role}</span>
+          <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}</span>
+          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
           {u.id !== me.id && (u.role === "user"
             ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
             : <button className="text-xs text-rose-500 hover:underline" onClick={() => setRole(u, "user")}>demote</button>)}
         </div>
       ))}
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
-      <p className="mt-2 text-xs text-slate-400">Colleagues join by signing up on the login screen (they start as <b>user</b>). The database allows at most 2 admins and always keeps at least 1. To remove someone entirely, delete them in the Supabase dashboard → Authentication → Users.</p>
+      <p className="mt-2 text-xs text-slate-500">Colleagues join by signing up on the login screen (they start as <b>user</b>). The database allows at most 2 admins and always keeps at least 1. To remove someone entirely, delete them in the Supabase dashboard → Authentication → Users.</p>
     </Card>
   );
 }
@@ -926,25 +926,25 @@ function App({ user }) {
         <h1 className="mr-4 text-lg font-extrabold tracking-[0.2em] text-slate-700">CS<span className="text-indigo-500">CRM</span></h1>
         {views.map((v, i) => (
           <button key={v} onClick={() => { setView(v); setAcctId(null); }}
-            className={`px-4 py-1.5 text-sm font-bold ${view === v ? "grad rounded-full text-white" : "nm-btn text-slate-500"}`}>
-            {v} <span className="text-[10px] opacity-50">{i + 1}</span>
+            className={`px-4 py-1.5 text-sm font-bold ${view === v ? "grad rounded-full text-white" : "nm-btn text-slate-700"}`}>
+            {v} <span className="text-[11px] opacity-50">{i + 1}</span>
           </button>
         ))}
         <div className="relative ml-auto">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewals due within 30 days"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
-            {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[10px] font-bold text-white">{renewalsDue.length}</span>}
+            {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{renewalsDue.length}</span>}
           </button>
           {notifOpen && (
             <div className="nm absolute right-0 z-20 mt-2 w-80 p-3">
-              <div className="px-2 py-1 text-xs font-semibold text-slate-500">Renewals due within 30 days</div>
-              {renewalsDue.length === 0 && <div className="px-2 py-2 text-sm text-slate-400">Nothing due in the next 30 days. 🎉</div>}
+              <div className="px-2 py-1 text-xs font-semibold text-slate-700">Renewals due within 30 days</div>
+              {renewalsDue.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">Nothing due in the next 30 days. 🎉</div>}
               {renewalsDue.map(a => (
                 <button key={a.id} onClick={() => { setNotifOpen(false); openAccount(a.id); }}
                   className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-white/60">
                   <span className="font-medium">{a.name}</span>
                   <span className="flex items-center gap-2 text-xs">
-                    <span className="text-slate-500">{fmtDate(a.renewalDate)}</span>
+                    <span className="text-slate-700">{fmtDate(a.renewalDate)}</span>
                     <span className={`rounded px-1.5 py-0.5 font-semibold ${daysUntil(a.renewalDate) <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{daysUntil(a.renewalDate)}d</span>
                   </span>
                 </button>
@@ -952,8 +952,8 @@ function App({ user }) {
             </div>
           )}
         </div>
-        <span className="ml-3 text-xs text-slate-400">{user.name} · {user.role}{loaded ? " · shared" : " · loading…"}</span>
-        <button className="nm-btn ml-3 px-3 py-1.5 text-xs font-bold text-slate-500"
+        <span className="ml-3 text-xs text-slate-500">{user.name} · {user.role}{loaded ? " · shared" : " · loading…"}</span>
+        <button className="nm-btn ml-3 px-3 py-1.5 text-xs font-bold text-slate-700"
           onClick={() => sb.auth.signOut()}>Sign out 🔒</button>
       </div>
       {view === "Dashboard" && <Dashboard st={st} scored={scored} dispatch={dispatch} openAccount={openAccount} />}
@@ -981,9 +981,9 @@ function Root() {
       .then(({ data, error }) => error ? alert("Could not load your profile: " + error.message) : setProfile(data));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
-  if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading…</div>;
+  if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
-  if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-400">Loading profile…</div>;
+  if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
