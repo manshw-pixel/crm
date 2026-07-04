@@ -129,3 +129,19 @@ begin
     end;
   end loop;
 end $$;
+
+-- ---------- attachments (Supabase Storage) ----------
+-- Public bucket: anyone with a file's URL can view it (links are long
+-- and unguessable, but treat uploads as shareable). 10 MB client cap.
+insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
+on conflict (id) do nothing;
+
+drop policy if exists attachments_read on storage.objects;
+create policy attachments_read on storage.objects
+  for select to authenticated using (bucket_id = 'attachments');
+drop policy if exists attachments_insert on storage.objects;
+create policy attachments_insert on storage.objects
+  for insert to authenticated with check (bucket_id = 'attachments');
+drop policy if exists attachments_delete on storage.objects;
+create policy attachments_delete on storage.objects
+  for delete to authenticated using (bucket_id = 'attachments');

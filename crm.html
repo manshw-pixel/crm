@@ -341,31 +341,90 @@ const Select = ({ options, ...p }) => (
   </select>
 );
 
+/* ------------------------- attachments ------------------------- */
+const MAX_FILE_MB = 10;
+async function uploadFiles(fileList, accountId) {
+  const out = [];
+  for (const f of Array.from(fileList || [])) {
+    if (f.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`${f.name} is over ${MAX_FILE_MB} MB`);
+    const path = `${accountId}/${Date.now()}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
+    const { error } = await sb.storage.from("attachments").upload(path, f);
+    if (error) throw new Error(`${f.name}: ${error.message}`);
+    const { data } = sb.storage.from("attachments").getPublicUrl(path);
+    out.push({ name: f.name, url: data.publicUrl, path });
+  }
+  return out;
+}
+const AttachmentLinks = ({ items }) => !items || !items.length ? null : (
+  <span className="flex flex-wrap gap-1.5">
+    {items.map(at => (
+      <a key={at.path || at.url} href={at.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+        className="nm-inset inline-flex items-center gap-1 !rounded-full px-2 py-0.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-800">📎 {at.name}</a>
+    ))}
+  </span>
+);
+
 /* ---------------------------- quick actions ---------------------------- */
 function LogActivityForm({ acct, dispatch, onDone }) {
   const [type, setType] = useState("call");
   const [summary, setSummary] = useState("");
+  const [details, setDetails] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef();
   return (
-    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!summary.trim()) return;
-      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim() } }); onDone(); }}>
-      <Select value={type} onChange={e => setType(e.target.value)} options={["call", "email", "QBR", "ticket", "note"]} />
-      <Input autoFocus placeholder="Summary…" value={summary} onChange={e => setSummary(e.target.value)} className="flex-1 min-w-[200px]" />
-      <Btn kind="primary" type="submit">Log</Btn><Btn onClick={onDone}>Cancel</Btn>
+    <form className="space-y-2" onSubmit={async e => {
+      e.preventDefault(); if (!summary.trim() || busy) return;
+      setBusy(true);
+      try {
+        const attachments = await uploadFiles(fileRef.current.files, acct.id);
+        dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim(), details: details.trim(), attachments } });
+        onDone();
+      } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
+    }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Select value={type} onChange={e => setType(e.target.value)} options={["call", "email", "QBR", "ticket", "note"]} />
+        <Input autoFocus placeholder="Summary…" value={summary} onChange={e => setSummary(e.target.value)} className="flex-1 min-w-[200px]" />
+      </div>
+      <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
+        className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
+      <div className="flex flex-wrap items-center gap-2">
+        <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
+        <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
+        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : "Log"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
+      </div>
     </form>
   );
 }
 function AddTaskForm({ acct, dispatch, onDone, team = [], user }) {
   const [title, setTitle] = useState(""); const [due, setDue] = useState(addDays(7)); const [priority, setPriority] = useState("Medium");
   const [owner, setOwner] = useState(user ? user.name : acct.csm);
+  const [details, setDetails] = useState("");
+  const [busy, setBusy] = useState(false);
+  const fileRef = useRef();
   const owners = [...new Set([user ? user.name : null, ...team.map(u => u.name), acct.csm].filter(Boolean))];
   return (
-    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!title.trim()) return;
-      dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner } }); onDone(); }}>
-      <Input autoFocus placeholder="Task title…" value={title} onChange={e => setTitle(e.target.value)} className="flex-1 min-w-[200px]" />
-      <Input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-auto" />
-      <Select value={priority} onChange={e => setPriority(e.target.value)} options={["High", "Medium", "Low"]} />
-      <Select value={owner} onChange={e => setOwner(e.target.value)} options={owners} />
-      <Btn kind="primary" type="submit">Add</Btn><Btn onClick={onDone}>Cancel</Btn>
+    <form className="space-y-2" onSubmit={async e => {
+      e.preventDefault(); if (!title.trim() || busy) return;
+      setBusy(true);
+      try {
+        const attachments = await uploadFiles(fileRef.current.files, acct.id);
+        dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner, details: details.trim(), attachments } });
+        onDone();
+      } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
+    }}>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input autoFocus placeholder="Task title…" value={title} onChange={e => setTitle(e.target.value)} className="flex-1 min-w-[200px]" />
+        <Input type="date" value={due} onChange={e => setDue(e.target.value)} className="w-auto" />
+        <Select value={priority} onChange={e => setPriority(e.target.value)} options={["High", "Medium", "Low"]} />
+        <Select value={owner} onChange={e => setOwner(e.target.value)} options={owners} />
+      </div>
+      <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
+        className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
+      <div className="flex flex-wrap items-center gap-2">
+        <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
+        <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
+        <span className="ml-auto flex gap-2"><Btn kind="primary" type="submit">{busy ? "Uploading…" : "Add"}</Btn><Btn onClick={onDone}>Cancel</Btn></span>
+      </div>
     </form>
   );
 }
@@ -769,11 +828,16 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <Card title={`Open tasks (${tasks.length})`}>
           {tasks.length === 0 && <div className="text-sm text-slate-500">None open.</div>}
           {tasks.map(t => (
-            <div key={t.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-              <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-              <span className="flex-1">{t.title}</span>
-              <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
-              <span className="text-xs text-slate-500">{t.priority}</span>
+            <div key={t.id} className="border-b border-slate-100 py-1.5 last:border-0">
+              <div className="flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+                <span className="flex-1">{t.title}</span>
+                <span className="text-xs text-slate-500">{t.owner}</span>
+                <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
+                <span className="text-xs text-slate-500">{t.priority}</span>
+              </div>
+              {t.details && <div className="ml-6 mt-1 whitespace-pre-wrap text-xs text-slate-600">{t.details}</div>}
+              {t.attachments && t.attachments.length > 0 && <div className="ml-6 mt-1"><AttachmentLinks items={t.attachments} /></div>}
             </div>
           ))}
         </Card>
@@ -791,10 +855,14 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <Card title={`Activity timeline (${acts.length})`}>
           {acts.length === 0 && <div className="text-sm text-slate-500">No activity yet.</div>}
           {acts.map(x => (
-            <div key={x.id} className="flex gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-              <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
-              <span className="flex-1">{x.summary}</span>
-              <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
+            <div key={x.id} className="border-b border-slate-100 py-1.5 last:border-0">
+              <div className="flex gap-3 text-sm">
+                <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
+                <span className="flex-1">{x.summary}</span>
+                <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
+              </div>
+              {x.details && <div className="ml-[76px] mt-1 whitespace-pre-wrap text-xs text-slate-600">{x.details}</div>}
+              {x.attachments && x.attachments.length > 0 && <div className="ml-[76px] mt-1"><AttachmentLinks items={x.attachments} /></div>}
             </div>
           ))}
         </Card>
