@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CS CRM — Portfolio</title>
+<title>OneVio — Portfolio</title>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.26.4/babel.min.js"></script>
@@ -345,6 +345,7 @@ function DistBar({ counts }) {
 }
 
 /* ------------------------------ UI atoms ------------------------------ */
+const Copyright = () => <div className="mt-6 pb-2 text-center text-[11px] text-slate-400">© 2026 OneVio Pvt Ltd. All Rights Reserved.</div>;
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
@@ -1431,7 +1432,7 @@ function SetupScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <div className="nm w-full max-w-lg p-8">
-        <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span> <span className="text-sm font-normal text-slate-500">team edition — not configured yet</span></h1>
+        <h1 className="text-xl font-bold tracking-tight">One<span className="text-indigo-600">Vio</span> <span className="text-sm font-normal text-slate-500">team edition — not configured yet</span></h1>
         <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-slate-800">
           <li>Create a free project at <b>supabase.com</b> (pick a region near your team).</li>
           <li>Open its <b>SQL Editor</b>, paste the contents of <code>supabase-setup.sql</code>, and click Run.</li>
@@ -1440,6 +1441,7 @@ function SetupScreen() {
           <li>Reload this page — you'll see the sign-up screen. The first person to sign up becomes admin.</li>
         </ol>
         <p className="mt-4 text-xs text-slate-500">Full instructions: <code>TEAM-SETUP.md</code> in the repository.</p>
+        <Copyright />
       </div>
     </div>
   );
@@ -1471,7 +1473,7 @@ function AuthScreen() {
   return (
     <div className="flex min-h-screen items-center justify-center p-4">
       <form onSubmit={submit} className="nm w-full max-w-sm p-8">
-        <h1 className="text-xl font-bold tracking-tight">CS<span className="text-indigo-600">CRM</span></h1>
+        <h1 className="text-xl font-bold tracking-tight">One<span className="text-indigo-600">Vio</span></h1>
         <p className="mb-4 mt-1 text-xs text-slate-700">
           {mode === "signup" ? "Create your account — the first person to sign up becomes admin." :
            mode === "reset" ? "We'll email you a password-reset link." : "Sign in with your team account."}
@@ -1492,6 +1494,7 @@ function AuthScreen() {
           {mode === "signin" && <button type="button" className="hover:underline" onClick={() => { setMode("reset"); setErr(""); setMsg(""); }}>Forgot password?</button>}
         </div>
         <p className="mt-3 text-[11px] leading-4 text-slate-500">Shared team CRM — data lives in your team's Supabase project. Roles: admins manage settings and users; everyone else works with accounts.</p>
+        <Copyright />
       </form>
     </div>
   );
@@ -1659,7 +1662,7 @@ function App({ user }) {
     <div className="flex min-h-screen">
       <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${collapsed ? "w-14" : "w-52"}`}>
         <div className={`flex items-center pb-4 pt-5 ${collapsed ? "justify-center px-0" : "justify-between px-5"}`}>
-          {!collapsed && <span className="text-lg font-extrabold tracking-tight text-slate-900">CS<span className="text-indigo-600">CRM</span></span>}
+          {!collapsed && <span className="text-lg font-extrabold tracking-tight text-slate-900">One<span className="text-indigo-600">Vio</span></span>}
           <button title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(c => !c)}
             className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1722,6 +1725,7 @@ function App({ user }) {
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
       {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
+      <Copyright />
       </main>
     </div>
   );
