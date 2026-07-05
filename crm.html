@@ -224,7 +224,7 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) } },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [] },
   };
 }
 
@@ -248,7 +248,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -275,7 +275,7 @@ function reducer(state, action) {
       return { ...state, accounts: [...state.accounts, item] }; }
     case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewals: [...(a.renewals || []), action.entry] }
+      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] }
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
@@ -309,6 +309,7 @@ function reducer(state, action) {
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
+    case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     default: return state;
   }
 }
@@ -326,6 +327,23 @@ function Sparkline({ points, w = 220, h = 48 }) {
       <path d={d} fill="none" stroke={RISK_HEX[riskOf(last)]} strokeWidth="2" />
       {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2.5" fill={RISK_HEX[riskOf(points[i].s)]} />)}
     </svg>
+  );
+}
+function TrendLine({ label, points, months, fmt, w = 150, h = 28 }) {
+  const vals = points.map(v => v === null || v === undefined ? null : +v);
+  const nums = vals.filter(v => v !== null);
+  if (!nums.length) return null;
+  const min = Math.min(...nums), max = Math.max(...nums);
+  const xy = vals.map((v, i) => v === null ? null : [4 + (i * (w - 8)) / Math.max(vals.length - 1, 1), h - 4 - ((v - min) / (max - min || 1)) * (h - 8)]).filter(Boolean);
+  const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const last = nums[nums.length - 1], first = nums[0];
+  return (
+    <div className="flex items-center gap-2" title={months.map((m, i) => `${m}: ${fmt(vals[i])}`).join("\n")}>
+      <span className="w-28 shrink-0 text-xs text-slate-500">{label}</span>
+      <svg width={w} height={h}><path d={d} fill="none" stroke={last >= first ? "#10b981" : "#f43f5e"} strokeWidth="2" />
+        {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2" fill="#64748b" />)}</svg>
+      <span className={`text-xs font-bold ${last >= first ? "text-emerald-600" : "text-rose-600"}`}>{fmt(last)}</span>
+    </div>
   );
 }
 function DistBar({ counts }) {
@@ -671,22 +689,11 @@ function AdjustArrForm({ acct, user, dispatch, onDone }) {
 }
 
 /* ------------------------------- Dashboard ------------------------------- */
-function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
-  const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
-  const atRisk = scored.filter(a => a.risk === "Red");
-  const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
-  const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));
-  const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
-  const counts = { Green: 0, Yellow: 0, Red: 0 };
-  scored.forEach(a => counts[a.risk]++);
-  const flagged = scored.filter(a => a.flags.length);
-  // trailing-12-month revenue retention (USD, from churn events and renewal deltas);
-  // when "All" is selected this always spans every account, regardless of other scoping
-  const rates = st.settings.rates;
+/* trailing-12-month revenue retention (USD) from churn events, renewal deltas and ARR events */
+function retentionStats(accounts, rates) {
   const yearAgo = Date.now() - 365 * DAY;
-  const retAccounts = scope === "all" ? allAccounts : all;
   let churnedARR = 0, expansion = 0, contraction = 0;
-  retAccounts.forEach(a => {
+  accounts.forEach(a => {
     if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
     (a.renewals || []).forEach(r => {
       if (new Date(r.completedOn).getTime() >= yearAgo) {
@@ -701,11 +708,37 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       }
     });
   });
-  const retARR = retAccounts.reduce((s, a) => s + (a.churn ? 0 : a.arrUSD), 0);
+  const retARR = accounts.reduce((s, a) => s + (a.churn ? 0 : a.arrUSD), 0);
   const base = retARR + churnedARR - expansion + contraction;
+  return { churnedARR, expansion, contraction,
+    grr: base > 0 ? (base - churnedARR - contraction) / base : null,
+    nrr: base > 0 ? (base - churnedARR - contraction + expansion) / base : null,
+    lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
+}
+const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stalled: 0.1 };
+function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
+  const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
+  const atRisk = scored.filter(a => a.risk === "Red");
+  const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
+  const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));
+  const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
+  const counts = { Green: 0, Yellow: 0, Red: 0 };
+  scored.forEach(a => counts[a.risk]++);
+  const flagged = scored.filter(a => a.flags.length);
+  // when "All" is selected retention always spans every account, regardless of other scoping
+  const rates = st.settings.rates;
+  const retAccounts = scope === "all" ? allAccounts : all;
+  const { churnedARR, expansion, contraction, grr, nrr, lost } = retentionStats(retAccounts, rates);
   const pct = x => (100 * x).toFixed(0) + "%";
-  const grr = base > 0 ? (base - churnedARR - contraction) / base : null;
-  const nrr = base > 0 ? (base - churnedARR - contraction + expansion) / base : null;
+  // expansion pipeline: open opportunities on non-churned in-scope accounts
+  const openOpps = st.opportunities
+    .map(o => ({ ...o, acct: scored.find(a => a.id === o.accountId) }))
+    .filter(o => o.acct && !["Won", "Lost"].includes(o.stage))
+    .map(o => ({ ...o, valueUSD: toUSD(o.value, o.acct.currency, rates) }))
+    .sort((x, y) => y.valueUSD - x.valueUSD);
+  const pipeTotal = openOpps.reduce((s, o) => s + o.valueUSD, 0);
+  const pipeWeighted = openOpps.reduce((s, o) => s + o.valueUSD * (OPP_STAGE_WEIGHT[o.stage] ?? 0.2), 0);
+  const snaps = st.settings.snapshots || [];
   // per-person open-task rollup (whole team, regardless of scope)
   const byOwner = {};
   st.tasks.filter(t => t.status !== "Done").forEach(t => {
@@ -730,7 +763,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <div className="grid grid-cols-3 gap-3">
         <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
         <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} onClick={() => openAccounts()} />
-        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${retAccounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`}
+        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
           onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
       </div>
       <div className="grid grid-cols-3 gap-3">
@@ -784,6 +817,29 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>
       </div>
+      <div className="grid grid-cols-3 gap-3">
+      <Card title={`Expansion pipeline · ${fmtMoney(pipeTotal)}`} className="!p-3" right={<span className="text-xs font-semibold text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
+        <div className="max-h-48 overflow-y-auto pr-1">
+        {openOpps.length === 0 && <div className="text-sm text-slate-500">No open opportunities — add them from an account page.</div>}
+        {openOpps.map(o => (
+          <button key={o.id} onClick={() => openAccount(o.accountId)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
+            <span className="min-w-0 truncate">{o.acct.name} <span className="text-xs text-slate-500">· {o.type}</span></span>
+            <span className="flex shrink-0 items-center gap-2 text-xs">
+              <span className={`rounded px-1.5 py-0.5 font-semibold ${o.stage === "Stalled" ? "bg-amber-100 text-amber-700" : "bg-indigo-50 text-indigo-600"}`}>{o.stage}</span>
+              <span className="font-bold text-slate-700">{fmtMoney(o.valueUSD)}</span>
+            </span>
+          </button>
+        ))}
+        </div>
+      </Card>
+      <Card title="Trends (monthly)" className="!p-3">
+        {snaps.length < 2 && <div className="text-sm text-slate-500">Collecting one snapshot per month — trend lines appear from the second month.</div>}
+        {snaps.length >= 2 && <div className="space-y-2">
+          <TrendLine label="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
+          <TrendLine label="NRR" points={snaps.map(s => s.nrr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
+          <TrendLine label="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
+        </div>}
+      </Card>
       <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3" id="week-tasks">
         <div className="max-h-40 overflow-y-auto pr-1">
         {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
@@ -801,6 +857,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         })}
         </div>
       </Card>
+      </div>
     </div>
   );
 }
@@ -1162,6 +1219,11 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {a.licenses ? ` · ${a.licenses} licenses` : ""}{a.dedicatedSupport ? " · Dedicated support" : ""}{a.modules ? ` · ${a.modules}` : ""}
           {parent && <> · sub-account of <button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button></>}</span>
         <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+        {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
+          onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value } })}
+          className={`cursor-pointer rounded-full border-0 px-2.5 py-1 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
+          {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+        </select>}
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
           {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
       </div>
@@ -1335,7 +1397,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
 }
 
 /* ------------------------------- Renewals ------------------------------- */
-function Renewals({ scored, openAccount }) {
+const RENEWAL_STAGES = ["Not started", "Outreach", "Quote sent", "Negotiating", "Committed", "At risk"];
+const RENEWAL_STAGE_STYLE = {
+  "Not started": "bg-slate-100 text-slate-600", Outreach: "bg-sky-100 text-sky-700", "Quote sent": "bg-indigo-100 text-indigo-700",
+  Negotiating: "bg-amber-100 text-amber-700", Committed: "bg-emerald-100 text-emerald-700", "At risk": "bg-rose-100 text-rose-700",
+};
+const renewalStageOf = a => a.renewalStage || "Not started";
+function Renewals({ scored, openAccount, dispatch }) {
   const months = [];
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
@@ -1343,8 +1411,22 @@ function Renewals({ scored, openAccount }) {
     const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`; // local, not toISOString — UTC shifts the month
     months.push({ key, label: m.toLocaleDateString("en-US", { month: "short", year: "numeric" }), items: scored.filter(a => a.renewalDate.slice(0, 7) === key) });
   }
+  // 90-day forecast by renewal stage (USD)
+  const due90 = scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 90; });
+  const sum = list => list.reduce((s, a) => s + a.arrUSD, 0);
+  const commit = sum(due90.filter(a => renewalStageOf(a) === "Committed"));
+  const atRisk = sum(due90.filter(a => renewalStageOf(a) === "At risk"));
+  const best = sum(due90) - atRisk;
+  const notStarted = due90.filter(a => renewalStageOf(a) === "Not started");
   return (
-    <div className="flex gap-3 overflow-x-auto pb-3">
+    <div className="space-y-3">
+      <div className="grid grid-cols-4 gap-3">
+        <Stat label="Due next 90d" value={fmtMoney(sum(due90))} sub={`${due90.length} renewal(s)`} />
+        <Stat label="Commit (90d)" value={fmtMoney(commit)} tone="text-emerald-600" sub="stage: Committed" />
+        <Stat label="Best case (90d)" value={fmtMoney(best)} sub="everything except At risk" />
+        <Stat label="At risk (90d)" value={fmtMoney(atRisk)} tone={atRisk ? "text-rose-600" : undefined} sub={`${notStarted.length} not started yet`} />
+      </div>
+      <div className="flex gap-3 overflow-x-auto pb-3">
       {months.map(m => (
         <div key={m.key} className="nm w-56 shrink-0 p-4">
           <div className="mb-2 flex justify-between text-xs font-semibold text-slate-700">
@@ -1352,13 +1434,19 @@ function Renewals({ scored, openAccount }) {
           </div>
           {m.items.length === 0 && <div className="text-xs italic text-slate-400">—</div>}
           {m.items.map(a => (
-            <button key={a.id} onClick={() => openAccount(a.id)} className="nm-sm mb-3 w-full p-2.5 text-left hover:bg-slate-50">
+            <div key={a.id} onClick={() => openAccount(a.id)} className="nm-sm mb-3 w-full cursor-pointer p-2.5 text-left hover:bg-slate-50">
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
               <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
-            </button>
+              <select value={renewalStageOf(a)} onClick={e => e.stopPropagation()}
+                onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value } })}
+                className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
+                {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
           ))}
         </div>
       ))}
+      </div>
     </div>
   );
 }
@@ -1638,6 +1726,19 @@ function App({ user }) {
     const score = healthScore(a, st.activities, st.settings.weights);
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
+  useEffect(() => { // one aggregate snapshot per calendar month (whole book) for trend lines
+    if (!loaded || !scored.length) return;
+    const month = iso(Date.now()).slice(0, 7);
+    const snaps = st.settings.snapshots || [];
+    if (snaps.some(s => s.month === month)) return;
+    const act = scored.filter(a => !a.churn);
+    const r = retentionStats(scored, st.settings.rates);
+    const counts = { Green: 0, Yellow: 0, Red: 0 };
+    act.forEach(a => counts[a.risk]++);
+    dispatch({ type: "SET_SNAPSHOTS", snapshots: [...snaps.filter(s => s.month !== month),
+      { month, totalARR: Math.round(act.reduce((s, a) => s + a.arrUSD, 0)), accounts: act.length,
+        nrr: r.nrr, grr: r.grr, churnedARR: Math.round(r.churnedARR), ...counts }].slice(-24) });
+  }, [loaded, scored]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
@@ -1715,7 +1816,7 @@ function App({ user }) {
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} />}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       <Copyright />
       </main>
