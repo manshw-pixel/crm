@@ -194,10 +194,10 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } });
 
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
@@ -223,7 +223,8 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
-    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) } },
+    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) } },
   };
 }
 
@@ -247,7 +248,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -307,6 +308,7 @@ function reducer(state, action) {
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
+    case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     default: return state;
   }
 }
@@ -882,6 +884,108 @@ function importAccountsCSV(file, accounts, dispatch, done) {
   };
   reader.readAsText(file);
 }
+/* finance CSV: accountNo and/or name + billingCompletedDate — marks billing completed */
+function importBillingCSV(text, accounts, dispatch) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { updated: 0, skipped: 0, err: "no data rows" };
+  const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
+  const header = rows[0].map(norm);
+  const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
+  if (header.indexOf("billingcompleteddate") < 0) return { updated: 0, skipped: 0, err: 'needs a "billingCompletedDate" column' };
+  const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
+  const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
+  let updated = 0, skipped = 0;
+  rows.slice(1).forEach(r => {
+    const d = new Date(col(r, "billingcompleteddate"));
+    const acct = (col(r, "accountno") && byNo.get(col(r, "accountno"))) || byName.get(col(r, "name").toLowerCase());
+    if (!acct || isNaN(d)) { skipped++; return; }
+    dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: iso(d.getTime()) } });
+    updated++;
+  });
+  return { updated, skipped };
+}
+
+/* ---------------------- shared-drive folder sync ---------------------- */
+const FS_SUPPORTED = "showDirectoryPicker" in window;
+const idb = () => new Promise((res, rej) => {
+  const r = indexedDB.open("crm-sync", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("handles");
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+const idbSet = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
+const idbGet = async k => { const db = await idb(); return new Promise((res, rej) => { const rq = db.transaction("handles").objectStore("handles").get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); };
+const idbDel = async k => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").delete(k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
+async function ensurePermission(handle) {
+  if (await handle.queryPermission({ mode: "read" }) === "granted") return true;
+  return (await handle.requestPermission({ mode: "read" })) === "granted";
+}
+async function listCsvFiles(dirHandle) {
+  const out = [];
+  for await (const [name, h] of dirHandle.entries())
+    if (h.kind === "file" && /\.csv$/i.test(name)) out.push(await h.getFile());
+  return out;
+}
+function IntegrationsCard({ st, dispatch }) {
+  const [handles, setHandles] = useState({ sales: null, finance: null });
+  const [busy, setBusy] = useState(false);
+  const integ = st.settings.integrations || { processed: {}, log: [] };
+  useEffect(() => { (async () => {
+    try { setHandles({ sales: await idbGet("sales") || null, finance: await idbGet("finance") || null }); } catch (e) {}
+  })(); }, []);
+  const pick = async key => {
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); }
+    catch (e) { /* user cancelled */ }
+  };
+  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); };
+  const sync = useCallback(async () => {
+    if (busy) return; setBusy(true);
+    const processed = { ...integ.processed }; const log = [...integ.log];
+    const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
+    for (const key of ["sales", "finance"]) {
+      const h = handles[key]; if (!h) continue;
+      try {
+        if (!await ensurePermission(h)) { note(key, "—", "permission denied", true); continue; }
+        for (const f of await listCsvFiles(h)) {
+          const sig = `${f.name}|${f.lastModified}`;
+          if (processed[sig]) continue;
+          try {
+            if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
+              { note(key, f.name, r.err || `imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`, !!r.err); res(); }));
+            else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
+              note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}`, !!r.err); }
+            processed[sig] = true;
+          } catch (ex) { note(key, f.name, ex.message, true); }
+        }
+      } catch (ex) { note(key, "—", ex.message, true); }
+    }
+    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
+    setBusy(false);
+  }, [handles, st, busy, dispatch]);
+  useEffect(() => { // auto-scan every 5 minutes while a folder is connected
+    if (!handles.sales && !handles.finance) return;
+    const t = setInterval(sync, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [handles, sync]);
+  if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  return (
+    <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={sync}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
+      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
+        <div key={key} className="mb-2 flex items-center gap-2 text-sm">
+          <span className="w-28 font-semibold">{label}</span>
+          {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
+            <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
+            : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
+          <span className="ml-auto text-xs text-slate-400">{hint}</span>
+        </div>
+      ))}
+      <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>
+      {integ.log.length > 0 && <div className="max-h-32 overflow-y-auto border-t border-slate-100 pt-2 text-xs">
+        {[...integ.log].reverse().map((l, i) => <div key={i} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
+      </div>}
+    </Card>
+  );
+}
+
 function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -1264,6 +1368,7 @@ function Settings({ st, dispatch, user }) {
         ))}
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
+      <IntegrationsCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
