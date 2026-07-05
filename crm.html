@@ -735,7 +735,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
           tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
-          sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Pending" })} />
+          sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
         <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
         <Card title="Health distribution" className="!p-3"><DistBar counts={counts} /></Card>
       </div>
@@ -942,15 +942,31 @@ async function listCsvFiles(dirHandle) {
   return out;
 }
 function IntegrationsCard({ st, dispatch }) {
-  const [handles, setHandles] = useState({ sales: null, finance: null, export: null });
+  const [handles, setHandles] = useState({ sales: null, finance: null });
   const [busy, setBusy] = useState(false);
   const integ = st.settings.integrations || { processed: {}, log: [] };
   useEffect(() => { (async () => {
-    try { setHandles({ sales: await idbGet("sales") || null, finance: await idbGet("finance") || null, export: await idbGet("export") || null }); } catch (e) {}
+    try { setHandles({ sales: await idbGet("sales") || null, finance: await idbGet("finance") || null }); } catch (e) {}
   })(); }, []);
   const pick = async key => {
-    try { const h = await window.showDirectoryPicker({ mode: key === "export" ? "readwrite" : "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); }
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); }
     catch (e) { /* user cancelled */ }
+  };
+  // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
+  const download = (name, text) => {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    const el = Object.assign(document.createElement("a"), { href: url, download: name });
+    el.click(); URL.revokeObjectURL(url);
+  };
+  const salesTemplate = () => {
+    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights);
+      return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
+    download("sales-accounts.csv", accountsCSVText(rows));
+  };
+  const financeTemplate = () => {
+    const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
+      ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(esc).join(","))].join("\n"));
   };
   const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); };
   const sync = useCallback(async () => {
@@ -974,28 +990,18 @@ function IntegrationsCard({ st, dispatch }) {
         }
       } catch (ex) { note(key, "—", ex.message, true); }
     }
-    if (handles.export) { // write a fresh accounts.csv into the export folder (OneDrive/Drive syncs it out)
-      try {
-        if (!await ensurePermission(handles.export, "readwrite")) throw new Error("permission denied");
-        const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights);
-          return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
-        const fh = await handles.export.getFileHandle("accounts.csv", { create: true });
-        const w = await fh.createWritable(); await w.write(accountsCSVText(rows)); await w.close();
-        note("export", "accounts.csv", `exported ${rows.length} account(s)`);
-      } catch (ex) { note("export", "accounts.csv", ex.message, true); }
-    }
     dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
     setBusy(false);
   }, [handles, st, busy, dispatch]);
   useEffect(() => { // auto-scan every 5 minutes while a folder is connected
-    if (!handles.sales && !handles.finance && !handles.export) return;
+    if (!handles.sales && !handles.finance) return;
     const t = setInterval(sync, 5 * 60 * 1000);
     return () => clearInterval(t);
   }, [handles, sync]);
   if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
   return (
     <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={sync}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
-      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"], ["export", "Export folder", "accounts.csv written here on every sync (point at OneDrive)"]].map(([key, label, hint]) => (
+      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
         <div key={key} className="mb-2 flex items-center gap-2 text-sm">
           <span className="w-28 font-semibold">{label}</span>
           {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
@@ -1004,6 +1010,11 @@ function IntegrationsCard({ st, dispatch }) {
           <span className="ml-auto text-xs text-slate-400">{hint}</span>
         </div>
       ))}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <Btn onClick={salesTemplate}>Export sales CSV</Btn>
+        <Btn onClick={financeTemplate}>Export finance CSV</Btn>
+        <span className="text-xs text-slate-400">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
+      </div>
       <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>
       {integ.log.length > 0 && <div className="max-h-32 overflow-y-auto border-t border-slate-100 pt-2 text-xs">
         {[...integ.log].reverse().map((l, i) => <div key={i} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
