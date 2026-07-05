@@ -81,6 +81,17 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 
 const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
 const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
+const INPUT_RANGE = { usage: [0, 100], sentiment: [0, 100], tickets: [0, 50], nps: [-100, 100] };
+const DEFAULT_INPUTS = { usage: 70, sentiment: 70, tickets: 0, nps: 0 };
+/* keep health inputs numeric and in range — drops blanks/NaN, clamps the rest */
+const clampInputs = raw => {
+  const out = {};
+  Object.keys(INPUT_RANGE).forEach(k => {
+    const n = parseFloat(raw?.[k]);
+    if (!isNaN(n)) { const [lo, hi] = INPUT_RANGE[k]; out[k] = Math.min(hi, Math.max(lo, n)); }
+  });
+  return out;
+};
 
 function lastActivityDate(accountId, activities) {
   const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
@@ -89,12 +100,13 @@ function lastActivityDate(accountId, activities) {
 function scoreComponents(acct, activities) {
   const la = lastActivityDate(acct.id, activities);
   const ds = la ? daysSince(la) : 999;
+  const inp = { ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) }; // tolerate missing/bad stored inputs
   return {
-    usage: acct.inputs.usage,
-    sentiment: acct.inputs.sentiment,
-    tickets: 100 - Math.min(acct.inputs.tickets * 10, 100),
+    usage: inp.usage,
+    sentiment: inp.sentiment,
+    tickets: 100 - Math.min(inp.tickets * 10, 100),
     recency: ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53)),
-    nps: Math.round((acct.inputs.nps + 100) / 2),
+    nps: Math.round((inp.nps + 100) / 2),
   };
 }
 function healthScore(acct, activities, weights) {
@@ -117,7 +129,7 @@ function flagsFor(acct, activities, score) {
   if ((!la || daysSince(la) >= 30) && daysSince(acct.startDate) >= 30) f.push("No activity 30d+");
   const dr = daysUntil(acct.renewalDate);
   if (dr >= 0 && dr < 60) f.push(`Renewal in ${dr}d`);
-  const old = acct.history.filter(h => daysSince(h.d) >= 25);
+  const old = (acct.history || []).filter(h => daysSince(h.d) >= 25);
   if (old.length && old[old.length - 1].s - score >= 10) f.push(`Health ↓${old[old.length - 1].s - score}`);
   const iu = daysSince(acct.inputsUpdatedAt || acct.startDate);
   if (iu >= 45) f.push(`Inputs stale ${iu}d`);
@@ -285,9 +297,9 @@ function reducer(state, action) {
     case "UPDATE_INPUTS": {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
-        const upd = { ...a, inputs: { ...a.inputs, ...action.inputs }, inputsUpdatedAt: iso(Date.now()) };
+        const upd = { ...a, inputs: { ...a.inputs, ...clampInputs(action.inputs) }, inputsUpdatedAt: iso(Date.now()) };
         const s = healthScore(upd, state.activities, state.settings.weights);
-        return { ...upd, history: [...a.history, { d: iso(Date.now()), s }] };
+        return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
@@ -355,7 +367,7 @@ const StatSm = ({ label, value, sub, tone, children }) => (
 const Btn = ({ children, onClick, kind = "default", type = "button" }) => (
   <button type={type} onClick={onClick} className={`px-3.5 py-1.5 text-xs font-bold ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
-const Input = p => <input {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />;
+const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
 const Select = ({ options, ...p }) => (
   <select {...p} className={"nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none " + (p.className || "")}>
     {options.map(o => <option key={o} value={o}>{o}</option>)}
@@ -495,8 +507,8 @@ function ChurnForm({ acct, user, dispatch, onDone }) {
   );
 }
 function UpdateHealthForm({ acct, dispatch, onDone }) {
-  const [v, setV] = useState({ ...acct.inputs });
-  const num = (k, min, max) => <label className="text-xs text-slate-700">{k}<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: +e.target.value })} className="w-20" /></label>;
+  const [v, setV] = useState({ ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) });
+  const num = (k, min, max) => <label className="text-xs text-slate-700">{k} ({min}–{max})<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: e.target.value })} className="w-20" /></label>;
   return (
     <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: v }); onDone(); }}>
       {num("usage", 0, 100)}{num("sentiment", 0, 100)}{num("tickets", 0, 50)}{num("nps", -100, 100)}
@@ -517,7 +529,7 @@ function AccountForm({ dispatch, onDone, existing, team = [] }) {
       e.preventDefault(); if (!v.name.trim()) return;
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0 };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
-      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0 }, history: [], inputsUpdatedAt: iso(Date.now()) } });
+      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
     }}>
       <F label="Name *"><Input autoFocus value={v.name} onChange={e => set("name", e.target.value)} /></F>
@@ -806,8 +818,7 @@ function importAccountsCSV(file, accounts, dispatch, done) {
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
-      const inputPatch = {};
-      ["usage", "sentiment", "tickets", "nps"].forEach(k => { if (has(k)) { const n = parseFloat(col(r, k)); if (!isNaN(n)) inputPatch[k] = n; } });
+      const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
       if (existing) {
@@ -819,7 +830,7 @@ function importAccountsCSV(file, accounts, dispatch, done) {
         const item = { id: uid(), tier: "Mid", arr: 0, currency: "USD", industry: "", csm: "",
           startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active",
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
-          inputs: { usage: 70, sentiment: 70, tickets: 0, nps: 0, ...inputPatch },
+          inputs: { ...DEFAULT_INPUTS, ...inputPatch },
           history: [], inputsUpdatedAt: iso(Date.now()) };
         dispatch({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
@@ -972,7 +983,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
             <div className={`mb-2 text-xs font-bold ${iu >= 45 ? "text-rose-500" : iu >= 30 ? "text-amber-600" : "text-slate-500"}`}>
               Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? " — refresh via ✎ Update health" : ""}
             </div>); })()}
-          <Sparkline points={[...a.history, { d: iso(Date.now()), s: a.score }]} />
+          <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
             {Object.keys(comps).map(k => <div key={k} className="flex justify-between"><span>{WEIGHT_LABELS[k]}</span><span className="font-mono">{comps[k]}</span></div>)}
           </div>
@@ -1027,7 +1038,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
               <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
               <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
               <Select value={o.stage} options={["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"]}
-                className="!px-2 !py-0.5 text-xs" onChange={e => {
+                disabled={!!a.churn} title={a.churn ? "Account is churned — reactivate it to work opportunities" : undefined}
+                className="!px-2 !py-0.5 text-xs disabled:opacity-50" onChange={e => {
                   const stage = e.target.value;
                   if (stage === o.stage) return;
                   if (stage === "Won") {
@@ -1096,7 +1108,7 @@ function Renewals({ scored, openAccount }) {
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
     const m = new Date(now.getFullYear(), now.getMonth() + i, 1);
-    const key = m.toISOString().slice(0, 7);
+    const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`; // local, not toISOString — UTC shifts the month
     months.push({ key, label: m.toLocaleDateString("en-US", { month: "short", year: "numeric" }), items: scored.filter(a => a.renewalDate.slice(0, 7) === key) });
   }
   return (
