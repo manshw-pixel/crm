@@ -607,7 +607,7 @@ function AdjustArrForm({ acct, user, dispatch, onDone }) {
 }
 
 /* ------------------------------- Dashboard ------------------------------- */
-function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount }) {
+function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
@@ -616,11 +616,13 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
   const counts = { Green: 0, Yellow: 0, Red: 0 };
   scored.forEach(a => counts[a.risk]++);
   const flagged = scored.filter(a => a.flags.length);
-  // trailing-12-month revenue retention (USD, from churn events and renewal deltas)
+  // trailing-12-month revenue retention (USD, from churn events and renewal deltas);
+  // when "All" is selected this always spans every account, regardless of other scoping
   const rates = st.settings.rates;
   const yearAgo = Date.now() - 365 * DAY;
+  const retAccounts = scope === "all" ? allAccounts : all;
   let churnedARR = 0, expansion = 0, contraction = 0;
-  all.forEach(a => {
+  retAccounts.forEach(a => {
     if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
     (a.renewals || []).forEach(r => {
       if (new Date(r.completedOn).getTime() >= yearAgo) {
@@ -635,7 +637,8 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
       }
     });
   });
-  const base = totalARR + churnedARR - expansion + contraction;
+  const retARR = retAccounts.reduce((s, a) => s + (a.churn ? 0 : a.arrUSD), 0);
+  const base = retARR + churnedARR - expansion + contraction;
   const pct = x => (100 * x).toFixed(0) + "%";
   const grr = base > 0 ? (base - churnedARR - contraction) / base : null;
   const nrr = base > 0 ? (base - churnedARR - contraction + expansion) / base : null;
@@ -663,7 +666,7 @@ function Dashboard({ st, scored, all, scope, setScopeSel, myCount, renewalsDue, 
       <div className="grid grid-cols-3 gap-3">
         <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" />
         <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} />
-        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${all.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} />
+        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${retAccounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} />
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} />
@@ -743,6 +746,56 @@ function exportCSV(rows) {
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
 }
+function parseCSV(text) {
+  const rows = []; let row = [], cur = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (inQ) {
+      if (ch === '"') { if (text[i + 1] === '"') { cur += '"'; i++; } else inQ = false; }
+      else cur += ch;
+    } else if (ch === '"') inQ = true;
+    else if (ch === ",") { row.push(cur); cur = ""; }
+    else if (ch === "\n" || ch === "\r") {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      row.push(cur); rows.push(row); row = []; cur = "";
+    } else cur += ch;
+  }
+  if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => r.some(c => c.trim() !== ""));
+}
+function importAccountsCSV(file, dispatch, done) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    const rows = parseCSV(String(reader.result));
+    if (rows.length < 2) return done({ ok: 0, skipped: 0, err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
+    const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
+    const header = rows[0].map(norm);
+    const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
+    if (header.indexOf("name") < 0) return done({ ok: 0, skipped: 0, err: 'The header row needs a "name" column (matching Export CSV format works).' });
+    let ok = 0, skipped = 0;
+    rows.slice(1).forEach(r => {
+      const name = col(r, "name");
+      if (!name) { skipped++; return; }
+      const num = (key, dflt) => { const v = parseFloat(col(r, key)); return isNaN(v) ? dflt : v; };
+      const date = v => { const d = new Date(v); return v && !isNaN(d) ? iso(d.getTime()) : null; };
+      dispatch({ type: "ADD_ACCOUNT", item: {
+        id: uid(), name,
+        tier: ["Enterprise", "Mid", "SMB"].find(t => t.toLowerCase() === col(r, "tier").toLowerCase()) || "Mid",
+        arr: Math.max(0, num("arr", 0)),
+        currency: CURRENCIES.includes(col(r, "currency").toUpperCase()) ? col(r, "currency").toUpperCase() : "USD",
+        industry: col(r, "industry"), csm: col(r, "csm"),
+        startDate: date(col(r, "startdate")) || iso(Date.now()),
+        renewalDate: date(col(r, "renewaldate")) || addDays(365),
+        contractStatus: ["Active", "Auto-renew", "In negotiation", "Churn risk"].find(s => s.toLowerCase() === col(r, "contractstatus").toLowerCase()) || "Active",
+        inputs: { usage: num("usage", 70), sentiment: num("sentiment", 70), tickets: num("tickets", 0), nps: num("nps", 0) },
+        history: [], inputsUpdatedAt: iso(Date.now()),
+      } });
+      ok++;
+    });
+    done({ ok, skipped });
+  };
+  reader.readAsText(file);
+}
 function AccountList({ scored, openAccount, searchRef, dispatch, team }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -750,6 +803,8 @@ function AccountList({ scored, openAccount, searchRef, dispatch, team }) {
   const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
   const [sort, setSort] = useState({ k: "score", dir: 1 });
+  const fileRef = useRef(null);
+  const [importMsg, setImportMsg] = useState(null);
   const csms = ["All", ...new Set(scored.map(a => a.csm))];
   const rows = useMemo(() => {
     let r = scored.filter(a => (showChurned || !a.churn) &&
@@ -766,7 +821,17 @@ function AccountList({ scored, openAccount, searchRef, dispatch, team }) {
     </th>
   );
   return (
-    <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2"><Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn><Btn onClick={() => exportCSV(rows)}>Export CSV</Btn></div>}>
+    <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2">
+      <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>
+      <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>
+      <Btn onClick={() => exportCSV(rows)}>Export CSV</Btn>
+      <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, dispatch, setImportMsg); }} />
+    </div>}>
+      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : "text-emerald-700"}`}>
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} account{importMsg.ok === 1 ? "" : "s"}{importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns used: name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, usage, sentiment, tickets, nps.</>}
+        <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
+      </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
@@ -1368,7 +1433,7 @@ function App({ user }) {
           )}
         </div>
       </div>
-      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} />}
+      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} />
         : <AccountList scored={visible} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} />)}
