@@ -1447,18 +1447,13 @@ function SetupScreen() {
   );
 }
 function AuthScreen() {
-  const [mode, setMode] = useState("signin"); // signin | signup | reset
-  const [name, setName] = useState(""); const [email, setEmail] = useState(""); const [pass, setPass] = useState("");
+  const [mode, setMode] = useState("signin"); // signin | reset — self-signup disabled; admins add users in Settings
+  const [email, setEmail] = useState(""); const [pass, setPass] = useState("");
   const [err, setErr] = useState(""); const [msg, setMsg] = useState(""); const [busy, setBusy] = useState(false);
   const submit = async e => {
     e.preventDefault(); setErr(""); setMsg(""); setBusy(true);
     try {
-      if (mode === "signup") {
-        const { error } = await sb.auth.signUp({ email, password: pass, options: { data: { name: name.trim() || email.split("@")[0] } } });
-        if (error) throw error;
-        setMsg("Account created. If nothing happens, check your email for a confirmation link, then sign in.");
-        setMode("signin");
-      } else if (mode === "reset") {
+      if (mode === "reset") {
         const { error } = await sb.auth.resetPasswordForEmail(email);
         if (error) throw error;
         setMsg("Password-reset email sent (check spam too).");
@@ -1475,25 +1470,22 @@ function AuthScreen() {
       <form onSubmit={submit} className="nm w-full max-w-sm p-8">
         <h1 className="text-xl font-bold tracking-tight">One<span className="text-indigo-600">Vio</span></h1>
         <p className="mb-4 mt-1 text-xs text-slate-700">
-          {mode === "signup" ? "Create your account — the first person to sign up becomes admin." :
-           mode === "reset" ? "We'll email you a password-reset link." : "Sign in with your team account."}
+          {mode === "reset" ? "We'll email you a password-reset link." : "Sign in with your team account."}
         </p>
-        {mode === "signup" && <label className="mb-2 block text-xs font-semibold text-slate-700">Your name
-          <Input value={name} onChange={e => setName(e.target.value)} className="mt-1" autoFocus /></label>}
         <label className="mb-2 block text-xs font-semibold text-slate-700">Email
-          <Input type="email" required value={email} onChange={e => { setEmail(e.target.value); setErr(""); }} className="mt-1" autoFocus={mode !== "signup"} /></label>
+          <Input type="email" required value={email} onChange={e => { setEmail(e.target.value); setErr(""); }} className="mt-1" autoFocus /></label>
         {mode !== "reset" && <label className="mb-2 block text-xs font-semibold text-slate-700">Password
           <Input type="password" required minLength={6} value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" /></label>}
         {err && <div className="mb-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
         {msg && <div className="mb-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
         <button type="submit" disabled={busy} className="grad mt-3 w-full py-2.5 text-sm font-bold text-white disabled:opacity-50">
-          {busy ? "…" : mode === "signup" ? "Sign up" : mode === "reset" ? "Send reset link" : "Sign in"}</button>
+          {busy ? "…" : mode === "reset" ? "Send reset link" : "Sign in"}</button>
         <div className="mt-3 flex justify-between text-xs text-indigo-600">
-          <button type="button" className="hover:underline" onClick={() => { setMode(mode === "signup" ? "signin" : "signup"); setErr(""); setMsg(""); }}>
-            {mode === "signup" ? "Have an account? Sign in" : "New here? Sign up"}</button>
-          {mode === "signin" && <button type="button" className="hover:underline" onClick={() => { setMode("reset"); setErr(""); setMsg(""); }}>Forgot password?</button>}
+          {mode === "signin"
+            ? <button type="button" className="hover:underline" onClick={() => { setMode("reset"); setErr(""); setMsg(""); }}>Forgot password?</button>
+            : <button type="button" className="hover:underline" onClick={() => { setMode("signin"); setErr(""); setMsg(""); }}>Back to sign in</button>}
         </div>
-        <p className="mt-3 text-[11px] leading-4 text-slate-500">Shared team CRM — data lives in your team's Supabase project. Roles: admins manage settings and users; everyone else works with accounts.</p>
+        <p className="mt-3 text-[11px] leading-4 text-slate-500">Accounts are created by your administrator (Settings → Users). Ask them for access if you don't have a login yet.</p>
         <Copyright />
       </form>
     </div>
@@ -1593,7 +1585,7 @@ function UsersCard({ me }) {
       </form>
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
       {msg && <div className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
-      <p className="mt-2 text-xs text-slate-500">Add any number of users or admins. At least one admin always remains (enforced by the database). Colleagues can also self-sign-up from the login screen (they start as <b>user</b>). To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
+      <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
     </Card>
   );
 }
@@ -1650,7 +1642,7 @@ function App({ user }) {
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
   const myCount = scored.filter(a => a.csm === user.name).length;
-  const scope = scopeSel ?? (myCount > 0 ? "mine" : "all");
+  const scope = scopeSel ?? (user.role === "admin" ? "all" : myCount > 0 ? "mine" : "all"); // admins default to the whole book
   const visible = scope === "mine" ? scored.filter(a => a.csm === user.name) : scored; // includes churned
   const active = visible.filter(a => !a.churn);
   const openAccount = id => { setView("Accounts"); setAcctId(id); };
