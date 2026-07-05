@@ -272,7 +272,7 @@ function reducer(state, action) {
       return { ...state, accounts: [...state.accounts, item] }; }
     case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", renewals: [...(a.renewals || []), action.entry] }
+      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewals: [...(a.renewals || []), action.entry] }
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
@@ -525,13 +525,14 @@ const F = ({ label, children }) => <label className="text-xs text-slate-700">{la
 function AccountForm({ dispatch, onDone, existing, team = [] }) {
   const csmOptions = [...new Set(["", ...team.map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
       e.preventDefault(); if (!v.name.trim()) return;
-      const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0 };
+      const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
+        billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
       else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
@@ -548,6 +549,8 @@ function AccountForm({ dispatch, onDone, existing, team = [] }) {
       <F label="Modules"><Input value={v.modules} onChange={e => set("modules", e.target.value)} placeholder="comma-separated" /></F>
       <F label="Licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
       <F label="Dedicated support"><Select value={v.dedicatedSupport ? "Yes" : "No"} onChange={e => set("dedicatedSupport", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
+      <F label="Billing completed"><Select value={v.billingCompleted ? "Yes" : "No"} onChange={e => set("billingCompleted", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
+      {v.billingCompleted && <F label="Billing date"><Input type="date" value={v.billingCompletedDate} onChange={e => set("billingCompletedDate", e.target.value)} /></F>}
       <div className="col-span-2 flex items-center gap-2 md:col-span-4">
         <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
         {!existing && <span className="text-xs text-slate-500">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
@@ -593,7 +596,8 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
       e.preventDefault();
       const arr = +newArr || 0;
       dispatch({ type: "COMPLETE_RENEWAL", id: acct.id, newDate, newArr: arr,
-        entry: { id: uid(), completedOn: iso(Date.now()), from: acct.renewalDate, to: newDate, prevArr: acct.arr, arr, by: user.name } });
+        entry: { id: uid(), completedOn: iso(Date.now()), from: acct.renewalDate, to: newDate, prevArr: acct.arr, arr, by: user.name,
+          billingCompleted: !!acct.billingCompleted, billingCompletedDate: acct.billingCompletedDate || null } });
       dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "renewal", date: iso(Date.now()),
         summary: `Renewal completed by ${user.name} — ${fmtMoney(arr, acct.currency)} · next renewal ${fmtDate(newDate)}` } });
       onDone();
@@ -602,6 +606,22 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
       <label className="text-xs text-slate-700">ARR for new term ({acct.currency})<Input type="number" min="0" value={newArr} onChange={e => setNewArr(e.target.value)} className="w-32" /></label>
       <Btn kind="primary" type="submit">Mark renewed</Btn><Btn onClick={onDone}>Cancel</Btn>
       <span className="text-xs text-slate-500">Logs this renewal, moves the renewal date forward and updates ARR.</span>
+    </form>
+  );
+}
+
+function BillingForm({ acct, user, dispatch, onDone }) {
+  const [date, setDate] = useState(iso(Date.now()));
+  return (
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => {
+      e.preventDefault();
+      dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: date } });
+      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "note", date, summary: `Billing completed for current term · by ${user.name}` } });
+      onDone();
+    }}>
+      <label className="text-xs text-slate-700">Billing completed on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-auto" /></label>
+      <Btn kind="primary" type="submit">Mark completed</Btn><Btn onClick={onDone}>Cancel</Btn>
+      <span className="text-xs text-slate-500">Resets to pending automatically when the next renewal is completed.</span>
     </form>
   );
 }
@@ -766,9 +786,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
 
 /* ------------------------------ Account list ------------------------------ */
 function exportCSV(rows) {
-  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport"];
+  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate"];
   const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : a[c];
+  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : a[c];
   const csv = [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
@@ -822,6 +842,8 @@ function importAccountsCSV(file, accounts, dispatch, done) {
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
+      if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
+      if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));
       const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
@@ -852,6 +874,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const churnedCount = scored.filter(a => a.churn).length;
   const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
+  const [billing, setBilling] = useState("All");
   useEffect(() => {
     if (!initialFilter) return;
     setRisk(initialFilter.risk || "All");
@@ -865,10 +888,11 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     let r = scored.filter(a => (showChurned || !a.churn) &&
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
+      (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
     return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
-  }, [scored, q, tier, risk, csm, renew, sort, showChurned]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned]);
   const Th = ({ k, children, className = "" }) => (
     <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
@@ -884,7 +908,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg); }} />
     </div>}>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, usage, sentiment, tickets, nps.</>}
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.</>}
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
       </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} /></div>}
@@ -895,6 +919,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
         <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
         <span className="text-xs text-slate-500">renew ≤ days</span>
+        <Select value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
+        <span className="text-xs text-slate-500">billing</span>
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => setShowChurned(e.target.checked)} />show churned ({churnedCount})</label>}
       </div>
@@ -902,10 +928,10 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan="9" className="px-2 py-8 text-center text-sm text-slate-500">
+            {rows.length === 0 && <tr><td colSpan="10" className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
             {rows.map(a => {
@@ -920,6 +946,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  <td className="px-2 text-xs">{a.billingCompleted ? <span className="text-emerald-600">✓ {fmtDate(a.billingCompletedDate)}</span> : <span className="text-amber-600">pending</span>}</td>
                   <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
               );
@@ -952,12 +979,15 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <span className="text-sm text-slate-700">#{a.accountNo || "—"} · {a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}
           {a.licenses ? ` · ${a.licenses} licenses` : ""}{a.dedicatedSupport ? " · Dedicated support" : ""}{a.modules ? ` · ${a.modules}` : ""}</span>
         <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+        <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
+          {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
         <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
         <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
         {!a.churn && <Btn kind="primary" onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
+        {!a.churn && !a.billingCompleted && <Btn kind="primary" onClick={() => setForm("billing")}>$ Mark billing completed</Btn>}
         <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
@@ -981,6 +1011,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "billing" ? <BillingForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "adjust" ? <AdjustArrForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editActivity" ? <LogActivityForm acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -1085,6 +1116,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
                   <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
                   <span className="text-slate-800">{fmtDate(e.date)}</span>
                   <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
+                  <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-400"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
                   <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
                   <span className="text-xs text-slate-500">by {e.r.by}</span>
                 </>}
