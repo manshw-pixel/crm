@@ -194,10 +194,10 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES } } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } });
 
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
@@ -223,7 +223,8 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
-    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) } },
+    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) } },
   };
 }
 
@@ -244,8 +245,10 @@ function persist(action, next) {
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
       ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
         sb.from(t).delete().eq("data->>accountId", action.id).then(({ error }) => error && dbError(t, error)));
+      // orphaned subs (parent just deleted) need their cleared parentId written back
+      next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -272,7 +275,7 @@ function reducer(state, action) {
       return { ...state, accounts: [...state.accounts, item] }; }
     case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", renewals: [...(a.renewals || []), action.entry] }
+      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewals: [...(a.renewals || []), action.entry] }
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
@@ -282,7 +285,8 @@ function reducer(state, action) {
       ? { ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] } : a) };
     case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
-      accounts: state.accounts.filter(a => a.id !== action.id),
+      // _orphaned marks subs whose parent was just deleted so persist() can write them back
+      accounts: state.accounts.filter(a => a.id !== action.id).map(a => a.parentId === action.id ? { ...a, parentId: null, _orphaned: true } : a),
       contacts: state.contacts.filter(c => c.accountId !== action.id),
       activities: state.activities.filter(x => x.accountId !== action.id),
       tasks: state.tasks.filter(t => t.accountId !== action.id),
@@ -304,6 +308,7 @@ function reducer(state, action) {
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
+    case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     default: return state;
   }
 }
@@ -342,17 +347,21 @@ function DistBar({ counts }) {
 /* ------------------------------ UI atoms ------------------------------ */
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
-const Card = ({ title, right, children, className = "" }) => (
-  <div className={`nm p-4 ${className}`}>
+const Card = ({ title, right, children, className = "", id }) => (
+  <div id={id} className={`nm p-4 ${className}`}>
     {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-xs font-bold uppercase tracking-widest text-slate-700">{title}</h3>{right}</div>}
     {children}
   </div>
 );
-const Stat = ({ label, value, sub, tone }) => (
-  <Card>
-    <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
-    <div className={`mt-1 text-2xl font-extrabold ${tone || "text-slate-700"}`}>{value}</div>
-    {sub && <div className="text-xs text-slate-500">{sub}</div>}
+const Stat = ({ label, value, sub, tone, onClick }) => (
+  <Card className={onClick ? "cursor-pointer transition hover:border-indigo-300 hover:shadow-md" : ""}>
+    <div role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick}
+      onKeyDown={onClick ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
+      className="outline-none">
+      <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">{label}</div>
+      <div className={`mt-1 text-2xl font-extrabold ${tone || "text-slate-700"}`}>{value}</div>
+      {sub && <div className="text-xs text-slate-500">{sub}</div>}
+    </div>
   </Card>
 );
 const StatSm = ({ label, value, sub, tone, children }) => (
@@ -518,16 +527,21 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 }
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
-function AccountForm({ dispatch, onDone, existing, team = [] }) {
+function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
   const csmOptions = [...new Set(["", ...team.map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
+  const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
+  // eligible parents: top-level accounts only (one level deep), never itself
+  const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
       e.preventDefault(); if (!v.name.trim()) return;
-      const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0 };
+      const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
+        billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
+        parentId: hasSubs ? null : (v.parentId || null) };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
       else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
@@ -544,6 +558,15 @@ function AccountForm({ dispatch, onDone, existing, team = [] }) {
       <F label="Modules"><Input value={v.modules} onChange={e => set("modules", e.target.value)} placeholder="comma-separated" /></F>
       <F label="Licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
       <F label="Dedicated support"><Select value={v.dedicatedSupport ? "Yes" : "No"} onChange={e => set("dedicatedSupport", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
+      <F label="Billing completed"><Select value={v.billingCompleted ? "Yes" : "No"} onChange={e => set("billingCompleted", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
+      {v.billingCompleted && <F label="Billing date"><Input type="date" value={v.billingCompletedDate} onChange={e => set("billingCompletedDate", e.target.value)} /></F>}
+      <F label="Parent account">{hasSubs
+        ? <div className="py-1.5 text-xs text-slate-500">Has sub-accounts — can't also be a sub.</div>
+        : <select value={v.parentId} onChange={e => set("parentId", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+            <option value="">None (top-level)</option>
+            {parentOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>}
+      </F>
       <div className="col-span-2 flex items-center gap-2 md:col-span-4">
         <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
         {!existing && <span className="text-xs text-slate-500">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
@@ -589,7 +612,8 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
       e.preventDefault();
       const arr = +newArr || 0;
       dispatch({ type: "COMPLETE_RENEWAL", id: acct.id, newDate, newArr: arr,
-        entry: { id: uid(), completedOn: iso(Date.now()), from: acct.renewalDate, to: newDate, prevArr: acct.arr, arr, by: user.name } });
+        entry: { id: uid(), completedOn: iso(Date.now()), from: acct.renewalDate, to: newDate, prevArr: acct.arr, arr, by: user.name,
+          billingCompleted: !!acct.billingCompleted, billingCompletedDate: acct.billingCompletedDate || null } });
       dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "renewal", date: iso(Date.now()),
         summary: `Renewal completed by ${user.name} — ${fmtMoney(arr, acct.currency)} · next renewal ${fmtDate(newDate)}` } });
       onDone();
@@ -598,6 +622,22 @@ function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
       <label className="text-xs text-slate-700">ARR for new term ({acct.currency})<Input type="number" min="0" value={newArr} onChange={e => setNewArr(e.target.value)} className="w-32" /></label>
       <Btn kind="primary" type="submit">Mark renewed</Btn><Btn onClick={onDone}>Cancel</Btn>
       <span className="text-xs text-slate-500">Logs this renewal, moves the renewal date forward and updates ARR.</span>
+    </form>
+  );
+}
+
+function BillingForm({ acct, user, dispatch, onDone }) {
+  const [date, setDate] = useState(iso(Date.now()));
+  return (
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => {
+      e.preventDefault();
+      dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: date } });
+      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type: "note", date, summary: `Billing completed for current term · by ${user.name}` } });
+      onDone();
+    }}>
+      <label className="text-xs text-slate-700">Billing completed on<Input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-auto" /></label>
+      <Btn kind="primary" type="submit">Mark completed</Btn><Btn onClick={onDone}>Cancel</Btn>
+      <span className="text-xs text-slate-500">Resets to pending automatically when the next renewal is completed.</span>
     </form>
   );
 }
@@ -630,7 +670,7 @@ function AdjustArrForm({ acct, user, dispatch, onDone }) {
 }
 
 /* ------------------------------- Dashboard ------------------------------- */
-function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount }) {
+function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
@@ -682,17 +722,17 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
       <div className="grid grid-cols-3 gap-3">
-        <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts`} />
-        <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} />
-        <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" />
+        <Stat label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts`} onClick={() => openAccounts()} />
+        <Stat label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} onClick={() => openAccounts({ risk: "Red" })} />
+        <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" onClick={() => openAccounts({ risk: "Red" })} />
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" />
-        <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} />
-        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${retAccounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} />
+        <Stat label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
+        <Stat label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} onClick={() => openAccounts()} />
+        <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${retAccounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length} account(s) lost`} onClick={() => openAccounts({ showChurned: true })} />
       </div>
       <div className="grid grid-cols-3 gap-3">
-        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} />
+        <Stat label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
         <Card title="Health distribution" className="!p-3"><DistBar counts={counts} /></Card>
         <Card title="Renewals due" className="!p-3">
           <div className="max-h-48 overflow-y-auto pr-1">
@@ -738,7 +778,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         ))}
         </div>
       </Card>
-      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3">
+      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3" id="week-tasks">
         <div className="max-h-40 overflow-y-auto pr-1">
         {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
         {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
@@ -762,9 +802,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
 
 /* ------------------------------ Account list ------------------------------ */
 function exportCSV(rows) {
-  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport"];
+  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate"];
   const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : a[c];
+  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : a[c];
   const csv = [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
   const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
@@ -818,6 +858,8 @@ function importAccountsCSV(file, accounts, dispatch, done) {
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
+      if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
+      if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));
       const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
@@ -842,12 +884,120 @@ function importAccountsCSV(file, accounts, dispatch, done) {
   };
   reader.readAsText(file);
 }
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team }) {
+/* finance CSV: accountNo and/or name + billingCompletedDate — marks billing completed */
+function importBillingCSV(text, accounts, dispatch) {
+  const rows = parseCSV(text);
+  if (rows.length < 2) return { updated: 0, skipped: 0, err: "no data rows" };
+  const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
+  const header = rows[0].map(norm);
+  const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
+  if (header.indexOf("billingcompleteddate") < 0) return { updated: 0, skipped: 0, err: 'needs a "billingCompletedDate" column' };
+  const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
+  const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
+  let updated = 0, skipped = 0;
+  rows.slice(1).forEach(r => {
+    const d = new Date(col(r, "billingcompleteddate"));
+    const acct = (col(r, "accountno") && byNo.get(col(r, "accountno"))) || byName.get(col(r, "name").toLowerCase());
+    if (!acct || isNaN(d)) { skipped++; return; }
+    dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: iso(d.getTime()) } });
+    updated++;
+  });
+  return { updated, skipped };
+}
+
+/* ---------------------- shared-drive folder sync ---------------------- */
+const FS_SUPPORTED = "showDirectoryPicker" in window;
+const idb = () => new Promise((res, rej) => {
+  const r = indexedDB.open("crm-sync", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("handles");
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+const idbSet = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
+const idbGet = async k => { const db = await idb(); return new Promise((res, rej) => { const rq = db.transaction("handles").objectStore("handles").get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); };
+const idbDel = async k => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").delete(k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
+async function ensurePermission(handle) {
+  if (await handle.queryPermission({ mode: "read" }) === "granted") return true;
+  return (await handle.requestPermission({ mode: "read" })) === "granted";
+}
+async function listCsvFiles(dirHandle) {
+  const out = [];
+  for await (const [name, h] of dirHandle.entries())
+    if (h.kind === "file" && /\.csv$/i.test(name)) out.push(await h.getFile());
+  return out;
+}
+function IntegrationsCard({ st, dispatch }) {
+  const [handles, setHandles] = useState({ sales: null, finance: null });
+  const [busy, setBusy] = useState(false);
+  const integ = st.settings.integrations || { processed: {}, log: [] };
+  useEffect(() => { (async () => {
+    try { setHandles({ sales: await idbGet("sales") || null, finance: await idbGet("finance") || null }); } catch (e) {}
+  })(); }, []);
+  const pick = async key => {
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); }
+    catch (e) { /* user cancelled */ }
+  };
+  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); };
+  const sync = useCallback(async () => {
+    if (busy) return; setBusy(true);
+    const processed = { ...integ.processed }; const log = [...integ.log];
+    const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
+    for (const key of ["sales", "finance"]) {
+      const h = handles[key]; if (!h) continue;
+      try {
+        if (!await ensurePermission(h)) { note(key, "—", "permission denied", true); continue; }
+        for (const f of await listCsvFiles(h)) {
+          const sig = `${f.name}|${f.lastModified}`;
+          if (processed[sig]) continue;
+          try {
+            if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
+              { note(key, f.name, r.err || `imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`, !!r.err); res(); }));
+            else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
+              note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}`, !!r.err); }
+            processed[sig] = true;
+          } catch (ex) { note(key, f.name, ex.message, true); }
+        }
+      } catch (ex) { note(key, "—", ex.message, true); }
+    }
+    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
+    setBusy(false);
+  }, [handles, st, busy, dispatch]);
+  useEffect(() => { // auto-scan every 5 minutes while a folder is connected
+    if (!handles.sales && !handles.finance) return;
+    const t = setInterval(sync, 5 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [handles, sync]);
+  if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  return (
+    <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={sync}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
+      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
+        <div key={key} className="mb-2 flex items-center gap-2 text-sm">
+          <span className="w-28 font-semibold">{label}</span>
+          {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
+            <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
+            : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
+          <span className="ml-auto text-xs text-slate-400">{hint}</span>
+        </div>
+      ))}
+      <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>
+      {integ.log.length > 0 && <div className="max-h-32 overflow-y-auto border-t border-slate-100 pt-2 text-xs">
+        {[...integ.log].reverse().map((l, i) => <div key={i} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
+      </div>}
+    </Card>
+  );
+}
+
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
   const churnedCount = scored.filter(a => a.churn).length;
   const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
+  const [billing, setBilling] = useState("All");
+  useEffect(() => {
+    if (!initialFilter) return;
+    setRisk(initialFilter.risk || "All");
+    setShowChurned(!!initialFilter.showChurned);
+  }, [initialFilter]);
   const [sort, setSort] = useState({ k: "score", dir: 1 });
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState(null);
@@ -856,10 +1006,29 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     let r = scored.filter(a => (showChurned || !a.churn) &&
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
+      (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
-    return [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
-  }, [scored, q, tier, risk, csm, renew, sort, showChurned]);
+    const sorted = [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
+    // group: each top-level row followed by its (filter-surviving) subs; subs whose
+    // parent is filtered out appear at their own sorted position
+    const byParent = new Map();
+    sorted.forEach(a => { if (a.parentId) byParent.set(a.parentId, [...(byParent.get(a.parentId) || []), a]); });
+    const topIds = new Set(sorted.filter(a => !a.parentId).map(a => a.id));
+    const out = [];
+    sorted.forEach(a => {
+      if (a.parentId && topIds.has(a.parentId)) return; // rendered under its parent
+      out.push(a);
+      (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
+    });
+    return out;
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned]);
+  // rollup: sum of non-churned sub ARR (USD) per parent, over the whole book
+  const subArr = useMemo(() => {
+    const m = new Map();
+    scored.forEach(a => { if (a.parentId && !a.churn) m.set(a.parentId, (m.get(a.parentId) || 0) + a.arrUSD); });
+    return m;
+  }, [scored]);
   const Th = ({ k, children, className = "" }) => (
     <th className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
@@ -875,10 +1044,10 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg); }} />
     </div>}>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, usage, sentiment, tickets, nps.</>}
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.</>}
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
       </div>}
-      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} /></div>}
+      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
         <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
@@ -886,6 +1055,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
         <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
         <span className="text-xs text-slate-500">renew ≤ days</span>
+        <Select value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
+        <span className="text-xs text-slate-500">billing</span>
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => setShowChurned(e.target.checked)} />show churned ({churnedCount})</label>}
       </div>
@@ -893,10 +1064,10 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan="9" className="px-2 py-8 text-center text-sm text-slate-500">
+            {rows.length === 0 && <tr><td colSpan="10" className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
             {rows.map(a => {
@@ -904,13 +1075,15 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
               return (
                 <tr key={a.id} className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5 text-xs text-slate-500">{a.accountNo || "—"}</td>
-                  <td className="px-2 py-1.5 font-medium">{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
+                  <td className="px-2 py-1.5 font-medium">{a._sub && <span className="mr-1 text-slate-400">↳</span>}{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
                   <td className="px-2">{a.tier}</td>
-                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}</td>
+                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}
+                    {subArr.has(a.id) && <span className="ml-1 text-xs font-semibold text-indigo-600" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>}</td>
                   <td className="px-2 text-slate-700">{a.industry}</td>
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  <td className="px-2 text-xs">{a.billingCompleted ? <span className="text-emerald-600">✓ {fmtDate(a.billingCompletedDate)}</span> : <span className="text-amber-600">pending</span>}</td>
                   <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
               );
@@ -923,8 +1096,10 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
 }
 
 /* ------------------------------ Account detail ------------------------------ */
-function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount }) {
   const a = scored.find(x => x.id === id);
+  const subs = scored.filter(x => x.parentId === id);
+  const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
@@ -941,14 +1116,18 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <h2 className="text-xl font-bold">{a.name}</h2>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
         <span className="text-sm text-slate-700">#{a.accountNo || "—"} · {a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}
-          {a.licenses ? ` · ${a.licenses} licenses` : ""}{a.dedicatedSupport ? " · Dedicated support" : ""}{a.modules ? ` · ${a.modules}` : ""}</span>
+          {a.licenses ? ` · ${a.licenses} licenses` : ""}{a.dedicatedSupport ? " · Dedicated support" : ""}{a.modules ? ` · ${a.modules}` : ""}
+          {parent && <> · sub-account of <button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button></>}</span>
         <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+        <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
+          {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
         <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
         <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
         {!a.churn && <Btn kind="primary" onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
+        {!a.churn && !a.billingCompleted && <Btn kind="primary" onClick={() => setForm("billing")}>$ Mark billing completed</Btn>}
         <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
         <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
         <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
@@ -966,12 +1145,21 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
         <span className="text-slate-700">{fmtDate(a.churn.date)} · {a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
         <span className="ml-auto text-xs text-slate-500">{fmtMoney(a.churn.arr, a.churn.currency)} ARR lost · recorded by {a.churn.by}</span>
       </div>}
+      {subs.length > 0 && <Card title={`Sub-accounts (${subs.length}) · rollup ${fmtMoney(toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0))} USD`}>
+        {subs.map(s => (
+          <button key={s.id} onClick={() => openAccount(s.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
+            <span>{s.name}{s.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</span>
+            <span className="flex items-center gap-2 text-xs text-slate-700">{fmtMoney(s.arr, s.currency)} <HealthChip score={s.score} /></span>
+          </button>
+        ))}
+      </Card>}
       {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
-        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} />
+        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form === "billing" ? <BillingForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "adjust" ? <AdjustArrForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editActivity" ? <LogActivityForm acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -1076,6 +1264,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team }) {
                   <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
                   <span className="text-slate-800">{fmtDate(e.date)}</span>
                   <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
+                  <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-400"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
                   <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
                   <span className="text-xs text-slate-500">by {e.r.by}</span>
                 </>}
@@ -1179,6 +1368,7 @@ function Settings({ st, dispatch, user }) {
         ))}
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
+      <IntegrationsCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
@@ -1379,6 +1569,8 @@ function App({ user }) {
   const [loaded, setLoaded] = useState(false);
   const [view, setView] = useState("Dashboard");
   const [acctId, setAcctId] = useState(null);
+  const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
+  const openAccounts = filter => { setView("Accounts"); setAcctId(null); setAcctFilter({ ...(filter || {}), t: Date.now() }); };
   const searchRef = useRef();
   const dispatch = useCallback(action => setSt(prev => {
     const next = reducer(prev, action);
@@ -1482,10 +1674,10 @@ function App({ user }) {
           )}
         </div>
       </div>
-      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} />}
+      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
       {view === "Accounts" && (acctId
-        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} />
-        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} />)}
+        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
+        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
       {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       </main>
