@@ -830,6 +830,7 @@ function retentionStats(accounts, rates) {
 
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
+const quarterKey = d => { const x = new Date(d); return x.getFullYear() + "-Q" + (Math.floor(x.getMonth() / 3) + 1); };
 function cohortData(accounts) {
   const now = iso(Date.now());
   const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear() - 3);
@@ -892,6 +893,50 @@ function CohortGrid({ accounts }) {
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+}
+
+/* ---------------------------- churn analysis ---------------------------- */
+const CHURN_DIMS = ["Reason", "CSM", "Tier", "Quarterly"];
+function ChurnAnalysis({ accounts, rates }) {
+  const [dim, setDim] = useState("Reason");
+  const rows = useMemo(() => {
+    const m = new Map();
+    accounts.filter(a => a.churn).forEach(a => {
+      const lost = toUSD(a.churn.arr || 0, a.churn.currency || a.currency, rates);
+      const k = dim === "Reason" ? (a.churn.reason || "Other")
+        : dim === "CSM" ? (a.csm || "Unassigned")
+        : dim === "Tier" ? (a.tier || "—")
+        : quarterKey(a.churn.date);
+      const r = m.get(k) || { k, n: 0, arr: 0 };
+      r.n++; r.arr += lost; m.set(k, r);
+    });
+    if (dim !== "Quarterly") return [...m.values()].sort((x, y) => y.arr - x.arr);
+    // Quarterly: last 8 quarters, chronological, zero-filled
+    const keys = []; const now = new Date();
+    for (let i = 7; i >= 0; i--) keys.push(quarterKey(new Date(now.getFullYear(), now.getMonth() - i * 3, 1)));
+    return keys.map(k => m.get(k) || { k, n: 0, arr: 0 });
+  }, [accounts, rates, dim]);
+  const total = rows.reduce((s, r) => s + r.arr, 0);
+  const max = Math.max(...rows.map(r => r.arr), 1);
+  return (
+    <Card title={`Churn analysis${total ? ` · ${fmtMoney(total)} lost` : ""}`} className="!p-3" right={
+      <div className="flex items-center gap-1 text-xs">
+        {CHURN_DIMS.map(d => <button key={d} onClick={() => setDim(d)}
+          className={`rounded-full px-2.5 py-0.5 font-bold ${dim === d ? "bg-indigo-100 text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>{d}</button>)}
+      </div>}>
+      {rows.length === 0 && <div className="text-sm text-slate-500">No churn recorded. 🎉</div>}
+      {rows.map(r => (
+        <div key={r.k} className="flex items-center gap-3 py-1 text-sm">
+          <span className="w-28 shrink-0 font-semibold text-slate-700">{r.k}</span>
+          <div className="h-3 flex-1 rounded bg-slate-100">
+            <div className="h-3 rounded bg-rose-400" style={{ width: `${(100 * r.arr) / max}%` }} />
+          </div>
+          <span className="w-24 shrink-0 text-right text-xs text-slate-600">{r.n ? `${r.n} acct${r.n > 1 ? "s" : ""}` : "—"}</span>
+          <span className="w-20 shrink-0 text-right text-xs font-bold text-rose-600">{r.arr ? fmtMoney(r.arr) : "—"}</span>
+        </div>
+      ))}
     </Card>
   );
 }
@@ -1056,6 +1101,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>}
       <CohortGrid accounts={scope === "all" ? allAccounts : all} />
+      <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
     </div>
   );
 }
