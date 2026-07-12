@@ -823,6 +823,75 @@ function retentionStats(accounts, rates) {
     nrr: base > 0 ? (base - churnedARR - contraction + expansion) / base : null,
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
 }
+
+/* ---------------------------- cohort retention ---------------------------- */
+const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
+function cohortData(accounts) {
+  const now = iso(Date.now());
+  const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear() - 3);
+  const rows = new Map(); // key -> { key, start (earliest startDate), accts: [] }
+  accounts.forEach(a => {
+    if (!a.startDate || isNaN(new Date(a.startDate))) return;
+    const d = new Date(a.startDate);
+    const key = d < threeYrsAgo ? String(d.getFullYear()) : `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+    if (!rows.has(key)) rows.set(key, { key, start: a.startDate, accts: [] });
+    const r = rows.get(key);
+    if (a.startDate < r.start) r.start = a.startDate;
+    // quarters survived: Infinity if never churned
+    r.accts.push({ arr: a.arrUSD || 0, surv: a.churn && a.churn.date ? Math.max(0, Math.floor(monthsBetween(a.startDate, a.churn.date) / 3)) : Infinity });
+  });
+  return [...rows.values()].sort((x, y) => x.start.localeCompare(y.start)).map(r => {
+    const size = r.accts.length, arr = r.accts.reduce((s, x) => s + x.arr, 0);
+    const maxQ = Math.floor(monthsBetween(r.start, now) / 3);
+    const cells = [];
+    for (let q = 0; q <= maxQ; q++) {
+      const alive = r.accts.filter(x => x.surv >= q);
+      cells.push({ q, pct: size ? alive.length / size : 0, arrPct: arr ? alive.reduce((s, x) => s + x.arr, 0) / arr : 0 });
+    }
+    return { key: r.key, size, arr, cells };
+  });
+}
+function CohortGrid({ accounts }) {
+  const [mode, setMode] = useState("logo"); // "logo" | "arr"
+  const rows = useMemo(() => cohortData(accounts), [accounts]);
+  if (!rows.length) return null;
+  const maxCols = Math.min(Math.max(...rows.map(r => r.cells.length)), 13); // cap at 3 years of quarters
+  const shade = p => p >= 0.95 ? "bg-emerald-100 text-emerald-800" : p >= 0.8 ? "bg-emerald-50 text-emerald-700"
+    : p >= 0.6 ? "bg-amber-50 text-amber-700" : p > 0 ? "bg-rose-50 text-rose-600" : "bg-rose-100 text-rose-700";
+  return (
+    <Card title="Cohort retention" className="!p-3" right={
+      <div className="flex items-center gap-1 text-xs">
+        {[["logo", "Logos"], ["arr", "ARR (approx.)"]].map(([k, l]) =>
+          <button key={k} onClick={() => setMode(k)} className={`rounded-full px-2.5 py-0.5 font-bold ${mode === k ? "bg-indigo-100 text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>{l}</button>)}
+      </div>}>
+      <p className="mb-2 text-xs text-slate-500">% of each start cohort still active N quarters in{mode === "arr" ? " — ARR uses each account's last-known ARR (no historical ARR)" : ""}. Cohorts older than 3 years grouped by year.</p>
+      <div className="overflow-x-auto">
+        <table className="text-xs">
+          <thead><tr>
+            <th className="px-2 py-1 text-left font-bold uppercase tracking-widest text-slate-500">Cohort</th>
+            <th className="px-2 py-1 text-right font-bold uppercase tracking-widest text-slate-500">{mode === "logo" ? "Accts" : "ARR"}</th>
+            {Array.from({ length: maxCols }, (_, q) => <th key={q} className="px-1 py-1 text-center font-bold text-slate-500">Q{q}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.key}>
+                <td className="px-2 py-0.5 font-semibold text-slate-700">{r.key}</td>
+                <td className="px-2 py-0.5 text-right text-slate-500">{mode === "logo" ? r.size : fmtMoney(r.arr)}</td>
+                {Array.from({ length: maxCols }, (_, q) => {
+                  const c = r.cells[q];
+                  if (!c) return <td key={q} />;
+                  const p = mode === "logo" ? c.pct : c.arrPct;
+                  return <td key={q} className={`px-1 py-0.5 text-center font-semibold ${shade(p)}`} title={`${r.key} · Q${q}: ${(100 * p).toFixed(0)}% retained`}>{(100 * p).toFixed(0)}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stalled: 0.1 };
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
@@ -982,6 +1051,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
             { label: "Red", values: snaps.map(s => s.Red || 0), color: RISK_HEX.Red }]} />
         </div>
       </Card>}
+      <CohortGrid accounts={scope === "all" ? allAccounts : all} />
     </div>
   );
 }
