@@ -79,6 +79,20 @@ const fmtMoney = (n, cur = "USD") => (CUR_SYM[cur] || "$") + (n >= 1e6 ? (n / 1e
 const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+/* ------------------------------- QBR cadence ------------------------------- */
+const QBR_FREQS = ["None", "Quarterly", "Semi-annual", "Annual"];
+const QBR_FREQ_MONTHS = { Quarterly: 3, "Semi-annual": 6, Annual: 12 };
+const addMonths = (dateStr, m) => { const d = new Date(dateStr); d.setMonth(d.getMonth() + m); return iso(d.getTime()); };
+/* null = QBRs not applicable (churned, or no frequency and no date set) */
+function qbrStatus(a) {
+  if (a.churn) return null;
+  const hasFreq = a.qbrFrequency && a.qbrFrequency !== "None";
+  if (!hasFreq && !a.nextQbrDate) return null;
+  if (!a.nextQbrDate) return { kind: "unscheduled" };
+  const d = daysUntil(a.nextQbrDate);
+  return d < 0 ? { kind: "overdue", d: -d } : d <= 30 ? { kind: "due", d } : { kind: "scheduled", d };
+}
+
 const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
 const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
 const INPUT_RANGE = { usage: [0, 100], sentiment: [0, 100], tickets: [0, 50], nps: [-100, 100] };
@@ -235,7 +249,10 @@ function persist(action, next) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
     case "ADD_CONTACT": return up("contacts", action.item);
     case "ADD_OPP": return up("opportunities", action.item);
-    case "ADD_ACTIVITY": return up("activities", action.item);
+    case "ADD_ACTIVITY": {
+      if (action.item.type === "QBR") { const a = next.accounts.find(x => x.id === action.item.accountId); if (a && QBR_FREQ_MONTHS[a.qbrFrequency]) up("accounts", a); }
+      return up("activities", action.item);
+    }
     case "ADD_TASK": return up("tasks", action.item);
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
@@ -293,7 +310,17 @@ function reducer(state, action) {
       opportunities: state.opportunities.filter(o => o.accountId !== action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
-    case "ADD_ACTIVITY": return { ...state, activities: [...state.activities, action.item] };
+    case "ADD_ACTIVITY": {
+      let accounts = state.accounts;
+      if (action.item.type === "QBR") { // logging a QBR schedules the next one per the account's cadence
+        accounts = accounts.map(a => {
+          if (a.id !== action.item.accountId) return a;
+          const m = QBR_FREQ_MONTHS[a.qbrFrequency];
+          return m ? { ...a, nextQbrDate: addMonths(action.item.date, m) } : a;
+        });
+      }
+      return { ...state, accounts, activities: [...state.activities, action.item] };
+    }
     case "EDIT_ACTIVITY": return { ...state, activities: state.activities.map(x => x.id === action.id ? { ...x, ...action.patch } : x) };
     case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
     case "EDIT_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
@@ -552,8 +579,8 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "" }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "" });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
@@ -574,6 +601,8 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>
       <F label="Renewal date"><Input type="date" value={v.renewalDate} onChange={e => set("renewalDate", e.target.value)} /></F>
       <F label="Contract status"><Select value={v.contractStatus} onChange={e => set("contractStatus", e.target.value)} options={["Active", "Auto-renew", "In negotiation", "Churn risk"]} className="w-full" /></F>
+      <F label="QBR cadence"><Select value={v.qbrFrequency} onChange={e => set("qbrFrequency", e.target.value)} options={QBR_FREQS} className="w-full" /></F>
+      {v.qbrFrequency !== "None" && <F label="Next QBR"><Input type="date" value={v.nextQbrDate} onChange={e => set("nextQbrDate", e.target.value)} /></F>}
       <F label="Modules"><Input value={v.modules} onChange={e => set("modules", e.target.value)} placeholder="comma-separated" /></F>
       <F label="Licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
       <F label="Dedicated support"><Select value={v.dedicatedSupport ? "Yes" : "No"} onChange={e => set("dedicatedSupport", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
