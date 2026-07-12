@@ -205,6 +205,10 @@ function seedData() {
     { id: uid(), accountId: "a5", type: "upsell", value: 45000, stage: "Stalled", closeDate: addDays(120) },
   ];
   accounts.forEach((a, i) => { a.currency = "USD"; a.inputsUpdatedAt = addDays(-10); a.accountNo = i + 1; });
+  // QBR cadence demo: a1 healthy quarterly, a2 overdue, a5 due soon
+  Object.assign(accounts[0], { qbrFrequency: "Quarterly", nextQbrDate: addDays(78) });
+  Object.assign(accounts[1], { qbrFrequency: "Quarterly", nextQbrDate: addDays(-9) });
+  Object.assign(accounts[4], { qbrFrequency: "Semi-annual", nextQbrDate: addDays(12) });
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
