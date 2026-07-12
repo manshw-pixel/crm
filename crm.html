@@ -1366,10 +1366,10 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan="10" className="px-2 py-8 text-center text-sm text-slate-500">
+            {rows.length === 0 && <tr><td colSpan={qbrDue ? 11 : 10} className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
             {rows.map(a => {
@@ -1385,6 +1385,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
+                    return qd === null ? <span className="text-xs text-slate-500">—</span>
+                      : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}
                   <td className="px-2 text-xs">{a.billingCompleted ? <span className="text-emerald-600">✓ {fmtDate(a.billingCompletedDate)}</span> : <span className="text-amber-600">pending</span>}</td>
                   <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
