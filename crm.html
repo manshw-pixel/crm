@@ -830,7 +830,10 @@ function retentionStats(accounts, rates) {
 
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
-const quarterKey = d => { const x = new Date(d); return x.getFullYear() + "-Q" + (Math.floor(x.getMonth() / 3) + 1); };
+const quarterKey = d => { // ISO strings parsed textually (timezone-safe); Dates read in local time
+  const [y, m] = typeof d === "string" ? d.split("-").map(Number) : [d.getFullYear(), d.getMonth() + 1];
+  return y + "-Q" + (Math.ceil(m / 3));
+};
 function cohortData(accounts) {
   const now = iso(Date.now());
   const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear() - 3);
@@ -948,7 +951,9 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
     const startMonth = Math.floor(now.getMonth() / 3) * 3 - off * 3;
     const start = new Date(now.getFullYear(), startMonth, 1);
     const end = new Date(now.getFullYear(), startMonth + 3, 1);
-    const inQ = d => { const t = new Date(d); return t >= start && t < end; };
+    const mkey = x => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}`;
+    const startKey = mkey(start), endKey = mkey(end);
+    const inQ = d => { const k = String(d).slice(0, 7); return k >= startKey && k < endKey; };
     let renewed = 0, renewedN = 0, churned = 0, churnedN = 0, slipped = 0;
     accounts.forEach(a => {
       (a.renewals || []).forEach(r => { if (r.completedOn && inQ(r.completedOn)) { renewed += toUSD(r.arr || 0, a.currency, rates); renewedN++; } });
@@ -956,8 +961,7 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
       if (!a.churn && inQ(a.renewalDate) && daysUntil(a.renewalDate) < 0
           && !(a.renewals || []).some(r => r.completedOn && r.completedOn >= a.renewalDate)) slipped++;
     });
-    const monthKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`;
-    const snap = (snapshots || []).find(s => s.month === monthKey && s.commit90 !== undefined);
+    const snap = (snapshots || []).find(s => s.month === startKey && s.commit90 !== undefined);
     const wr = renewed + churned > 0 ? renewed / (renewed + churned) : null;
     return { key: quarterKey(start), renewed, renewedN, churned, churnedN, slipped, wr,
       forecast: snap ? snap.commit90 : null, current: off === 0 };
