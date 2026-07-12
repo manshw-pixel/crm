@@ -778,6 +778,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
     if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
   });
   const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
+  const qbrAccts = scored.map(a => ({ a, s: qbrStatus(a) })).filter(x => x.s && (x.s.kind === "due" || x.s.kind === "overdue"));
+  const qbrOverdue = qbrAccts.filter(x => x.s.kind === "overdue").length;
   return (
     <div className="space-y-3">
       {scored.length === 0 && <div className="nm-sm p-4 text-sm text-indigo-500">
@@ -795,7 +797,10 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
           onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
+        <Stat label="QBRs due (30d)" value={qbrAccts.length}
+          tone={qbrOverdue ? "text-rose-600" : qbrAccts.length ? "text-amber-600" : undefined}
+          sub={qbrOverdue ? `${qbrOverdue} overdue` : "on schedule"} onClick={() => openAccounts({ qbrDue: true })} />
         <Stat label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
           tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
           sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
@@ -1118,12 +1123,14 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
   const [billing, setBilling] = useState("All");
   const [onlyChurned, setOnlyChurned] = useState(false);
+  const [qbrDue, setQbrDue] = useState(false);
   useEffect(() => {
     if (!initialFilter) return;
     setRisk(initialFilter.risk || "All");
     setShowChurned(!!initialFilter.showChurned);
     setOnlyChurned(!!initialFilter.onlyChurned);
     setBilling(initialFilter.billing || "All");
+    setQbrDue(!!initialFilter.qbrDue);
   }, [initialFilter]);
   const [sort, setSort] = useState({ k: "accountNo", dir: 1 });
   const fileRef = useRef(null);
@@ -1134,6 +1141,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
+      (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
     const sorted = [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
@@ -1149,7 +1157,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue]);
   // rollup: sum of non-churned sub ARR (USD) per parent, over the whole book
   const subArr = useMemo(() => {
     const m = new Map();
@@ -1188,6 +1196,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => { setShowChurned(e.target.checked); if (!e.target.checked) setOnlyChurned(false); }} />show churned ({churnedCount})</label>}
         {onlyChurned && <button className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600" onClick={() => setOnlyChurned(false)} title="Remove churned-only filter">churned only ✕</button>}
+        {qbrDue && <button className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700" onClick={() => setQbrDue(false)} title="Remove QBR-due filter">QBR due ✕</button>}
       </div>
       <div className="max-h-[65vh] overflow-auto">
         <table className="w-full text-sm">
@@ -1255,6 +1264,10 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         </select>}
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
           {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
+        {(() => { const s = qbrStatus(a); return s && (
+          <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
+            {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
+          </span>); })()}
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
