@@ -1985,14 +1985,19 @@ function App({ user }) {
     if (!loaded || !scored.length) return;
     const month = iso(Date.now()).slice(0, 7);
     const snaps = st.settings.snapshots || [];
-    if (snaps.some(s => s.month === month)) return;
+    // re-take this month's snapshot once if it predates forecast recording
+    if (snaps.some(s => s.month === month && s.commit90 !== undefined)) return;
     const act = scored.filter(a => !a.churn);
     const r = retentionStats(scored, st.settings.rates);
     const counts = { Green: 0, Yellow: 0, Red: 0 };
     act.forEach(a => counts[a.risk]++);
+    const due90 = act.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 90; });
+    const s90 = list => Math.round(list.reduce((s, a) => s + a.arrUSD, 0));
     dispatch({ type: "SET_SNAPSHOTS", snapshots: [...snaps.filter(s => s.month !== month),
       { month, totalARR: Math.round(act.reduce((s, a) => s + a.arrUSD, 0)), accounts: act.length,
-        nrr: r.nrr, grr: r.grr, churnedARR: Math.round(r.churnedARR), ...counts }].slice(-24) });
+        nrr: r.nrr, grr: r.grr, churnedARR: Math.round(r.churnedARR), ...counts,
+        due90: s90(due90), commit90: s90(due90.filter(a => renewalStageOf(a) === "Committed")),
+        atRisk90: s90(due90.filter(a => renewalStageOf(a) === "At risk")), due90Count: due90.length }].slice(-24) });
   }, [loaded, scored]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
