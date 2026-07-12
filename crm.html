@@ -670,7 +670,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
       e.preventDefault(); if (!v.name.trim()) return;
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
         billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
-        parentId: hasSubs ? null : (v.parentId || null) };
+        parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
       else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
