@@ -941,6 +941,64 @@ function ChurnAnalysis({ accounts, rates }) {
   );
 }
 
+/* ----------------------- renewal outcomes by quarter ----------------------- */
+function RenewalOutcomes({ accounts, rates, snapshots }) {
+  const rows = useMemo(() => [4, 3, 2, 1, 0].map(off => {
+    const now = new Date();
+    const startMonth = Math.floor(now.getMonth() / 3) * 3 - off * 3;
+    const start = new Date(now.getFullYear(), startMonth, 1);
+    const end = new Date(now.getFullYear(), startMonth + 3, 1);
+    const inQ = d => { const t = new Date(d); return t >= start && t < end; };
+    let renewed = 0, renewedN = 0, churned = 0, churnedN = 0, slipped = 0;
+    accounts.forEach(a => {
+      (a.renewals || []).forEach(r => { if (r.completedOn && inQ(r.completedOn)) { renewed += toUSD(r.arr || 0, a.currency, rates); renewedN++; } });
+      if (a.churn && inQ(a.churn.date)) { churned += toUSD(a.churn.arr || 0, a.churn.currency || a.currency, rates); churnedN++; }
+      if (!a.churn && inQ(a.renewalDate) && daysUntil(a.renewalDate) < 0
+          && !(a.renewals || []).some(r => r.completedOn && r.completedOn >= a.renewalDate)) slipped++;
+    });
+    const monthKey = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, "0")}`;
+    const snap = (snapshots || []).find(s => s.month === monthKey && s.commit90 !== undefined);
+    const wr = renewed + churned > 0 ? renewed / (renewed + churned) : null;
+    return { key: quarterKey(start), renewed, renewedN, churned, churnedN, slipped, wr,
+      forecast: snap ? snap.commit90 : null, current: off === 0 };
+  }), [accounts, rates, snapshots]);
+  const firstForecast = (snapshots || []).find(s => s.commit90 !== undefined);
+  const anyForecast = rows.some(r => r.forecast !== null);
+  const wrChip = wr => wr === null ? <span className="text-slate-400">—</span>
+    : <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${wr >= 0.9 ? "bg-emerald-100 text-emerald-700" : wr >= 0.75 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-600"}`}>{Math.round(100 * wr)}%</span>;
+  return (
+    <Card title="Renewal outcomes by quarter" className="!p-3">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead><tr className="border-b border-slate-200 text-[11px] font-bold uppercase tracking-widest text-slate-500">
+            <th className="px-2 py-1.5 text-left">Quarter</th>
+            <th className="px-2 py-1.5 text-right">Renewed</th>
+            <th className="px-2 py-1.5 text-right">Churned</th>
+            <th className="px-2 py-1.5 text-right">Slipped</th>
+            <th className="px-2 py-1.5 text-right">Win rate</th>
+            {anyForecast && <th className="px-2 py-1.5 text-right">Forecast (commit)</th>}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.key} className="border-b border-slate-100 last:border-0">
+                <td className="px-2 py-1.5 font-semibold text-slate-700">{r.key}{r.current && <span className="ml-1 text-[11px] font-normal text-slate-400">(so far)</span>}</td>
+                <td className="px-2 py-1.5 text-right">{r.renewedN ? <span className="text-emerald-700">{fmtMoney(r.renewed)} <span className="text-xs text-slate-500">· {r.renewedN}</span></span> : "—"}</td>
+                <td className="px-2 py-1.5 text-right">{r.churnedN ? <span className="text-rose-600">{fmtMoney(r.churned)} <span className="text-xs text-slate-500">· {r.churnedN}</span></span> : "—"}</td>
+                <td className="px-2 py-1.5 text-right">{r.slipped || "—"}</td>
+                <td className="px-2 py-1.5 text-right">{wrChip(r.wr)}</td>
+                {anyForecast && <td className="px-2 py-1.5 text-right text-xs">{r.forecast === null ? "—"
+                  : <span>{fmtMoney(r.forecast)} <span className={r.renewed >= r.forecast ? "text-emerald-600" : "text-rose-600"}>({r.renewed >= r.forecast ? "+" : "−"}{fmtMoney(Math.abs(r.renewed - r.forecast))})</span></span>}</td>}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!anyForecast && <p className="mt-2 text-xs text-slate-500">
+        Forecast tracking started {firstForecast ? new Date(firstForecast.month + "-15").toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "this month"} — accuracy appears after a full quarter.</p>}
+    </Card>
+  );
+}
+
 const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stalled: 0.1 };
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
@@ -1658,7 +1716,7 @@ const RENEWAL_STAGE_STYLE = {
   Negotiating: "bg-amber-100 text-amber-700", Committed: "bg-emerald-100 text-emerald-700", "At risk": "bg-rose-100 text-rose-700",
 };
 const renewalStageOf = a => a.renewalStage || "Not started";
-function Renewals({ scored, openAccount, dispatch }) {
+function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [] }) {
   const months = [];
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
@@ -1702,6 +1760,7 @@ function Renewals({ scored, openAccount, dispatch }) {
         </div>
       ))}
       </div>
+      <RenewalOutcomes accounts={allBook} rates={rates} snapshots={snapshots} />
     </div>
   );
 }
@@ -2076,7 +2135,7 @@ function App({ user }) {
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} />}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       <Copyright />
       </main>
