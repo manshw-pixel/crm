@@ -79,6 +79,20 @@ const fmtMoney = (n, cur = "USD") => (CUR_SYM[cur] || "$") + (n >= 1e6 ? (n / 1e
 const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const uid = () => Math.random().toString(36).slice(2, 10);
 
+/* ------------------------------- QBR cadence ------------------------------- */
+const QBR_FREQS = ["None", "Quarterly", "Semi-annual", "Annual"];
+const QBR_FREQ_MONTHS = { Quarterly: 3, "Semi-annual": 6, Annual: 12 };
+const addMonths = (dateStr, m) => { const d = new Date(dateStr); d.setMonth(d.getMonth() + m); return iso(d.getTime()); };
+/* null = QBRs not applicable (churned, or no frequency and no date set) */
+function qbrStatus(a) {
+  if (a.churn) return null;
+  const hasFreq = a.qbrFrequency && a.qbrFrequency !== "None";
+  if (!hasFreq && !a.nextQbrDate) return null;
+  if (!a.nextQbrDate) return { kind: "unscheduled" };
+  const d = daysUntil(a.nextQbrDate);
+  return d < 0 ? { kind: "overdue", d: -d } : d <= 30 ? { kind: "due", d } : { kind: "scheduled", d };
+}
+
 const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
 const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
 const INPUT_RANGE = { usage: [0, 100], sentiment: [0, 100], tickets: [0, 50], nps: [-100, 100] };
@@ -191,6 +205,10 @@ function seedData() {
     { id: uid(), accountId: "a5", type: "upsell", value: 45000, stage: "Stalled", closeDate: addDays(120) },
   ];
   accounts.forEach((a, i) => { a.currency = "USD"; a.inputsUpdatedAt = addDays(-10); a.accountNo = i + 1; });
+  // QBR cadence demo: a1 healthy quarterly, a2 overdue, a5 due soon
+  Object.assign(accounts[0], { qbrFrequency: "Quarterly", nextQbrDate: addDays(78) });
+  Object.assign(accounts[1], { qbrFrequency: "Quarterly", nextQbrDate: addDays(-9) });
+  Object.assign(accounts[4], { qbrFrequency: "Semi-annual", nextQbrDate: addDays(12) });
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
@@ -235,7 +253,10 @@ function persist(action, next) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
     case "ADD_CONTACT": return up("contacts", action.item);
     case "ADD_OPP": return up("opportunities", action.item);
-    case "ADD_ACTIVITY": return up("activities", action.item);
+    case "ADD_ACTIVITY": {
+      if (action.item.type === "QBR") { const a = next.accounts.find(x => x.id === action.item.accountId); if (a && QBR_FREQ_MONTHS[a.qbrFrequency]) up("accounts", a); }
+      return up("activities", action.item);
+    }
     case "ADD_TASK": return up("tasks", action.item);
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
@@ -293,7 +314,17 @@ function reducer(state, action) {
       opportunities: state.opportunities.filter(o => o.accountId !== action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
-    case "ADD_ACTIVITY": return { ...state, activities: [...state.activities, action.item] };
+    case "ADD_ACTIVITY": {
+      let accounts = state.accounts;
+      if (action.item.type === "QBR") { // logging a QBR schedules the next one per the account's cadence
+        accounts = accounts.map(a => {
+          if (a.id !== action.item.accountId) return a;
+          const m = QBR_FREQ_MONTHS[a.qbrFrequency];
+          return m ? { ...a, nextQbrDate: addMonths(action.item.date, m) } : a;
+        });
+      }
+      return { ...state, accounts, activities: [...state.activities, action.item] };
+    }
     case "EDIT_ACTIVITY": return { ...state, activities: state.activities.map(x => x.id === action.id ? { ...x, ...action.patch } : x) };
     case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
     case "EDIT_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
@@ -343,6 +374,85 @@ function TrendLine({ label, points, months, fmt, w = 150, h = 28 }) {
       <svg width={w} height={h}><path d={d} fill="none" stroke={last >= first ? "#10b981" : "#f43f5e"} strokeWidth="2" />
         {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2" fill="#64748b" />)}</svg>
       <span className={`text-xs font-bold ${last >= first ? "text-emerald-600" : "text-rose-600"}`}>{fmt(last)}</span>
+    </div>
+  );
+}
+/* full line chart: gridlines, axis labels, hover tooltip (snapshots are monthly) */
+function LineChart({ title, points, months, fmt, color = "#6366f1", w = 340, h = 160 }) {
+  const [hov, setHov] = useState(null);
+  const vals = points.map(v => v === null || v === undefined ? null : +v);
+  const nums = vals.filter(v => v !== null);
+  if (nums.length < 2) return null;
+  const min = Math.min(...nums), max = Math.max(...nums);
+  const padL = 44, padR = 10, padT = 14, padB = 22;
+  const X = i => padL + (i * (w - padL - padR)) / Math.max(vals.length - 1, 1);
+  const Y = v => padT + (1 - (v - min) / (max - min || 1)) * (h - padT - padB);
+  const xy = vals.map((v, i) => v === null ? null : [X(i), Y(v)]);
+  const d = xy.filter(Boolean).map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
+  const ticks = [min, (min + max) / 2, max];
+  const lblEvery = Math.ceil(months.length / 6);
+  const move = e => {
+    const box = e.currentTarget.getBoundingClientRect();
+    const fx = (e.clientX - box.left) * (w / box.width);
+    let best = 0; vals.forEach((v, i) => { if (v !== null && Math.abs(X(i) - fx) < Math.abs(X(best) - fx)) best = i; });
+    setHov(vals[best] === null ? null : best);
+  };
+  return (
+    <div>
+      <div className="mb-1 text-xs font-bold text-slate-500">{title}</div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" onMouseMove={move} onMouseLeave={() => setHov(null)}>
+        {ticks.map((t, i) => <g key={i}>
+          <line x1={padL} x2={w - padR} y1={Y(t)} y2={Y(t)} stroke="#e2e8f0" strokeWidth="1" />
+          <text x={padL - 4} y={Y(t) + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{fmt(t)}</text>
+        </g>)}
+        {months.map((m, i) => i % lblEvery === 0 && <text key={m} x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.slice(2)}</text>)}
+        <path d={d} fill="none" stroke={color} strokeWidth="2" />
+        {xy.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={hov === i ? 4 : 2.5} fill={color} />)}
+        {hov !== null && xy[hov] && <g>
+          <line x1={xy[hov][0]} x2={xy[hov][0]} y1={padT} y2={h - padB} stroke="#cbd5e1" strokeDasharray="3 3" />
+          <rect x={Math.min(xy[hov][0] + 6, w - 96)} y={padT} width="90" height="28" rx="4" fill="#0f172a" opacity="0.85" />
+          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 12} fontSize="9" fill="#e2e8f0">{months[hov]}</text>
+          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 23} fontSize="10" fontWeight="bold" fill="#fff">{fmt(vals[hov])}</text>
+        </g>}
+      </svg>
+    </div>
+  );
+}
+/* stacked bars of per-month counts (e.g. Green/Yellow/Red account mix) */
+function StackedBars({ months, series, w = 340, h = 160 }) {
+  const [hov, setHov] = useState(null);
+  if (!months.length) return null;
+  const totals = months.map((_, i) => series.reduce((s, sr) => s + (sr.values[i] || 0), 0));
+  const max = Math.max(...totals, 1);
+  const padL = 30, padR = 10, padT = 14, padB = 22;
+  const bw = Math.min(24, ((w - padL - padR) / months.length) * 0.7);
+  const X = i => padL + ((i + 0.5) * (w - padL - padR)) / months.length;
+  const H = v => (v / max) * (h - padT - padB);
+  const lblEvery = Math.ceil(months.length / 6);
+  return (
+    <div>
+      <div className="mb-1 flex items-center gap-3 text-xs font-bold text-slate-500">Health mix (accounts)
+        {series.map(sr => <span key={sr.label} className="flex items-center gap-1 font-normal"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: sr.color }} />{sr.label}</span>)}
+      </div>
+      <svg viewBox={`0 0 ${w} ${h}`} className="w-full" onMouseLeave={() => setHov(null)}>
+        <text x={padL - 4} y={padT + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{max}</text>
+        <line x1={padL} x2={w - padR} y1={h - padB} y2={h - padB} stroke="#e2e8f0" />
+        {months.map((m, i) => {
+          let y = h - padB;
+          return (
+            <g key={m} onMouseEnter={() => setHov(i)}>
+              {series.map(sr => { const bh = H(sr.values[i] || 0); y -= bh;
+                return <rect key={sr.label} x={X(i) - bw / 2} y={y} width={bw} height={bh} fill={sr.color} opacity={hov === null || hov === i ? 1 : 0.4} />; })}
+              {i % lblEvery === 0 && <text x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.slice(2)}</text>}
+            </g>
+          );
+        })}
+        {hov !== null && <g>
+          <rect x={Math.min(X(hov) + 6, w - 120)} y={padT} width="114" height={14 + series.length * 11} rx="4" fill="#0f172a" opacity="0.85" />
+          <text x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 11} fontSize="9" fill="#e2e8f0">{months[hov]} · {totals[hov]} accounts</text>
+          {series.map((sr, si) => <text key={sr.label} x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 22 + si * 11} fontSize="9" fill={sr.color}>{sr.label}: {sr.values[hov] || 0}</text>)}
+        </g>}
+      </svg>
     </div>
   );
 }
@@ -552,15 +662,15 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "" }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "" });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
       e.preventDefault(); if (!v.name.trim()) return;
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
         billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
-        parentId: hasSubs ? null : (v.parentId || null) };
+        parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
       else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
@@ -574,6 +684,8 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>
       <F label="Renewal date"><Input type="date" value={v.renewalDate} onChange={e => set("renewalDate", e.target.value)} /></F>
       <F label="Contract status"><Select value={v.contractStatus} onChange={e => set("contractStatus", e.target.value)} options={["Active", "Auto-renew", "In negotiation", "Churn risk"]} className="w-full" /></F>
+      <F label="QBR cadence"><Select value={v.qbrFrequency} onChange={e => set("qbrFrequency", e.target.value)} options={QBR_FREQS} className="w-full" /></F>
+      {v.qbrFrequency !== "None" && <F label="Next QBR"><Input type="date" value={v.nextQbrDate} onChange={e => set("nextQbrDate", e.target.value)} /></F>}
       <F label="Modules"><Input value={v.modules} onChange={e => set("modules", e.target.value)} placeholder="comma-separated" /></F>
       <F label="Licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
       <F label="Dedicated support"><Select value={v.dedicatedSupport ? "Yes" : "No"} onChange={e => set("dedicatedSupport", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
@@ -715,6 +827,75 @@ function retentionStats(accounts, rates) {
     nrr: base > 0 ? (base - churnedARR - contraction + expansion) / base : null,
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
 }
+
+/* ---------------------------- cohort retention ---------------------------- */
+const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
+function cohortData(accounts) {
+  const now = iso(Date.now());
+  const threeYrsAgo = new Date(); threeYrsAgo.setFullYear(threeYrsAgo.getFullYear() - 3);
+  const rows = new Map(); // key -> { key, start (earliest startDate), accts: [] }
+  accounts.forEach(a => {
+    if (!a.startDate || isNaN(new Date(a.startDate))) return;
+    const d = new Date(a.startDate);
+    const key = d < threeYrsAgo ? String(d.getFullYear()) : `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+    if (!rows.has(key)) rows.set(key, { key, start: a.startDate, accts: [] });
+    const r = rows.get(key);
+    if (a.startDate < r.start) r.start = a.startDate;
+    // quarters survived: Infinity if never churned
+    r.accts.push({ arr: a.arrUSD || 0, surv: a.churn && a.churn.date ? Math.max(0, Math.floor(monthsBetween(a.startDate, a.churn.date) / 3)) : Infinity });
+  });
+  return [...rows.values()].sort((x, y) => x.start.localeCompare(y.start)).map(r => {
+    const size = r.accts.length, arr = r.accts.reduce((s, x) => s + x.arr, 0);
+    const maxQ = Math.floor(monthsBetween(r.start, now) / 3);
+    const cells = [];
+    for (let q = 0; q <= maxQ; q++) {
+      const alive = r.accts.filter(x => x.surv >= q);
+      cells.push({ q, pct: size ? alive.length / size : 0, arrPct: arr ? alive.reduce((s, x) => s + x.arr, 0) / arr : 0 });
+    }
+    return { key: r.key, size, arr, cells };
+  });
+}
+function CohortGrid({ accounts }) {
+  const [mode, setMode] = useState("logo"); // "logo" | "arr"
+  const rows = useMemo(() => cohortData(accounts), [accounts]);
+  if (!rows.length) return null;
+  const maxCols = Math.min(Math.max(...rows.map(r => r.cells.length)), 13); // cap at 3 years of quarters
+  const shade = p => p >= 0.95 ? "bg-emerald-100 text-emerald-800" : p >= 0.8 ? "bg-emerald-50 text-emerald-700"
+    : p >= 0.6 ? "bg-amber-50 text-amber-700" : p > 0 ? "bg-rose-50 text-rose-600" : "bg-rose-100 text-rose-700";
+  return (
+    <Card title="Cohort retention" className="!p-3" right={
+      <div className="flex items-center gap-1 text-xs">
+        {[["logo", "Logos"], ["arr", "ARR (approx.)"]].map(([k, l]) =>
+          <button key={k} onClick={() => setMode(k)} className={`rounded-full px-2.5 py-0.5 font-bold ${mode === k ? "bg-indigo-100 text-indigo-700" : "text-slate-500 hover:text-slate-700"}`}>{l}</button>)}
+      </div>}>
+      <p className="mb-2 text-xs text-slate-500">% of each start cohort still active N quarters in{mode === "arr" ? " — ARR uses each account's last-known ARR (no historical ARR)" : ""}. Cohorts older than 3 years grouped by year.</p>
+      <div className="overflow-x-auto">
+        <table className="text-xs">
+          <thead><tr>
+            <th className="px-2 py-1 text-left font-bold uppercase tracking-widest text-slate-500">Cohort</th>
+            <th className="px-2 py-1 text-right font-bold uppercase tracking-widest text-slate-500">{mode === "logo" ? "Accts" : "ARR"}</th>
+            {Array.from({ length: maxCols }, (_, q) => <th key={q} className="px-1 py-1 text-center font-bold text-slate-500">Q{q}</th>)}
+          </tr></thead>
+          <tbody>
+            {rows.map(r => (
+              <tr key={r.key}>
+                <td className="px-2 py-0.5 font-semibold text-slate-700">{r.key}</td>
+                <td className="px-2 py-0.5 text-right text-slate-500">{mode === "logo" ? r.size : fmtMoney(r.arr)}</td>
+                {Array.from({ length: maxCols }, (_, q) => {
+                  const c = r.cells[q];
+                  if (!c) return <td key={q} />;
+                  const p = mode === "logo" ? c.pct : c.arrPct;
+                  return <td key={q} className={`px-1 py-0.5 text-center font-semibold ${shade(p)}`} title={`${r.key} · Q${q}: ${(100 * p).toFixed(0)}% retained`}>{(100 * p).toFixed(0)}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+}
+
 const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stalled: 0.1 };
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
@@ -749,6 +930,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
     if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
   });
   const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
+  const qbrAccts = scored.map(a => ({ a, s: qbrStatus(a) })).filter(x => x.s && (x.s.kind === "due" || x.s.kind === "overdue"));
+  const qbrOverdue = qbrAccts.filter(x => x.s.kind === "overdue").length;
   return (
     <div className="space-y-3">
       {scored.length === 0 && <div className="nm-sm p-4 text-sm text-indigo-500">
@@ -766,7 +949,10 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Stat label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
           onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-4 gap-3">
+        <Stat label="QBRs due (30d)" value={qbrAccts.length}
+          tone={qbrOverdue ? "text-rose-600" : qbrAccts.length ? "text-amber-600" : undefined}
+          sub={qbrOverdue ? `${qbrOverdue} overdue` : "on schedule"} onClick={() => openAccounts({ qbrDue: true })} />
         <Stat label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
           tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
           sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
@@ -858,6 +1044,18 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>
       </div>
+      {snaps.length >= 2 && <Card title="Trends & health mix" className="!p-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <LineChart title="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
+          <LineChart title="NRR" points={snaps.map(s => s.nrr)} months={snaps.map(s => s.month)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#10b981" />
+          <LineChart title="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#f59e0b" />
+          <StackedBars months={snaps.map(s => s.month)} series={[
+            { label: "Green", values: snaps.map(s => s.Green || 0), color: RISK_HEX.Green },
+            { label: "Yellow", values: snaps.map(s => s.Yellow || 0), color: RISK_HEX.Yellow },
+            { label: "Red", values: snaps.map(s => s.Red || 0), color: RISK_HEX.Red }]} />
+        </div>
+      </Card>}
+      <CohortGrid accounts={scope === "all" ? allAccounts : all} />
     </div>
   );
 }
@@ -1089,12 +1287,14 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const [csm, setCsm] = useState("All"); const [renew, setRenew] = useState("All");
   const [billing, setBilling] = useState("All");
   const [onlyChurned, setOnlyChurned] = useState(false);
+  const [qbrDue, setQbrDue] = useState(false);
   useEffect(() => {
     if (!initialFilter) return;
     setRisk(initialFilter.risk || "All");
     setShowChurned(!!initialFilter.showChurned);
     setOnlyChurned(!!initialFilter.onlyChurned);
     setBilling(initialFilter.billing || "All");
+    setQbrDue(!!initialFilter.qbrDue);
   }, [initialFilter]);
   const [sort, setSort] = useState({ k: "accountNo", dir: 1 });
   const fileRef = useRef(null);
@@ -1105,6 +1305,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
+      (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
     const sorted = [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
@@ -1120,7 +1321,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue]);
   // rollup: sum of non-churned sub ARR (USD) per parent, over the whole book
   const subArr = useMemo(() => {
     const m = new Map();
@@ -1159,15 +1360,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => { setShowChurned(e.target.checked); if (!e.target.checked) setOnlyChurned(false); }} />show churned ({churnedCount})</label>}
         {onlyChurned && <button className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600" onClick={() => setOnlyChurned(false)} title="Remove churned-only filter">churned only ✕</button>}
+        {qbrDue && <button className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700" onClick={() => setQbrDue(false)} title="Remove QBR-due filter">QBR due ✕</button>}
       </div>
       <div className="max-h-[65vh] overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th><Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan="10" className="px-2 py-8 text-center text-sm text-slate-500">
+            {rows.length === 0 && <tr><td colSpan={qbrDue ? 11 : 10} className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
             {rows.map(a => {
@@ -1183,6 +1385,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
+                    return qd === null ? <span className="text-xs text-slate-500">—</span>
+                      : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}
                   <td className="px-2 text-xs">{a.billingCompleted ? <span className="text-emerald-600">✓ {fmtDate(a.billingCompletedDate)}</span> : <span className="text-amber-600">pending</span>}</td>
                   <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
@@ -1226,6 +1431,10 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         </select>}
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
           {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
+        {(() => { const s = qbrStatus(a); return s && (
+          <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
+            {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
+          </span>); })()}
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
