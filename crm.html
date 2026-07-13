@@ -218,6 +218,21 @@ function seedData() {
 
 const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } });
 
+/* ------------------------------ audit trail ------------------------------ */
+const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage"];
+/* one entry per audited field the patch really changes (numbers normalized) */
+function auditChanges(a, patch, by, source) {
+  const out = [];
+  AUDIT_FIELDS.forEach(f => {
+    if (!(f in patch)) return;
+    const from = f === "arr" ? (+a[f] || 0) : (a[f] ?? "");
+    const to = f === "arr" ? (+patch[f] || 0) : (patch[f] ?? "");
+    if (from !== to) out.push({ id: uid(), date: iso(Date.now()), field: f, from, to, by: by || "unknown", source: source || "edit form" });
+  });
+  return out;
+}
+const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit || []), ...entries] } : a;
+
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => { console.error(where, error); alert(`Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`); };
@@ -296,16 +311,30 @@ function reducer(state, action) {
     case "ADD_ACCOUNT": { const item = action.item.accountNo ? action.item
       : { ...action.item, accountNo: state.accounts.reduce((m, a) => Math.max(m, +a.accountNo || 0), 0) + 1 };
       return { ...state, accounts: [...state.accounts, item] }; }
-    case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
+    case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const entries = auditChanges(a, action.patch, action.by, action.source);
+      let upd = withAudit({ ...a, ...action.patch }, entries);
+      const arrCh = entries.find(x => x.field === "arr");
+      if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()),
+        delta: arrCh.to - arrCh.from, kind: arrCh.to > arrCh.from ? "expansion" : "contraction",
+        source: action.source === "csv import" ? "import" : "edit", reason: "ARR edited", note: "", by: arrCh.by }] };
+      return upd;
+    }) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] }
+      ? withAudit({ ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] },
+          [ ...((+a.arr || 0) !== (+action.newArr || 0) ? [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: "renewal" }] : []),
+            { id: uid(), date: iso(Date.now()), field: "renewalDate", from: a.renewalDate, to: action.newDate, by: action.entry.by, source: "renewal" } ])
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
+      ? withAudit({ ...a, contractStatus: "Churned", churn: action.entry },
+          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Churned", by: action.entry.by, source: "churn" }]) : a) };
     case "REACTIVATE_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, contractStatus: "Active", churn: null } : a) };
+      ? withAudit({ ...a, contractStatus: "Active", churn: null },
+          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: "Churned", to: "Active", by: action.by || "unknown", source: "reactivate" }]) : a) };
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] } : a) };
+      ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
+          [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
     case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
       // _orphaned marks subs whose parent was just deleted so persist() can write them back
@@ -1576,7 +1605,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
         {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id });
+          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
             dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
