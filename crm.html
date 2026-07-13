@@ -1789,6 +1789,29 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
   );
 }
 
+/* ------------------------------- Playbook ------------------------------- */
+function PlaybookCard({ st, dispatch }) {
+  const pb = playbookOf(st.settings);
+  const setPb = list => dispatch({ type: "SET_PLAYBOOK", playbook: list });
+  const edit = (id, patch) => setPb(pb.map(p => p.id === id ? { ...p, ...patch } : p));
+  return (
+    <Card title="Renewal playbook">
+      {pb.map(p => (
+        <div key={p.id} className="mb-2 flex items-center gap-2 text-sm">
+          <Input value={p.title} placeholder="Step…" onChange={e => edit(p.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
+          <Input type="number" min="0" max="365" value={p.offsetDays} title="Days before renewal"
+            onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+          <span className="whitespace-nowrap text-xs text-slate-500">d before</span>
+          <Select value={p.priority} onChange={e => edit(p.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
+          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setPb(pb.filter(x => x.id !== p.id))}>✕</button>
+        </div>
+      ))}
+      <Btn onClick={() => setPb([...pb, { id: uid(), title: "", offsetDays: 30, priority: "Medium" }])}>+ Add step</Btn>
+      <p className="mt-3 text-xs text-slate-500">When an account comes within 90 days of renewal, one task per step is created automatically for its CSM (due = renewal date − days, marked ▶). Edits apply to accounts seeded from then on; already-created tasks are unchanged. Shared by the whole team.</p>
+    </Card>
+  );
+}
+
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user }) {
   const w = st.settings.weights;
@@ -1838,6 +1861,7 @@ function Settings({ st, dispatch, user }) {
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
       <IntegrationsCard st={st} dispatch={dispatch} />
+      <PlaybookCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
