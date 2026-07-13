@@ -1740,7 +1740,7 @@ const RENEWAL_STAGE_STYLE = {
   Negotiating: "bg-amber-100 text-amber-700", Committed: "bg-emerald-100 text-emerald-700", "At risk": "bg-rose-100 text-rose-700",
 };
 const renewalStageOf = a => a.renewalStage || "Not started";
-function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [] }) {
+function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [], tasks = [] }) {
   const months = [];
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
@@ -1779,6 +1779,14 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
                 className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
                 {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              {(() => {
+                const pt = tasks.filter(t => t.accountId === a.id && t.playbook && t.renewalFor === a.renewalDate);
+                if (!pt.length) return null;
+                const done = pt.filter(t => t.status === "Done").length;
+                const behind = pt.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
+                return <span title={behind ? "Playbook behind pace — an open step is past due" : "Playbook on pace"}
+                  className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${behind ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{done}/{pt.length} ✓</span>;
+              })()}
             </div>
           ))}
         </div>
@@ -2197,7 +2205,7 @@ function App({ user }) {
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} />}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       <Copyright />
       </main>
