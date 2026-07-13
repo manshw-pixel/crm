@@ -2151,8 +2151,8 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   const cur = Math.min(sel, Math.max(list.length - 1, 0));
   const onKey = e => {
     if (e.key === "Escape") { e.stopPropagation(); onClose(); }
-    else if (e.key === "ArrowDown") { e.preventDefault(); setSel((cur + 1) % list.length); }
-    else if (e.key === "ArrowUp") { e.preventDefault(); setSel((cur - 1 + list.length) % list.length); }
+    else if (e.key === "ArrowDown") { e.preventDefault(); if (!list.length) return; setSel((cur + 1) % list.length); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); if (!list.length) return; setSel((cur - 1 + list.length) % list.length); }
     else if (e.key === "Enter" && list.length) { e.preventDefault(); list[cur].run(); onClose(); }
   };
   return (
@@ -2203,6 +2203,7 @@ function App({ user }) {
   }, [refetch]);
   useEffect(() => {
     const h = e => {
+      if (paletteOpen) return; // palette modal owns the keyboard while open
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === "/") { e.preventDefault(); setView("Accounts"); setAcctId(null); setTimeout(() => searchRef.current?.focus(), 50); }
       const i = "12345".indexOf(e.key);
@@ -2210,9 +2211,9 @@ function App({ user }) {
       if (e.key === "Escape") setAcctId(null);
     };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
-  }, []);
+  }, [paletteOpen]);
   useEffect(() => { // Ctrl/Cmd+K toggles the command palette from anywhere, incl. inputs
-    const h = e => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen(o => !o); } };
+    const h = e => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen(o => !o); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
   const scored = useMemo(() => st.accounts.map(a => {
