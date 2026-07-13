@@ -218,6 +218,21 @@ function seedData() {
 
 const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } });
 
+/* ------------------------------ audit trail ------------------------------ */
+const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage"];
+/* one entry per audited field the patch really changes (numbers normalized) */
+function auditChanges(a, patch, by, source) {
+  const out = [];
+  AUDIT_FIELDS.forEach(f => {
+    if (!(f in patch)) return;
+    const from = f === "arr" ? (+a[f] || 0) : (a[f] ?? "");
+    const to = f === "arr" ? (+patch[f] || 0) : (patch[f] ?? "");
+    if (from !== to) out.push({ id: uid(), date: iso(Date.now()), field: f, from, to, by: by || "unknown", source: source || "edit form" });
+  });
+  return out;
+}
+const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit || []), ...entries] } : a;
+
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => { console.error(where, error); alert(`Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`); };
@@ -296,16 +311,30 @@ function reducer(state, action) {
     case "ADD_ACCOUNT": { const item = action.item.accountNo ? action.item
       : { ...action.item, accountNo: state.accounts.reduce((m, a) => Math.max(m, +a.accountNo || 0), 0) + 1 };
       return { ...state, accounts: [...state.accounts, item] }; }
-    case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id ? { ...a, ...action.patch } : a) };
+    case "EDIT_ACCOUNT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const entries = auditChanges(a, action.patch, action.by, action.source);
+      let upd = withAudit({ ...a, ...action.patch }, entries);
+      const arrCh = entries.find(x => x.field === "arr");
+      if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()),
+        delta: arrCh.to - arrCh.from, kind: arrCh.to > arrCh.from ? "expansion" : "contraction",
+        source: action.source === "csv import" ? "import" : "edit", reason: "ARR edited", note: "", by: arrCh.by }] };
+      return upd;
+    }) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] }
+      ? withAudit({ ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] },
+          [ ...((+a.arr || 0) !== (+action.newArr || 0) ? [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: "renewal" }] : []),
+            ...(a.renewalDate !== action.newDate ? [{ id: uid(), date: iso(Date.now()), field: "renewalDate", from: a.renewalDate, to: action.newDate, by: action.entry.by, source: "renewal" }] : []) ])
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, contractStatus: "Churned", churn: action.entry } : a) };
+      ? withAudit({ ...a, contractStatus: "Churned", churn: action.entry },
+          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Churned", by: action.entry.by, source: "churn" }]) : a) };
     case "REACTIVATE_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, contractStatus: "Active", churn: null } : a) };
+      ? withAudit({ ...a, contractStatus: "Active", churn: null },
+          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Active", by: action.by || "unknown", source: "reactivate" }]) : a) };
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? { ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] } : a) };
+      ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
+          [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
     case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
       // _orphaned marks subs whose parent was just deleted so persist() can write them back
@@ -676,7 +705,7 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 }
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
-function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
+function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user }) {
   const csmOptions = [...new Set(["", ...team.map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
   const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
   // eligible parents: top-level accounts only (one level deep), never itself
@@ -691,7 +720,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [] }) {
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
         billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
         parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
-      if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean });
+      if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
       else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       onDone();
     }}>
@@ -1227,7 +1256,7 @@ function parseCSV(text) {
   if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
   return rows.filter(r => r.some(c => c.trim() !== ""));
 }
-function importAccountsCSV(file, accounts, dispatch, done) {
+function importAccountsCSV(file, accounts, dispatch, done, user) {
   const reader = new FileReader();
   reader.onload = () => {
     const rows = parseCSV(String(reader.result));
@@ -1264,7 +1293,7 @@ function importAccountsCSV(file, accounts, dispatch, done) {
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
       if (existing) {
-        dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals });
+        dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
         if (Object.keys(inputPatch).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: inputPatch });
         updated++;
@@ -1325,7 +1354,7 @@ async function listCsvFiles(dirHandle) {
     if (h.kind === "file" && /\.csv$/i.test(name)) out.push(await h.getFile());
   return out;
 }
-function IntegrationsCard({ st, dispatch }) {
+function IntegrationsCard({ st, dispatch, user }) {
   const [handles, setHandles] = useState({ sales: null, finance: null });
   const [busy, setBusy] = useState(false);
   const integ = st.settings.integrations || { processed: {}, log: [] };
@@ -1366,7 +1395,7 @@ function IntegrationsCard({ st, dispatch }) {
           if (processed[sig]) continue;
           try {
             if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
-              { note(key, f.name, r.err || `imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`, !!r.err); res(); }));
+              { note(key, f.name, r.err || `imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`, !!r.err); res(); }, user));
             else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
               note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}`, !!r.err); }
             processed[sig] = true;
@@ -1376,7 +1405,7 @@ function IntegrationsCard({ st, dispatch }) {
     }
     dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
     setBusy(false);
-  }, [handles, st, busy, dispatch]);
+  }, [handles, st, busy, dispatch, user]);
   useEffect(() => { // auto-scan every 5 minutes while a folder is connected
     if (!handles.sales && !handles.finance) return;
     const t = setInterval(sync, 5 * 60 * 1000);
@@ -1407,7 +1436,7 @@ function IntegrationsCard({ st, dispatch }) {
   );
 }
 
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter }) {
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
   const churnedCount = scored.filter(a => a.churn).length;
@@ -1469,13 +1498,13 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>
       <Btn onClick={() => exportCSV(rows)}>Export CSV</Btn>
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
-        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg); }} />
+        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
     </div>}>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : "text-emerald-700"}`}>
         {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.</>}
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
       </div>}
-      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} /></div>}
+      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
         <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
@@ -1529,6 +1558,30 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
 }
 
 /* ------------------------------ Account detail ------------------------------ */
+const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage" };
+function ChangeHistoryCard({ a }) {
+  const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const entries = [...(a.audit || [])].sort((x, y) => y.date.localeCompare(x.date) || (y.id > x.id ? 1 : -1));
+  const shown = showAll ? entries : entries.slice(0, 50);
+  const fmtVal = (f, v) => f === "arr" ? fmtMoney(+v || 0, a.currency) : f === "renewalDate" ? fmtDate(v) : (v === "" || v == null ? "—" : String(v));
+  return (
+    <Card title={`Change history (${entries.length})`}>
+      <button className="mb-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpen(o => !o)}>{open ? "Hide" : "Show"}</button>
+      {open && <>
+        {shown.map(e => (
+          <div key={e.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0">
+            <span className="text-slate-500">{fmtDate(e.date)}</span>
+            <span className="font-semibold text-slate-800">{AUDIT_FIELD_LABEL[e.field] || e.field}:</span>
+            <span className="text-slate-700">{fmtVal(e.field, e.from)} → <b>{fmtVal(e.field, e.to)}</b></span>
+            <span className="ml-auto text-slate-500">by {e.by} · {e.source}</span>
+          </div>
+        ))}
+        {!showAll && entries.length > 50 && <button className="mt-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setShowAll(true)}>Show all ({entries.length})</button>}
+      </>}
+    </Card>
+  );
+}
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount }) {
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -1553,7 +1606,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {parent && <> · sub-account of <button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button></>}</span>
         <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
         {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
-          onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value } })}
+          onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
           className={`cursor-pointer rounded-full border-0 px-2.5 py-1 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
           {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>}
@@ -1576,7 +1629,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
         {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id });
+          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
             dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
@@ -1599,7 +1652,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
-        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} />
+        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} user={user} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "billing" ? <BillingForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -1729,6 +1782,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </Card>
         );
       })()}
+      {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
     </div>
   );
 }
@@ -1740,7 +1794,7 @@ const RENEWAL_STAGE_STYLE = {
   Negotiating: "bg-amber-100 text-amber-700", Committed: "bg-emerald-100 text-emerald-700", "At risk": "bg-rose-100 text-rose-700",
 };
 const renewalStageOf = a => a.renewalStage || "Not started";
-function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [], tasks = [] }) {
+function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [], tasks = [], user }) {
   const months = [];
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
@@ -1775,7 +1829,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
               <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
               <select value={renewalStageOf(a)} onClick={e => e.stopPropagation()}
-                onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value } })}
+                onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
                 className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
                 {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
@@ -1868,7 +1922,7 @@ function Settings({ st, dispatch, user }) {
         ))}
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
-      <IntegrationsCard st={st} dispatch={dispatch} />
+      <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
@@ -2204,8 +2258,8 @@ function App({ user }) {
       {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
-        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} />}
+        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} />)}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       <Copyright />
       </main>
