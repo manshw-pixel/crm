@@ -71,6 +71,7 @@ const iso = d => new Date(d).toISOString().slice(0, 10);
 const addDays = n => iso(Date.now() + n * DAY);
 const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
+const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
 const CURRENCIES = ["USD", "INR", "PHP"];
 const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
 const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
@@ -242,7 +243,7 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [] },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook },
   };
 }
 
@@ -258,6 +259,7 @@ function persist(action, next) {
       return up("activities", action.item);
     }
     case "ADD_TASK": return up("tasks", action.item);
+    case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
@@ -269,7 +271,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -341,9 +343,27 @@ function reducer(state, action) {
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
+    case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
+    case "SEED_PLAYBOOK": return { ...state,
+      tasks: [...state.tasks, ...action.items],
+      accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };
     default: return state;
   }
 }
+
+/* --------------------------- renewal playbook --------------------------- */
+/* Shared checklist template; offsetDays = days before the renewal date the task is due.
+ * settings.playbook stays unset until first edited in Settings — the default applies meanwhile. */
+const DEFAULT_PLAYBOOK = [
+  { id: "pb90", title: "Renewal kickoff call", offsetDays: 90, priority: "High" },
+  { id: "pb75", title: "Health & usage review", offsetDays: 75, priority: "Medium" },
+  { id: "pb60", title: "Send renewal quote", offsetDays: 60, priority: "High" },
+  { id: "pb45", title: "Negotiate terms", offsetDays: 45, priority: "High" },
+  { id: "pb30", title: "Confirm commercials", offsetDays: 30, priority: "High" },
+  { id: "pb14", title: "Contract out for signature", offsetDays: 14, priority: "High" },
+  { id: "pb7", title: "Confirm signature & billing", offsetDays: 7, priority: "High" },
+];
+const playbookOf = settings => settings.playbook || DEFAULT_PLAYBOOK;
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
@@ -1720,7 +1740,7 @@ const RENEWAL_STAGE_STYLE = {
   Negotiating: "bg-amber-100 text-amber-700", Committed: "bg-emerald-100 text-emerald-700", "At risk": "bg-rose-100 text-rose-700",
 };
 const renewalStageOf = a => a.renewalStage || "Not started";
-function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [] }) {
+function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, snapshots = [], tasks = [] }) {
   const months = [];
   const now = new Date(); now.setDate(1);
   for (let i = 0; i < 12; i++) {
@@ -1759,6 +1779,14 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
                 className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
                 {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              {(() => {
+                const pt = tasks.filter(t => t.accountId === a.id && t.playbook && t.renewalFor === a.renewalDate);
+                if (!pt.length) return null;
+                const done = pt.filter(t => t.status === "Done").length;
+                const behind = pt.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
+                return <span title={behind ? "Playbook behind pace — an open step is past due" : "Playbook on pace"}
+                  className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${behind ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{done}/{pt.length} ✓</span>;
+              })()}
             </div>
           ))}
         </div>
@@ -1766,6 +1794,29 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
       </div>
       <RenewalOutcomes accounts={allBook} rates={rates} snapshots={snapshots} />
     </div>
+  );
+}
+
+/* ------------------------------- Playbook ------------------------------- */
+function PlaybookCard({ st, dispatch }) {
+  const pb = playbookOf(st.settings);
+  const setPb = list => dispatch({ type: "SET_PLAYBOOK", playbook: list });
+  const edit = (id, patch) => setPb(pb.map(p => p.id === id ? { ...p, ...patch } : p));
+  return (
+    <Card title="Renewal playbook">
+      {pb.map(p => (
+        <div key={p.id} className="mb-2 flex items-center gap-2 text-sm">
+          <Input value={p.title} placeholder="Step…" onChange={e => edit(p.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
+          <Input type="number" min="0" max="365" value={p.offsetDays} title="Days before renewal"
+            onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+          <span className="whitespace-nowrap text-xs text-slate-500">d before</span>
+          <Select value={p.priority} onChange={e => edit(p.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
+          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setPb(pb.filter(x => x.id !== p.id))}>✕</button>
+        </div>
+      ))}
+      <Btn onClick={() => setPb([...pb, { id: uid(), title: "", offsetDays: 30, priority: "Medium" }])}>+ Add step</Btn>
+      <p className="mt-3 text-xs text-slate-500">When an account comes within 90 days of renewal, one task per step is created automatically for its CSM (due = renewal date − days, marked ▶). Edits apply to accounts seeded from then on; already-created tasks are unchanged. Shared by the whole team.</p>
+    </Card>
   );
 }
 
@@ -1818,6 +1869,7 @@ function Settings({ st, dispatch, user }) {
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
       <IntegrationsCard st={st} dispatch={dispatch} />
+      <PlaybookCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
@@ -2062,6 +2114,20 @@ function App({ user }) {
         due90: s90(due90), commit90: s90(due90.filter(a => renewalStageOf(a) === "Committed")),
         atRisk90: s90(due90.filter(a => renewalStageOf(a) === "At risk")), due90Count: due90.length }].slice(-24) });
   }, [loaded, scored]);
+  useEffect(() => { // auto-create renewal playbook tasks when an account is within 90d of renewal
+    if (!loaded) return;
+    const pb = playbookOf(st.settings);
+    if (!pb.length) return;
+    st.accounts.forEach(a => {
+      // no lower bound on daysUntil: accounts already past renewal still seed (spec: include overdue)
+      if (a.churn || daysUntil(a.renewalDate) > 90 || a.playbookSeededFor === a.renewalDate) return;
+      const items = pb.filter(p => p.title.trim()).map(p => ({
+        id: `pb-${a.id}-${a.renewalDate}-${p.id}`, accountId: a.id, playbook: true, renewalFor: a.renewalDate,
+        title: "▶ " + p.title, due: isoMinus(a.renewalDate, p.offsetDays),
+        priority: p.priority, status: "Open", owner: a.csm || "" }));
+      if (items.length) dispatch({ type: "SEED_PLAYBOOK", id: a.id, seededFor: a.renewalDate, items });
+    });
+  }, [loaded, st.accounts, st.settings.playbook]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
@@ -2139,7 +2205,7 @@ function App({ user }) {
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} />}
+      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
       <Copyright />
       </main>
