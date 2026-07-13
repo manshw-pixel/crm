@@ -71,6 +71,7 @@ const iso = d => new Date(d).toISOString().slice(0, 10);
 const addDays = n => iso(Date.now() + n * DAY);
 const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
+const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
 const CURRENCIES = ["USD", "INR", "PHP"];
 const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
 const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
@@ -242,7 +243,7 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [] },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook },
   };
 }
 
@@ -258,6 +259,7 @@ function persist(action, next) {
       return up("activities", action.item);
     }
     case "ADD_TASK": return up("tasks", action.item);
+    case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
@@ -269,7 +271,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -341,9 +343,27 @@ function reducer(state, action) {
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
+    case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
+    case "SEED_PLAYBOOK": return { ...state,
+      tasks: [...state.tasks, ...action.items],
+      accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };
     default: return state;
   }
 }
+
+/* --------------------------- renewal playbook --------------------------- */
+/* Shared checklist template; offsetDays = days before the renewal date the task is due.
+ * settings.playbook stays unset until first edited in Settings — the default applies meanwhile. */
+const DEFAULT_PLAYBOOK = [
+  { id: "pb90", title: "Renewal kickoff call", offsetDays: 90, priority: "High" },
+  { id: "pb75", title: "Health & usage review", offsetDays: 75, priority: "Medium" },
+  { id: "pb60", title: "Send renewal quote", offsetDays: 60, priority: "High" },
+  { id: "pb45", title: "Negotiate terms", offsetDays: 45, priority: "High" },
+  { id: "pb30", title: "Confirm commercials", offsetDays: 30, priority: "High" },
+  { id: "pb14", title: "Contract out for signature", offsetDays: 14, priority: "High" },
+  { id: "pb7", title: "Confirm signature & billing", offsetDays: 7, priority: "High" },
+];
+const playbookOf = settings => settings.playbook || DEFAULT_PLAYBOOK;
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
