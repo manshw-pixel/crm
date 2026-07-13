@@ -2082,6 +2082,20 @@ function App({ user }) {
         due90: s90(due90), commit90: s90(due90.filter(a => renewalStageOf(a) === "Committed")),
         atRisk90: s90(due90.filter(a => renewalStageOf(a) === "At risk")), due90Count: due90.length }].slice(-24) });
   }, [loaded, scored]);
+  useEffect(() => { // auto-create renewal playbook tasks when an account is within 90d of renewal
+    if (!loaded) return;
+    const pb = playbookOf(st.settings);
+    if (!pb.length) return;
+    st.accounts.forEach(a => {
+      // no lower bound on daysUntil: accounts already past renewal still seed (spec: include overdue)
+      if (a.churn || daysUntil(a.renewalDate) > 90 || a.playbookSeededFor === a.renewalDate) return;
+      const items = pb.filter(p => p.title.trim()).map(p => ({
+        id: uid(), accountId: a.id, playbook: true, renewalFor: a.renewalDate,
+        title: "▶ " + p.title, due: isoMinus(a.renewalDate, p.offsetDays),
+        priority: p.priority, status: "Open", owner: a.csm || "" }));
+      if (items.length) dispatch({ type: "SEED_PLAYBOOK", id: a.id, seededFor: a.renewalDate, items });
+    });
+  }, [loaded, st.accounts, st.settings.playbook]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
