@@ -2122,7 +2122,7 @@ function App({ user }) {
       // no lower bound on daysUntil: accounts already past renewal still seed (spec: include overdue)
       if (a.churn || daysUntil(a.renewalDate) > 90 || a.playbookSeededFor === a.renewalDate) return;
       const items = pb.filter(p => p.title.trim()).map(p => ({
-        id: uid(), accountId: a.id, playbook: true, renewalFor: a.renewalDate,
+        id: `pb-${a.id}-${a.renewalDate}-${p.id}`, accountId: a.id, playbook: true, renewalFor: a.renewalDate,
         title: "▶ " + p.title, due: isoMinus(a.renewalDate, p.offsetDays),
         priority: p.priority, status: "Open", owner: a.csm || "" }));
       if (items.length) dispatch({ type: "SEED_PLAYBOOK", id: a.id, seededFor: a.renewalDate, items });
