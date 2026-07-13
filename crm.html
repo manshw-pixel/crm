@@ -324,14 +324,14 @@ function reducer(state, action) {
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] },
           [ ...((+a.arr || 0) !== (+action.newArr || 0) ? [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: "renewal" }] : []),
-            { id: uid(), date: iso(Date.now()), field: "renewalDate", from: a.renewalDate, to: action.newDate, by: action.entry.by, source: "renewal" } ])
+            ...(a.renewalDate !== action.newDate ? [{ id: uid(), date: iso(Date.now()), field: "renewalDate", from: a.renewalDate, to: action.newDate, by: action.entry.by, source: "renewal" }] : []) ])
       : a) };
     case "CHURN_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, contractStatus: "Churned", churn: action.entry },
           [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Churned", by: action.entry.by, source: "churn" }]) : a) };
     case "REACTIVATE_ACCOUNT": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, contractStatus: "Active", churn: null },
-          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: "Churned", to: "Active", by: action.by || "unknown", source: "reactivate" }]) : a) };
+          [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Active", by: action.by || "unknown", source: "reactivate" }]) : a) };
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
           [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
