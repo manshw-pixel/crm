@@ -1405,7 +1405,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     }
     dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
     setBusy(false);
-  }, [handles, st, busy, dispatch]);
+  }, [handles, st, busy, dispatch, user]);
   useEffect(() => { // auto-scan every 5 minutes while a folder is connected
     if (!handles.sales && !handles.finance) return;
     const t = setInterval(sync, 5 * 60 * 1000);
