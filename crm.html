@@ -1558,6 +1558,30 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
 }
 
 /* ------------------------------ Account detail ------------------------------ */
+const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage" };
+function ChangeHistoryCard({ a }) {
+  const [open, setOpen] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const entries = [...(a.audit || [])].sort((x, y) => y.date.localeCompare(x.date) || (y.id > x.id ? 1 : -1));
+  const shown = showAll ? entries : entries.slice(0, 50);
+  const fmtVal = (f, v) => f === "arr" ? fmtMoney(+v || 0, a.currency) : f === "renewalDate" ? fmtDate(v) : (v === "" || v == null ? "—" : String(v));
+  return (
+    <Card title={`Change history (${entries.length})`}>
+      <button className="mb-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpen(o => !o)}>{open ? "Hide" : "Show"}</button>
+      {open && <>
+        {shown.map(e => (
+          <div key={e.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0">
+            <span className="text-slate-500">{fmtDate(e.date)}</span>
+            <span className="font-semibold text-slate-800">{AUDIT_FIELD_LABEL[e.field] || e.field}:</span>
+            <span className="text-slate-700">{fmtVal(e.field, e.from)} → <b>{fmtVal(e.field, e.to)}</b></span>
+            <span className="ml-auto text-slate-500">by {e.by} · {e.source}</span>
+          </div>
+        ))}
+        {!showAll && entries.length > 50 && <button className="mt-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setShowAll(true)}>Show all ({entries.length})</button>}
+      </>}
+    </Card>
+  );
+}
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount }) {
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -1758,6 +1782,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </Card>
         );
       })()}
+      {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
     </div>
   );
 }
