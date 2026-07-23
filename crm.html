@@ -277,7 +277,7 @@ function persist(action, next) {
     case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
-    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
@@ -335,6 +335,30 @@ function reducer(state, action) {
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
           [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
+    case "ADD_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const label = `${action.doc.category}: ${action.doc.title || action.doc.name}`;
+      return withAudit({ ...a, documents: [...(a.documents || []), action.doc] },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from: "", to: label, by: action.by || "unknown", source: action.source || "upload" }]);
+    }) };
+    case "EDIT_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const doc = (a.documents || []).find(d => d.id === action.docId);
+      if (!doc) return a;
+      const updated = { ...doc, ...action.patch };
+      const from = `${doc.category}: ${doc.title || doc.name}`;
+      const to = `${updated.category}: ${updated.title || updated.name}`;
+      return withAudit({ ...a, documents: (a.documents || []).map(d => d.id === action.docId ? updated : d) },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from, to, by: action.by || "unknown", source: action.source || "edit" }]);
+    }) };
+    case "DELETE_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const doc = (a.documents || []).find(d => d.id === action.docId);
+      if (!doc) return a;
+      const label = `${doc.category}: ${doc.title || doc.name}`;
+      return withAudit({ ...a, documents: (a.documents || []).filter(d => d.id !== action.docId) },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from: label, to: "", by: action.by || "unknown", source: action.source || "delete" }]);
+    }) };
     case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
       // _orphaned marks subs whose parent was just deleted so persist() can write them back
@@ -596,6 +620,117 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
     ))}
   </div>
 );
+
+/* ------------------------- account documents ------------------------- */
+const DOC_CATEGORIES = ["Contract", "PO", "Advisory", "QBR", "Others"];
+const DOC_CATEGORY_PLURAL = { "Contract": "Contracts", "PO": "POs", "Advisory": "Advisories", "QBR": "QBRs", "Others": "Others" };
+const EXPIRY_WARN_DAYS = 60;
+function DocumentForm({ acct, dispatch, user, onDone, existing }) {
+  const fileRef = useRef(null);
+  const [category, setCategory] = useState(existing ? existing.category : "");
+  const [title, setTitle] = useState(existing ? existing.title || "" : "");
+  const [amount, setAmount] = useState(existing && existing.amount != null ? String(existing.amount) : "");
+  const [effectiveDate, setEffectiveDate] = useState(existing ? existing.effectiveDate || "" : "");
+  const [expiryDate, setExpiryDate] = useState(existing ? existing.expiryDate || "" : "");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const submit = async e => {
+    e.preventDefault();
+    if (busy) return;
+    const files = fileRef.current?.files;
+    const hasNewFile = files && files.length;
+    if (!category) { setErr("Choose a category."); return; }
+    if (!existing && !hasNewFile) { setErr("Choose a file."); return; }
+    setBusy(true); setErr("");
+    try {
+      const meta = { category, title: title.trim(),
+        amount: Number.isFinite(+amount) && amount !== "" ? +amount : null, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null };
+      if (existing) {
+        const patch = { ...meta };
+        if (hasNewFile) {
+          const [uploaded] = await uploadFiles(files, acct.id);
+          patch.name = uploaded.name; patch.url = uploaded.url; patch.path = uploaded.path;
+          if (sb && existing.path && existing.path !== uploaded.path) { try { await sb.storage.from("attachments").remove([existing.path]); } catch {} }
+        }
+        dispatch({ type: "EDIT_DOCUMENT", id: acct.id, docId: existing.id, patch, by: user?.name, source: "edit" });
+      } else {
+        const [uploaded] = await uploadFiles(files, acct.id);
+        const doc = { id: uid(), ...meta, name: uploaded.name, url: uploaded.url, path: uploaded.path,
+          uploadedBy: user?.name || "unknown", uploadedAt: iso(Date.now()) };
+        dispatch({ type: "ADD_DOCUMENT", id: acct.id, doc, by: user?.name, source: "upload" });
+      }
+      onDone();
+    } catch (ex) { setErr(ex.message || String(ex)); setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <select value={category} onChange={e => setCategory(e.target.value)} required
+          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <option value="" disabled>Select category…</option>
+          {DOC_CATEGORIES.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        <Input placeholder="Title (optional)" value={title} onChange={e => setTitle(e.target.value)} />
+        <Input type="number" placeholder="Amount (optional)" value={amount} onChange={e => setAmount(e.target.value)} />
+        <label className="text-xs text-slate-500">{existing ? `Replace file (optional) — current: ${existing.name}` : "File"}<input ref={fileRef} type="file" className="mt-0.5 block text-xs text-slate-700" /></label>
+        <label className="text-xs text-slate-500">Effective<Input type="date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)} /></label>
+        <label className="text-xs text-slate-500">Expiry<Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></label>
+      </div>
+      {err && <div className="text-xs font-semibold text-rose-600">{err}</div>}
+      <div className="flex gap-2">
+        <Btn kind="primary" type="submit">{busy ? (existing ? "Saving…" : "Uploading…") : (existing ? "Save changes" : "Upload document")}</Btn>
+        <Btn onClick={onDone}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+function docExpiryBadge(doc) {
+  if (doc.category !== "Contract" || !doc.expiryDate) return null;
+  const d = daysUntil(doc.expiryDate);
+  if (d < 0) return <span className="nm-inset !rounded-full px-2 py-0.5 text-[10px] font-bold text-rose-600">Expired</span>;
+  if (d <= EXPIRY_WARN_DAYS) return <span className="nm-inset !rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-600">Expires in {d}d</span>;
+  return null;
+}
+function DocumentsCard({ a, dispatch, user }) {
+  const docs = a.documents || [];
+  const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
+  return (
+    <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
+      {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
+      {docs.length === 0 && !adding && <div className="text-sm text-slate-500">No documents yet.</div>}
+      {DOC_CATEGORIES.map(cat => {
+        const group = docs.filter(d => d.category === cat);
+        if (!group.length) return null;
+        return (
+          <div key={cat} className="mb-2">
+            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">{DOC_CATEGORY_PLURAL[cat]}</div>
+            {group.map(d => (
+              <div key={d.id} className="border-b border-slate-100 py-1.5 last:border-0">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
+                  {docExpiryBadge(d)}
+                  {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
+                  {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}
+                  <button title="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
+                    onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
+                  <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
+                    onClick={async () => {
+                      if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
+                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { alert("Could not delete file: " + error.message); return; } }
+                      dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
+                    }}>✕</button>
+                </div>
+                {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
+              </div>
+            ))}
+          </div>
+        );
+      })}
+    </Card>
+  );
+}
+
 function LogActivityForm({ acct, dispatch, onDone, existing }) {
   const [type, setType] = useState(existing ? existing.type : "call");
   const [summary, setSummary] = useState(existing ? existing.summary : "");
@@ -1558,7 +1693,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
 }
 
 /* ------------------------------ Account detail ------------------------------ */
-const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage" };
+const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage", document: "Document" };
 function ChangeHistoryCard({ a }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
@@ -1745,6 +1880,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           ))}
         </Card>
       </div>
+      <DocumentsCard a={a} dispatch={dispatch} user={user} />
       {(() => {
         const events = [
           ...(a.renewals || []).map(r => ({ id: r.id, date: r.completedOn, sort: r.completedOn, kind: "renewal", r })),
@@ -2264,6 +2400,17 @@ function App({ user }) {
   const renewalsDue = active
     .filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 30; })
     .sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate));
+  // notification bell: account renewals (≤30d) + expiring Contract documents (≤EXPIRY_WARN_DAYS or expired)
+  const notifKey = "notifRead_" + user.name;
+  const [notifRead, setNotifRead] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem(notifKey) || "[]")); } catch { return new Set(); } });
+  const markNotifRead = id => setNotifRead(prev => { const n = new Set(prev); n.add(id); try { localStorage.setItem(notifKey, JSON.stringify([...n])); } catch {} return n; });
+  const alerts = [
+    ...renewalsDue.map(a => ({ id: `renewal-${a.id}-${a.renewalDate}`, accountId: a.id, name: a.name, sub: "Account renewal", date: a.renewalDate, days: daysUntil(a.renewalDate) })),
+    ...active.flatMap(a => (a.documents || [])
+      .filter(d => d.category === "Contract" && d.expiryDate && daysUntil(d.expiryDate) <= EXPIRY_WARN_DAYS)
+      .map(d => ({ id: `contract-${a.id}-${d.id}-${d.expiryDate}`, accountId: a.id, name: a.name, sub: `Contract: ${d.title || d.name}`, date: d.expiryDate, days: daysUntil(d.expiryDate) }))),
+  ].sort((x, y) => x.days - y.days);
+  const unreadCount = alerts.filter(a => !notifRead.has(a.id)).length;
   return (
     <div className="flex min-h-screen">
       <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${collapsed ? "w-14" : "w-52"}`}>
@@ -2303,24 +2450,33 @@ function App({ user }) {
           ))}
         </div>
         <div className="relative ml-1">
-          <button onClick={() => setNotifOpen(o => !o)} title="Renewals due within 30 days"
+          <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
-            {renewalsDue.length > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{renewalsDue.length}</span>}
+            {unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{unreadCount}</span>}
           </button>
           {notifOpen && (
             <div className="nm absolute right-0 z-20 mt-2 w-80 p-3">
-              <div className="px-2 py-1 text-xs font-semibold text-slate-700">Renewals due within 30 days</div>
-              {renewalsDue.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">Nothing due in the next 30 days. 🎉</div>}
-              {renewalsDue.map(a => (
-                <button key={a.id} onClick={() => { setNotifOpen(false); openAccount(a.id); }}
-                  className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
-                  <span className="font-medium">{a.name}</span>
-                  <span className="flex items-center gap-2 text-xs">
-                    <span className="text-slate-700">{fmtDate(a.renewalDate)}</span>
-                    <span className={`rounded px-1.5 py-0.5 font-semibold ${daysUntil(a.renewalDate) <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{daysUntil(a.renewalDate)}d</span>
+              <div className="flex items-center justify-between px-2 py-1">
+                <span className="text-xs font-semibold text-slate-700">Renewals &amp; expiring contracts</span>
+                {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
+              </div>
+              {alerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">Nothing due soon. 🎉</div>}
+              {alerts.map(a => { const read = notifRead.has(a.id); return (
+                <button key={a.id} onClick={() => { markNotifRead(a.id); setNotifOpen(false); openAccount(a.accountId); }}
+                  className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${read ? "bg-transparent" : "bg-indigo-500"}`} />
+                    <span className="min-w-0">
+                      <span className={`block truncate ${read ? "font-medium text-slate-500" : "font-semibold text-slate-900"}`}>{a.name}</span>
+                      <span className="block truncate text-[11px] text-slate-500">{a.sub}</span>
+                    </span>
+                  </span>
+                  <span className="flex shrink-0 items-center gap-2 text-xs">
+                    <span className="text-slate-700">{fmtDate(a.date)}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${a.days <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.days < 0 ? "expired" : a.days + "d"}</span>
                   </span>
                 </button>
-              ))}
+              ); })}
             </div>
           )}
         </div>
