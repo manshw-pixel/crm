@@ -277,7 +277,7 @@ function persist(action, next) {
     case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
-    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
@@ -335,6 +335,20 @@ function reducer(state, action) {
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
       ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
           [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
+    case "ADD_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const label = `${action.doc.category}: ${action.doc.title || action.doc.name}`;
+      return withAudit({ ...a, documents: [...(a.documents || []), action.doc] },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from: "", to: label, by: action.by || "unknown", source: action.source || "upload" }]);
+    }) };
+    case "DELETE_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const doc = (a.documents || []).find(d => d.id === action.docId);
+      if (!doc) return a;
+      const label = `${doc.category}: ${doc.title || doc.name}`;
+      return withAudit({ ...a, documents: (a.documents || []).filter(d => d.id !== action.docId) },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from: label, to: "", by: action.by || "unknown", source: action.source || "delete" }]);
+    }) };
     case "SET_OPP_STAGE": return { ...state, opportunities: state.opportunities.map(o => o.id === action.id ? { ...o, stage: action.stage } : o) };
     case "DELETE_ACCOUNT": return { ...state,
       // _orphaned marks subs whose parent was just deleted so persist() can write them back
@@ -1558,7 +1572,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
 }
 
 /* ------------------------------ Account detail ------------------------------ */
-const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage" };
+const AUDIT_FIELD_LABEL = { arr: "ARR", renewalDate: "Renewal date", csm: "CSM", tier: "Tier", contractStatus: "Contract status", renewalStage: "Renewal stage", document: "Document" };
 function ChangeHistoryCard({ a }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
