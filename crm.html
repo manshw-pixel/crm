@@ -613,6 +613,7 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
 
 /* ------------------------- account documents ------------------------- */
 const DOC_CATEGORIES = ["Purchase Order", "Contract Agreement", "Advisory"];
+const DOC_CATEGORY_PLURAL = { "Purchase Order": "Purchase Orders", "Contract Agreement": "Contract Agreements", "Advisory": "Advisories" };
 const EXPIRY_WARN_DAYS = 60;
 function DocumentForm({ acct, dispatch, user, onDone }) {
   const fileRef = useRef(null);
@@ -672,7 +673,7 @@ function DocumentsCard({ a, dispatch, user, onAdd }) {
         if (!group.length) return null;
         return (
           <div key={cat} className="mb-2">
-            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">{cat}s</div>
+            <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">{DOC_CATEGORY_PLURAL[cat]}</div>
             {group.map(d => (
               <div key={d.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
                 <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
