@@ -277,7 +277,7 @@ function persist(action, next) {
     case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
-    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
@@ -340,6 +340,16 @@ function reducer(state, action) {
       const label = `${action.doc.category}: ${action.doc.title || action.doc.name}`;
       return withAudit({ ...a, documents: [...(a.documents || []), action.doc] },
         [{ id: uid(), date: iso(Date.now()), field: "document", from: "", to: label, by: action.by || "unknown", source: action.source || "upload" }]);
+    }) };
+    case "EDIT_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
+      if (a.id !== action.id) return a;
+      const doc = (a.documents || []).find(d => d.id === action.docId);
+      if (!doc) return a;
+      const updated = { ...doc, ...action.patch };
+      const from = `${doc.category}: ${doc.title || doc.name}`;
+      const to = `${updated.category}: ${updated.title || updated.name}`;
+      return withAudit({ ...a, documents: (a.documents || []).map(d => d.id === action.docId ? updated : d) },
+        [{ id: uid(), date: iso(Date.now()), field: "document", from, to, by: action.by || "unknown", source: action.source || "edit" }]);
     }) };
     case "DELETE_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
       if (a.id !== action.id) return a;
@@ -615,27 +625,39 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
 const DOC_CATEGORIES = ["Purchase Order", "Contract Agreement", "Advisory"];
 const DOC_CATEGORY_PLURAL = { "Purchase Order": "Purchase Orders", "Contract Agreement": "Contract Agreements", "Advisory": "Advisories" };
 const EXPIRY_WARN_DAYS = 60;
-function DocumentForm({ acct, dispatch, user, onDone }) {
+function DocumentForm({ acct, dispatch, user, onDone, existing }) {
   const fileRef = useRef(null);
-  const [category, setCategory] = useState(DOC_CATEGORIES[0]);
-  const [title, setTitle] = useState("");
-  const [amount, setAmount] = useState("");
-  const [effectiveDate, setEffectiveDate] = useState("");
-  const [expiryDate, setExpiryDate] = useState("");
+  const [category, setCategory] = useState(existing ? existing.category : DOC_CATEGORIES[0]);
+  const [title, setTitle] = useState(existing ? existing.title || "" : "");
+  const [amount, setAmount] = useState(existing && existing.amount != null ? String(existing.amount) : "");
+  const [effectiveDate, setEffectiveDate] = useState(existing ? existing.effectiveDate || "" : "");
+  const [expiryDate, setExpiryDate] = useState(existing ? existing.expiryDate || "" : "");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const submit = async e => {
     e.preventDefault();
     if (busy) return;
     const files = fileRef.current?.files;
-    if (!files || !files.length) { setErr("Choose a file."); return; }
+    const hasNewFile = files && files.length;
+    if (!existing && !hasNewFile) { setErr("Choose a file."); return; }
     setBusy(true); setErr("");
     try {
-      const [uploaded] = await uploadFiles(files, acct.id);
-      const doc = { id: uid(), category, title: title.trim(), name: uploaded.name, url: uploaded.url, path: uploaded.path,
-        amount: Number.isFinite(+amount) && amount !== "" ? +amount : null, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null,
-        uploadedBy: user?.name || "unknown", uploadedAt: iso(Date.now()) };
-      dispatch({ type: "ADD_DOCUMENT", id: acct.id, doc, by: user?.name, source: "upload" });
+      const meta = { category, title: title.trim(),
+        amount: Number.isFinite(+amount) && amount !== "" ? +amount : null, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null };
+      if (existing) {
+        const patch = { ...meta };
+        if (hasNewFile) {
+          const [uploaded] = await uploadFiles(files, acct.id);
+          patch.name = uploaded.name; patch.url = uploaded.url; patch.path = uploaded.path;
+          if (sb && existing.path && existing.path !== uploaded.path) { try { await sb.storage.from("attachments").remove([existing.path]); } catch {} }
+        }
+        dispatch({ type: "EDIT_DOCUMENT", id: acct.id, docId: existing.id, patch, by: user?.name, source: "edit" });
+      } else {
+        const [uploaded] = await uploadFiles(files, acct.id);
+        const doc = { id: uid(), ...meta, name: uploaded.name, url: uploaded.url, path: uploaded.path,
+          uploadedBy: user?.name || "unknown", uploadedAt: iso(Date.now()) };
+        dispatch({ type: "ADD_DOCUMENT", id: acct.id, doc, by: user?.name, source: "upload" });
+      }
       onDone();
     } catch (ex) { setErr(ex.message || String(ex)); setBusy(false); }
   };
@@ -645,13 +667,13 @@ function DocumentForm({ acct, dispatch, user, onDone }) {
         <Select value={category} onChange={e => setCategory(e.target.value)} options={DOC_CATEGORIES} />
         <Input placeholder="Title (optional)" value={title} onChange={e => setTitle(e.target.value)} />
         <Input type="number" placeholder="Amount (optional)" value={amount} onChange={e => setAmount(e.target.value)} />
-        <input ref={fileRef} type="file" className="text-xs text-slate-700" />
+        <label className="text-xs text-slate-500">{existing ? `Replace file (optional) — current: ${existing.name}` : "File"}<input ref={fileRef} type="file" className="mt-0.5 block text-xs text-slate-700" /></label>
         <label className="text-xs text-slate-500">Effective<Input type="date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)} /></label>
         <label className="text-xs text-slate-500">Expiry<Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></label>
       </div>
       {err && <div className="text-xs font-semibold text-rose-600">{err}</div>}
       <div className="flex gap-2">
-        <Btn kind="primary" type="submit">{busy ? "Uploading…" : "Upload document"}</Btn>
+        <Btn kind="primary" type="submit">{busy ? (existing ? "Saving…" : "Uploading…") : (existing ? "Save changes" : "Upload document")}</Btn>
         <Btn onClick={onDone}>Cancel</Btn>
       </div>
     </form>
@@ -667,8 +689,9 @@ function docExpiryBadge(doc) {
 function DocumentsCard({ a, dispatch, user }) {
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
+  const [editId, setEditId] = useState(null);
   return (
-    <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setAdding(v => !v)}>{adding ? "Close" : "＋ Add document"}</button>}>
+    <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
       {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
       {docs.length === 0 && !adding && <div className="text-sm text-slate-500">No documents yet.</div>}
       {DOC_CATEGORIES.map(cat => {
@@ -678,17 +701,22 @@ function DocumentsCard({ a, dispatch, user }) {
           <div key={cat} className="mb-2">
             <div className="mb-1 text-xs font-bold uppercase tracking-wide text-slate-500">{DOC_CATEGORY_PLURAL[cat]}</div>
             {group.map(d => (
-              <div key={d.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-                <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
-                {docExpiryBadge(d)}
-                {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
-                {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}
-                <button title="Delete document" className="ml-auto text-xs text-rose-500 hover:text-rose-700"
-                  onClick={async () => {
-                    if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
-                    if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { alert("Could not delete file: " + error.message); return; } }
-                    dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
-                  }}>✕</button>
+              <div key={d.id} className="border-b border-slate-100 py-1.5 last:border-0">
+                <div className="flex flex-wrap items-center gap-2 text-sm">
+                  <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
+                  {docExpiryBadge(d)}
+                  {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
+                  {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}
+                  <button title="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
+                    onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
+                  <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
+                    onClick={async () => {
+                      if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
+                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { alert("Could not delete file: " + error.message); return; } }
+                      dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
+                    }}>✕</button>
+                </div>
+                {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
               </div>
             ))}
           </div>
