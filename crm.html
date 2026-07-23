@@ -626,13 +626,14 @@ function DocumentForm({ acct, dispatch, user, onDone }) {
   const [err, setErr] = useState("");
   const submit = async e => {
     e.preventDefault();
+    if (busy) return;
     const files = fileRef.current?.files;
     if (!files || !files.length) { setErr("Choose a file."); return; }
     setBusy(true); setErr("");
     try {
       const [uploaded] = await uploadFiles(files, acct.id);
       const doc = { id: uid(), category, title: title.trim(), name: uploaded.name, url: uploaded.url, path: uploaded.path,
-        amount: amount === "" ? null : +amount, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null,
+        amount: Number.isFinite(+amount) && amount !== "" ? +amount : null, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null,
         uploadedBy: user?.name || "unknown", uploadedAt: iso(Date.now()) };
       dispatch({ type: "ADD_DOCUMENT", id: acct.id, doc, by: user?.name, source: "upload" });
       onDone();
