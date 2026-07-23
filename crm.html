@@ -610,6 +610,52 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
     ))}
   </div>
 );
+
+/* ------------------------- account documents ------------------------- */
+const DOC_CATEGORIES = ["Purchase Order", "Contract Agreement", "Advisory"];
+const EXPIRY_WARN_DAYS = 60;
+function DocumentForm({ acct, dispatch, user, onDone }) {
+  const fileRef = useRef(null);
+  const [category, setCategory] = useState(DOC_CATEGORIES[0]);
+  const [title, setTitle] = useState("");
+  const [amount, setAmount] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const [expiryDate, setExpiryDate] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const submit = async e => {
+    e.preventDefault();
+    const files = fileRef.current?.files;
+    if (!files || !files.length) { setErr("Choose a file."); return; }
+    setBusy(true); setErr("");
+    try {
+      const [uploaded] = await uploadFiles(files, acct.id);
+      const doc = { id: uid(), category, title: title.trim(), name: uploaded.name, url: uploaded.url, path: uploaded.path,
+        amount: amount === "" ? null : +amount, effectiveDate: effectiveDate || null, expiryDate: expiryDate || null,
+        uploadedBy: user?.name || "unknown", uploadedAt: iso(Date.now()) };
+      dispatch({ type: "ADD_DOCUMENT", id: acct.id, doc, by: user?.name, source: "upload" });
+      onDone();
+    } catch (ex) { setErr(ex.message || String(ex)); setBusy(false); }
+  };
+  return (
+    <form onSubmit={submit} className="space-y-2">
+      <div className="grid gap-2 sm:grid-cols-2">
+        <Select value={category} onChange={e => setCategory(e.target.value)} options={DOC_CATEGORIES} />
+        <Input placeholder="Title (optional)" value={title} onChange={e => setTitle(e.target.value)} />
+        <Input type="number" placeholder="Amount (optional)" value={amount} onChange={e => setAmount(e.target.value)} />
+        <input ref={fileRef} type="file" className="text-xs text-slate-700" />
+        <label className="text-xs text-slate-500">Effective<Input type="date" value={effectiveDate} onChange={e => setEffectiveDate(e.target.value)} /></label>
+        <label className="text-xs text-slate-500">Expiry<Input type="date" value={expiryDate} onChange={e => setExpiryDate(e.target.value)} /></label>
+      </div>
+      {err && <div className="text-xs font-semibold text-rose-600">{err}</div>}
+      <div className="flex gap-2">
+        <Btn kind="primary" type="submit">{busy ? "Uploading…" : "Upload document"}</Btn>
+        <Btn onClick={onDone}>Cancel</Btn>
+      </div>
+    </form>
+  );
+}
+
 function LogActivityForm({ acct, dispatch, onDone, existing }) {
   const [type, setType] = useState(existing ? existing.type : "call");
   const [summary, setSummary] = useState(existing ? existing.summary : "");
