@@ -2035,6 +2035,36 @@ function PlaybookCard({ st, dispatch }) {
   );
 }
 
+/* --------------------------- Health playbook --------------------------- */
+function HealthPlaybookCard({ st, dispatch }) {
+  const hpb = healthPlaybookOf(st.settings);
+  const setBand = (band, list) => dispatch({ type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { ...hpb, [band]: list } });
+  const editStep = (band, id, patch) => setBand(band, hpb[band].map(s => s.id === id ? { ...s, ...patch } : s));
+  const Section = ({ band, tone }) => (
+    <div className="mb-3">
+      <div className={`mb-1 text-xs font-bold uppercase tracking-widest ${tone}`}>{band}</div>
+      {hpb[band].map(s => (
+        <div key={s.id} className="mb-2 flex items-center gap-2 text-sm">
+          <Input value={s.title} placeholder="Step…" onChange={e => editStep(band, s.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
+          <Input type="number" min="0" max="180" value={s.dueDays} title="Days after crossing"
+            onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+          <span className="whitespace-nowrap text-xs text-slate-500">d after</span>
+          <Select value={s.priority} onChange={e => editStep(band, s.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
+          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setBand(band, hpb[band].filter(x => x.id !== s.id))}>✕</button>
+        </div>
+      ))}
+      <Btn onClick={() => setBand(band, [...hpb[band], { id: uid(), title: "", dueDays: 3, priority: "Medium" }])}>+ Add step</Btn>
+    </div>
+  );
+  return (
+    <Card title="Health playbook">
+      <Section band="Yellow" tone="text-amber-600" />
+      <Section band="Red" tone="text-rose-600" />
+      <p className="mt-1 text-xs text-slate-500">When an account crosses into Yellow or Red, one task per step is created automatically for its CSM (due = crossing date + days, marked ♥). Tasks seed once per decline into a band; recovery to Green re-arms them. Shared by the whole team.</p>
+    </Card>
+  );
+}
+
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user }) {
   const w = st.settings.weights;
@@ -2085,6 +2115,7 @@ function Settings({ st, dispatch, user }) {
       </Card>
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
+      <HealthPlaybookCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
