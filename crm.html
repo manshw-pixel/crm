@@ -407,7 +407,7 @@ function reducer(state, action) {
       tasks: [...state.tasks, ...action.items],
       accounts: state.accounts.map(a => a.id === action.id
         ? { ...a, healthBand: action.healthBand, healthPlaybookBand: action.healthPlaybookBand,
-            healthEvents: [...(a.healthEvents || []), action.event] }
+            healthEvents: action.event ? [...(a.healthEvents || []), action.event] : (a.healthEvents || []) }
         : a) };
     default: return state;
   }
@@ -2413,6 +2413,37 @@ function App({ user }) {
       if (items.length) dispatch({ type: "SEED_PLAYBOOK", id: a.id, seededFor: a.renewalDate, items });
     });
   }, [loaded, st.accounts, st.settings.playbook]);
+  useEffect(() => { // auto: detect health-band crossings, seed per-band playbook tasks
+    if (!loaded) return;
+    const today = iso(Date.now());
+    const hpb = healthPlaybookOf(st.settings);
+    scored.forEach(a => {
+      if (a.churn) return;
+      const cur = a.risk;                       // live band from score
+      const prev = a.healthBand;
+      if (prev === undefined) {                 // first run: initialize silently
+        dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: cur,
+          healthPlaybookBand: a.healthPlaybookBand, event: null, items: [] });
+        return;
+      }
+      if (cur === prev) return;                 // no crossing
+      const worsening = BAND_RANK[cur] > BAND_RANK[prev];
+      const event = { date: today, from: prev, to: cur };
+      let items = [], pbBand = a.healthPlaybookBand;
+      if (worsening && (cur === "Yellow" || cur === "Red") &&
+          (pbBand === undefined || BAND_RANK[cur] > BAND_RANK[pbBand])) {
+        items = (hpb[cur] || []).filter(s => s.title.trim()).map(s => ({
+          id: `hpb-${a.id}-${cur}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
+          healthBand: cur, healthFor: today, title: "♥ " + s.title,
+          due: isoPlus(today, s.dueDays), priority: s.priority, status: "Open", owner: a.csm || "" }));
+        pbBand = cur;
+      } else if (!worsening && cur === "Green") {
+        pbBand = undefined;                     // recovered: allow re-seed on next decline
+      }
+      dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: cur,
+        healthPlaybookBand: pbBand, event, items });
+    });
+  }, [loaded, scored, st.settings.healthPlaybook]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
