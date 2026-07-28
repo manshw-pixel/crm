@@ -64,3 +64,37 @@ test("recovery to Green clears pbBand; later decline re-seeds", async () => {
   assert(reseed === 3, "re-decline should seed 3 Red tasks, got " + reseed);
   await browser.close();
 });
+
+test("worsening Yellow->Red escalation seeds Red playbook + event", async () => {
+  const acct = seedAccount({ healthBand: "Yellow", healthPlaybookBand: "Yellow", inputs: { usage: 15, sentiment: 15, tickets: 20, nps: -80 } }); // ~Red
+  const { page, browser } = await launch(seedFor(acct));
+  await wait(page);
+  const r = await page.evaluate(() => {
+    const s = window.__store.getState(); const a = s.accounts.find(x => x.id === "t1");
+    const t = s.tasks.filter(x => x.healthPlaybook);
+    return { band: a.healthBand, pb: a.healthPlaybookBand, ev: a.healthEvents,
+      ids: t.map(x => x.id) };
+  });
+  assert(r.band === "Red" && r.pb === "Red", "band/pbBand not Red: " + JSON.stringify(r));
+  assert(r.ev.length === 1 && r.ev[0].from === "Yellow" && r.ev[0].to === "Red", "event wrong: " + JSON.stringify(r.ev));
+  assert(r.ids.length === 3 && r.ids.every(id => /^hpb-t1-Red-\d{4}-\d{2}-\d{2}-hr\d$/.test(id)), "task ids wrong: " + r.ids);
+  await browser.close();
+});
+
+test("pbBand suppression: crossing that doesn't exceed stored pbBand seeds nothing", async () => {
+  // stored healthBand:Green, healthPlaybookBand:Red (was Red previously, recovered to Green w/o clearing pbBand via seed data),
+  // current inputs compute to Yellow -> cur=Yellow worsens vs prev=Green, but BAND_RANK[Yellow]=1 is not > BAND_RANK[Red]=2, so no reseed.
+  const acct = seedAccount({ healthBand: "Green", healthPlaybookBand: "Red", inputs: { usage: 55, sentiment: 55, tickets: 3, nps: 0 } }); // ~Yellow
+  const { page, browser } = await launch(seedFor(acct));
+  await wait(page);
+  const r = await page.evaluate(() => {
+    const s = window.__store.getState(); const a = s.accounts.find(x => x.id === "t1");
+    const t = s.tasks.filter(x => x.healthPlaybook);
+    return { band: a.healthBand, pb: a.healthPlaybookBand, ev: a.healthEvents, tasks: t.length };
+  });
+  assert(r.band === "Yellow", "band should be Yellow: " + r.band);
+  assert(r.pb === "Red", "pbBand should remain Red (suppressed): " + r.pb);
+  assert(r.ev.length === 1 && r.ev[0].from === "Green" && r.ev[0].to === "Yellow", "event wrong: " + JSON.stringify(r.ev));
+  assert(r.tasks === 0, "no tasks should be seeded when not exceeding pbBand: got " + r.tasks);
+  await browser.close();
+});
