@@ -20,8 +20,9 @@ const sb = (() => {
     insert: async () => ({ error: null }),
     delete: () => ({ eq: async () => ({ error: null }), neq: async () => ({ error: null }) }),
   });
-  // profiles is read two ways: fetchAll() awaits select() directly (wants {data:[...]}),
-  // Root() chains select(...).eq(...).single() (wants {data: singleRow}). Support both.
+  // profiles is read three ways: fetchAll() awaits select() directly (wants {data:[...]}),
+  // Root() chains select(...).eq(...).single() (wants {data: singleRow}), and the Settings
+  // UsersCard chains select(...).order(...) (wants {data:[...]}). Support all three.
   const profilesApi = () => ({
     select: () => {
       const rows = window.__seedRows?.profiles || [window.__seedProfile || { id: "u1", name: "Test User", role: "admin" }];
@@ -29,6 +30,7 @@ const sb = (() => {
       p.eq = (_col, val) => ({
         single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }),
       });
+      p.order = () => Promise.resolve({ data: rows, error: null });
       return p;
     },
   });
@@ -71,6 +73,10 @@ export function seedAccount(o = {}) {
     ...o,
   };
 }
+
+// Rendered-tree text only (excludes the inert babel <script> source, which page.textContent("body")
+// would otherwise include, risking false positives on JSX literals that never actually rendered).
+export const rootText = page => page.textContent("#root");
 
 export async function launch(seedJs) {
   const url = buildMockedHtml(seedJs);

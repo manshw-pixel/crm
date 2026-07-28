@@ -1,5 +1,5 @@
 import { test, assert } from "./framework.mjs";
-import { launch, seedAccount } from "./harness.mjs";
+import { launch, seedAccount, rootText } from "./harness.mjs";
 
 // Account with a recent decline event already recorded (so no dependence on seeder timing).
 const acct = seedAccount({ healthBand: "Yellow",
@@ -11,7 +11,7 @@ test("bell shows recent health-decline item", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForSelector("#root");
   await page.click('button[title="Renewal & contract alerts"]');
-  const txt = await page.textContent("body");
+  const txt = await rootText(page);
   assert(/health dropped to Yellow/i.test(txt), "decline alert text missing");
   await browser.close();
 });
