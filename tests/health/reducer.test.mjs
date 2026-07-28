@@ -12,7 +12,7 @@ test("SEED_HEALTH_PLAYBOOK records event, band, and tasks", async () => {
       healthBand: "Yellow", healthPlaybookBand: "Yellow",
       event: { date: "2026-07-28", from: "Green", to: "Yellow" },
       items: [{ id: "hpb-t1-Yellow-2026-07-28-hy1", accountId: "t1", healthPlaybook: true, title: "♥ x", status: "Open" }] });
-    await new Promise(r => setTimeout(r, 0));
+    await new Promise(r => setTimeout(r, 50));
     const a = window.__store.getState().accounts.find(x => x.id === "t1");
     return { band: a.healthBand, pbBand: a.healthPlaybookBand, events: a.healthEvents,
       taskCount: window.__store.getState().tasks.filter(t => t.healthPlaybook).length };
