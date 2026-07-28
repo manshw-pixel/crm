@@ -259,7 +259,7 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook },
   };
 }
 
@@ -276,6 +276,7 @@ function persist(action, next) {
     }
     case "ADD_TASK": return up("tasks", action.item);
     case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "SEED_HEALTH_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
@@ -287,7 +288,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -401,6 +402,13 @@ function reducer(state, action) {
     case "SEED_PLAYBOOK": return { ...state,
       tasks: [...state.tasks, ...action.items],
       accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };
+    case "SET_HEALTH_PLAYBOOK": return { ...state, settings: { ...state.settings, healthPlaybook: action.healthPlaybook } };
+    case "SEED_HEALTH_PLAYBOOK": return { ...state,
+      tasks: [...state.tasks, ...action.items],
+      accounts: state.accounts.map(a => a.id === action.id
+        ? { ...a, healthBand: action.healthBand, healthPlaybookBand: action.healthPlaybookBand,
+            healthEvents: [...(a.healthEvents || []), action.event] }
+        : a) };
     default: return state;
   }
 }
@@ -2343,6 +2351,7 @@ function App({ user }) {
     if (action.type !== "REPLACE") persist(action, next);
     return next;
   }), []);
+  useEffect(() => { window.__store = { getState: () => st, dispatch }; });
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => { console.error(e); alert("Could not load shared data: " + e.message); }), []);
