@@ -72,6 +72,7 @@ const addDays = n => iso(Date.now() + n * DAY);
 const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
 const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
+const isoPlus = (dateStr, days) => iso(new Date(dateStr).getTime() + days * DAY);
 const CURRENCIES = ["USD", "INR", "PHP"];
 const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
 const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
@@ -417,6 +418,21 @@ const DEFAULT_PLAYBOOK = [
   { id: "pb7", title: "Confirm signature & billing", offsetDays: 7, priority: "High" },
 ];
 const playbookOf = settings => settings.playbook || DEFAULT_PLAYBOOK;
+
+const BAND_RANK = { Green: 0, Yellow: 1, Red: 2 };
+const DEFAULT_HEALTH_PLAYBOOK = {
+  Yellow: [
+    { id: "hy1", title: "Schedule check-in call with account", dueDays: 3, priority: "Medium" },
+    { id: "hy2", title: "Review usage & recent activity for decline drivers", dueDays: 5, priority: "Medium" },
+    { id: "hy3", title: "Confirm champion still engaged", dueDays: 7, priority: "Low" },
+  ],
+  Red: [
+    { id: "hr1", title: "Escalate to CSM lead / exec sponsor", dueDays: 1, priority: "High" },
+    { id: "hr2", title: "Book save/recovery call with decision maker", dueDays: 2, priority: "High" },
+    { id: "hr3", title: "Draft recovery plan & risk summary", dueDays: 5, priority: "High" },
+  ],
+};
+const healthPlaybookOf = settings => settings.healthPlaybook || DEFAULT_HEALTH_PLAYBOOK;
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
@@ -2515,6 +2531,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
+window.__health = { isoPlus, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
