@@ -72,6 +72,7 @@ const addDays = n => iso(Date.now() + n * DAY);
 const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
 const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
+const isoPlus = (dateStr, days) => iso(new Date(dateStr).getTime() + days * DAY);
 const CURRENCIES = ["USD", "INR", "PHP"];
 const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
 const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
@@ -258,7 +259,7 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook },
   };
 }
 
@@ -275,6 +276,7 @@ function persist(action, next) {
     }
     case "ADD_TASK": return up("tasks", action.item);
     case "SEED_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "SEED_HEALTH_PLAYBOOK": { action.items.forEach(t => up("tasks", t)); const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
@@ -286,7 +288,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -400,6 +402,13 @@ function reducer(state, action) {
     case "SEED_PLAYBOOK": return { ...state,
       tasks: [...state.tasks, ...action.items],
       accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };
+    case "SET_HEALTH_PLAYBOOK": return { ...state, settings: { ...state.settings, healthPlaybook: action.healthPlaybook } };
+    case "SEED_HEALTH_PLAYBOOK": return { ...state,
+      tasks: [...state.tasks, ...action.items],
+      accounts: state.accounts.map(a => a.id === action.id
+        ? { ...a, healthBand: action.healthBand, healthPlaybookBand: action.healthPlaybookBand,
+            healthEvents: action.event ? [...(a.healthEvents || []), action.event] : (a.healthEvents || []) }
+        : a) };
     default: return state;
   }
 }
@@ -417,6 +426,21 @@ const DEFAULT_PLAYBOOK = [
   { id: "pb7", title: "Confirm signature & billing", offsetDays: 7, priority: "High" },
 ];
 const playbookOf = settings => settings.playbook || DEFAULT_PLAYBOOK;
+
+const BAND_RANK = { Green: 0, Yellow: 1, Red: 2 };
+const DEFAULT_HEALTH_PLAYBOOK = {
+  Yellow: [
+    { id: "hy1", title: "Schedule check-in call with account", dueDays: 3, priority: "Medium" },
+    { id: "hy2", title: "Review usage & recent activity for decline drivers", dueDays: 5, priority: "Medium" },
+    { id: "hy3", title: "Confirm champion still engaged", dueDays: 7, priority: "Low" },
+  ],
+  Red: [
+    { id: "hr1", title: "Escalate to CSM lead / exec sponsor", dueDays: 1, priority: "High" },
+    { id: "hr2", title: "Book save/recovery call with decision maker", dueDays: 2, priority: "High" },
+    { id: "hr3", title: "Draft recovery plan & risk summary", dueDays: 5, priority: "High" },
+  ],
+};
+const healthPlaybookOf = settings => settings.healthPlaybook || DEFAULT_HEALTH_PLAYBOOK;
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
@@ -1197,6 +1221,11 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const counts = { Green: 0, Yellow: 0, Red: 0 };
   scored.forEach(a => counts[a.risk]++);
   const flagged = scored.filter(a => a.flags.length);
+  const declines = scored
+    .flatMap(a => (a.healthEvents || [])
+      .filter(e => BAND_RANK[e.to] > BAND_RANK[e.from] && daysSince(e.date) <= 30)
+      .map(e => ({ a, e })))
+    .sort((x, y) => daysSince(x.e.date) - daysSince(y.e.date));
   // when "All" is selected retention always spans every account, regardless of other scoping
   const rates = st.settings.rates;
   const retAccounts = scope === "all" ? allAccounts : all;
@@ -1335,6 +1364,22 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>
       </div>
+      <Card title="Recently declined" className="!p-3">
+        <div className="max-h-48 overflow-y-auto pr-1">
+        {declines.length === 0 && <div className="text-sm text-slate-500">No recent declines. 🎉</div>}
+        {declines.map(({ a, e }) => (
+          <button key={a.id + e.date + e.to} onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-slate-50">
+            <span className="text-sm">{a.name}</span>
+            <span className="flex items-center gap-2 text-xs">
+              <span className="font-semibold" style={{ color: RISK_HEX[e.from] }}>{e.from}</span>
+              <span className="text-slate-400">→</span>
+              <span className="font-semibold" style={{ color: RISK_HEX[e.to] }}>{e.to}</span>
+              <span className="text-slate-500">{fmtDate(e.date)}</span>
+            </span>
+          </button>
+        ))}
+        </div>
+      </Card>
       {snaps.length >= 2 && <Card title="Trends & health mix" className="!p-3">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <LineChart title="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
@@ -1717,6 +1762,12 @@ function ChangeHistoryCard({ a }) {
     </Card>
   );
 }
+const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
+  <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
+    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+    <span className="text-sm font-semibold text-slate-700">{value}</span>
+  </span>
+);
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm }) {
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -1730,20 +1781,41 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const contacts = st.contacts.filter(c => c.accountId === id);
   const opps = st.opportunities.filter(o => o.accountId === id);
   const d = daysUntil(a.renewalDate);
+  // health playbook progress: tasks from the latest crossing (episode), done vs total
+  const healthAll = st.tasks.filter(t => t.accountId === id && t.healthPlaybook);
+  const hLatest = healthAll.reduce((m, t) => (t.healthFor > m ? t.healthFor : m), "");
+  const hEpisode = healthAll.filter(t => t.healthFor === hLatest);
+  const hDone = hEpisode.filter(t => t.status === "Done").length;
+  const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
   const comps = scoreComponents(a, st.activities);
   return (
     <div className="space-y-4">
+      {/* Title row: identity + health + playbook progress */}
       <div className="flex flex-wrap items-center gap-3">
         <Btn onClick={back}>← Back</Btn>
-        <h2 className="text-xl font-bold">{a.name}</h2>
+        <h2 className="text-xl font-bold text-slate-900">{a.name}</h2>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        <span className="text-sm text-slate-700">#{subNumbers(scored).get(a.id) || a.accountNo || "—"} · {a.tier} · {a.industry} · {fmtMoney(a.arr, a.currency)} ARR{a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""} · CSM {a.csm}
-          {a.licenses ? ` · ${a.licenses} licenses` : ""}{a.dedicatedSupport ? " · Dedicated support" : ""}{a.modules ? ` · ${a.modules}` : ""}
-          {parent && <> · sub-account of <button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button></>}</span>
-        <span className={`ml-auto rounded px-2 py-1 text-sm font-semibold ${d < 60 ? "nm-sm !rounded-full px-3 text-amber-600" : "nm-sm !rounded-full px-3 text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d} days · {a.contractStatus}</span>
+        {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
+          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
+        <span className="ml-auto text-xs font-semibold text-slate-400">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
+      </div>
+      {/* Meta row: systematic key facts */}
+      <div className="nm-sm flex flex-wrap items-center gap-x-6 gap-y-1.5 p-3">
+        <Meta label="Tier" value={a.tier} />
+        <Meta label="Industry" value={a.industry} />
+        <Meta label="ARR" value={`${fmtMoney(a.arr, a.currency)}${a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""}`} />
+        <Meta label="CSM" value={a.csm} />
+        {a.licenses ? <Meta label="Licenses" value={a.licenses} /> : null}
+        {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
+        {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
+        {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
+      </div>
+      {/* Status row: renewal / stage / billing / QBR badges */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${d < 60 ? "text-amber-600" : "text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d}d · {a.contractStatus}</span>
         {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
           onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
-          className={`cursor-pointer rounded-full border-0 px-2.5 py-1 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
+          className={`cursor-pointer rounded-full border-0 px-3 py-1 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
           {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
         </select>}
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
@@ -2011,6 +2083,36 @@ function PlaybookCard({ st, dispatch }) {
   );
 }
 
+/* --------------------------- Health playbook --------------------------- */
+function HealthPlaybookCard({ st, dispatch }) {
+  const hpb = healthPlaybookOf(st.settings);
+  const setBand = (band, list) => dispatch({ type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { ...hpb, [band]: list } });
+  const editStep = (band, id, patch) => setBand(band, hpb[band].map(s => s.id === id ? { ...s, ...patch } : s));
+  const Section = ({ band, tone }) => (
+    <div className="mb-3">
+      <div className={`mb-1 text-xs font-bold uppercase tracking-widest ${tone}`}>{band}</div>
+      {hpb[band].map(s => (
+        <div key={s.id} className="mb-2 flex items-center gap-2 text-sm">
+          <Input value={s.title} placeholder="Step…" onChange={e => editStep(band, s.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
+          <Input type="number" min="0" max="180" value={s.dueDays} title="Days after crossing"
+            onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+          <span className="whitespace-nowrap text-xs text-slate-500">d after</span>
+          <Select value={s.priority} onChange={e => editStep(band, s.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
+          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setBand(band, hpb[band].filter(x => x.id !== s.id))}>✕</button>
+        </div>
+      ))}
+      <Btn onClick={() => setBand(band, [...hpb[band], { id: uid(), title: "", dueDays: 3, priority: "Medium" }])}>+ Add step</Btn>
+    </div>
+  );
+  return (
+    <Card title="Health playbook">
+      <Section band="Yellow" tone="text-amber-600" />
+      <Section band="Red" tone="text-rose-600" />
+      <p className="mt-1 text-xs text-slate-500">When an account crosses into Yellow or Red, one task per step is created automatically for its CSM (due = crossing date + days, marked ♥). Tasks seed once per decline into a band; recovery to Green re-arms them. Shared by the whole team.</p>
+    </Card>
+  );
+}
+
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user }) {
   const w = st.settings.weights;
@@ -2061,6 +2163,7 @@ function Settings({ st, dispatch, user }) {
       </Card>
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
+      <HealthPlaybookCard st={st} dispatch={dispatch} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
@@ -2327,6 +2430,7 @@ function App({ user }) {
     if (action.type !== "REPLACE") persist(action, next);
     return next;
   }), []);
+  useEffect(() => { window.__store = { getState: () => st, dispatch }; });
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => { console.error(e); alert("Could not load shared data: " + e.message); }), []);
@@ -2388,6 +2492,37 @@ function App({ user }) {
       if (items.length) dispatch({ type: "SEED_PLAYBOOK", id: a.id, seededFor: a.renewalDate, items });
     });
   }, [loaded, st.accounts, st.settings.playbook]);
+  useEffect(() => { // auto: detect health-band crossings, seed per-band playbook tasks
+    if (!loaded) return;
+    const today = iso(Date.now());
+    const hpb = healthPlaybookOf(st.settings);
+    scored.forEach(a => {
+      if (a.churn) return;
+      const cur = a.risk;                       // live band from score
+      const prev = a.healthBand;
+      if (prev === undefined) {                 // first run: initialize silently
+        dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: cur,
+          healthPlaybookBand: a.healthPlaybookBand, event: null, items: [] });
+        return;
+      }
+      if (cur === prev) return;                 // no crossing
+      const worsening = BAND_RANK[cur] > BAND_RANK[prev];
+      const event = { date: today, from: prev, to: cur };
+      let items = [], pbBand = a.healthPlaybookBand;
+      if (worsening && (cur === "Yellow" || cur === "Red") &&
+          (pbBand === undefined || BAND_RANK[cur] > BAND_RANK[pbBand])) {
+        items = (hpb[cur] || []).filter(s => s.title.trim()).map(s => ({
+          id: `hpb-${a.id}-${cur}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
+          healthBand: cur, healthFor: today, title: "♥ " + s.title,
+          due: isoPlus(today, s.dueDays), priority: s.priority, status: "Open", owner: a.csm || "" }));
+        pbBand = cur;
+      } else if (!worsening && cur === "Green") {
+        pbBand = undefined;                     // recovered: allow re-seed on next decline
+      }
+      dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: cur,
+        healthPlaybookBand: pbBand, event, items });
+    });
+  }, [loaded, scored, st.settings.healthPlaybook]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
@@ -2409,6 +2544,10 @@ function App({ user }) {
     ...active.flatMap(a => (a.documents || [])
       .filter(d => d.category === "Contract" && d.expiryDate && daysUntil(d.expiryDate) <= EXPIRY_WARN_DAYS)
       .map(d => ({ id: `contract-${a.id}-${d.id}-${d.expiryDate}`, accountId: a.id, name: a.name, sub: `Contract: ${d.title || d.name}`, date: d.expiryDate, days: daysUntil(d.expiryDate) }))),
+    ...scored.flatMap(a => (a.healthEvents || [])
+      .filter(e => BAND_RANK[e.to] > BAND_RANK[e.from] && daysSince(e.date) <= 30)
+      .map(e => ({ id: `health-${a.id}-${e.date}-${e.to}`, accountId: a.id, name: a.name,
+        sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
   ].sort((x, y) => x.days - y.days);
   const unreadCount = alerts.filter(a => !notifRead.has(a.id)).length;
   return (
@@ -2457,7 +2596,7 @@ function App({ user }) {
           {notifOpen && (
             <div className="nm absolute right-0 z-20 mt-2 w-80 p-3">
               <div className="flex items-center justify-between px-2 py-1">
-                <span className="text-xs font-semibold text-slate-700">Renewals &amp; expiring contracts</span>
+                <span className="text-xs font-semibold text-slate-700">Renewals, contracts &amp; health</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
               </div>
               {alerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">Nothing due soon. 🎉</div>}
@@ -2515,6 +2654,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
+window.__health = { isoPlus, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>

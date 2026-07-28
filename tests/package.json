@@ -1,0 +1,6 @@
+{
+  "name": "crm-health-tests",
+  "private": true,
+  "type": "module",
+  "devDependencies": { "playwright": "^1.47.0" }
+}
