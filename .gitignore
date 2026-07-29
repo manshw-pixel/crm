@@ -35,3 +35,6 @@ raw/
 ProHance_*
 create_prohance_pptx.py
 generate_ppt.py
+
+# third-party plugin checkout (not part of the CRM project)
+ponytail-main/
