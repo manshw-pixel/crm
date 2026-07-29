@@ -84,7 +84,13 @@ const uid = () => Math.random().toString(36).slice(2, 10);
 /* ------------------------------- QBR cadence ------------------------------- */
 const QBR_FREQS = ["None", "Quarterly", "Semi-annual", "Annual"];
 const QBR_FREQ_MONTHS = { Quarterly: 3, "Semi-annual": 6, Annual: 12 };
-const addMonths = (dateStr, m) => { const d = new Date(dateStr); d.setMonth(d.getMonth() + m); return iso(d.getTime()); };
+/* textual, like isoPlus — setMonth() would overflow month-end (Jan 31 +1 = Mar 3) and mix local time into UTC-parsed dates */
+const addMonths = (dateStr, m) => {
+  const [y, mo, day] = dateStr.slice(0, 10).split("-").map(Number);
+  const t = mo - 1 + m, ty = y + Math.floor(t / 12), tm = ((t % 12) + 12) % 12;
+  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
+  return `${ty}-${String(tm + 1).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`;
+};
 /* null = QBRs not applicable (churned, or no frequency and no date set) */
 function qbrStatus(a) {
   if (a.churn) return null;
@@ -2654,7 +2660,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
-window.__health = { isoPlus, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
