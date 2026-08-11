@@ -447,6 +447,9 @@ const DEFAULT_HEALTH_PLAYBOOK = {
   ],
 };
 const healthPlaybookOf = settings => settings.healthPlaybook || DEFAULT_HEALTH_PLAYBOOK;
+/* Accounts eligible for the one-time playbook backfill: every live at-risk account.
+ * Re-seeds accounts that already have a playbook (deliberate — see the 2026-08-11 spec). */
+const backfillCandidates = scored => scored.filter(a => !a.churn && (a.risk === "Yellow" || a.risk === "Red"));
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
@@ -605,8 +608,8 @@ const StatSm = ({ label, value, sub, tone, children }) => (
     {children || <div className={`text-lg font-extrabold ${tone || "text-slate-700"}`}>{value}</div>}
   </div>
 );
-const Btn = ({ children, onClick, kind = "default", type = "button" }) => (
-  <button type={type} onClick={onClick} className={`px-3.5 py-1.5 text-xs font-bold ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
+const Btn = ({ children, onClick, kind = "default", type = "button", disabled }) => (
+  <button type={type} onClick={onClick} disabled={disabled} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
 const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
 const Select = ({ options, ...p }) => (
@@ -2089,8 +2092,72 @@ function PlaybookCard({ st, dispatch }) {
   );
 }
 
+/* One-time backfill: seed ♥ playbooks for accounts that are already at risk.
+ * The auto-seeder only fires on band crossings, so accounts that were Red before the
+ * feature shipped never get a playbook. Re-seeds already-seeded accounts by design. */
+function HealthBackfillCard({ st, dispatch, scored }) {
+  const [confirming, setConfirming] = useState(false);
+  const [done, setDone] = useState(null);
+  const cands = backfillCandidates(scored);
+  const fresh = cands.filter(a => a.healthPlaybookBand === undefined).length;
+  const seeded = cands.length - fresh;
+  const run = () => {
+    const today = iso(Date.now());
+    const hpb = healthPlaybookOf(st.settings);
+    const existingIds = new Set(st.tasks.map(t => t.id));
+    let tasks = 0, accounts = 0;
+    cands.forEach(a => {
+      // Task shape mirrors the auto-seeder's construction at the SEED_HEALTH_PLAYBOOK
+      // dispatch in the health-band-crossing effect below — id shape is load-bearing
+      // for both dedup guards, keep them in sync.
+      const items = (hpb[a.risk] || []).filter(s => s.title.trim()).map(s => ({
+        id: `hpb-${a.id}-${a.risk}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
+        healthBand: a.risk, healthFor: today, title: "♥ " + s.title,
+        due: isoPlus(today, s.dueDays), priority: s.priority, status: "Open", owner: a.csm || "" }))
+        .filter(it => !existingIds.has(it.id));
+      // Dedupe against ANY same-day event landing on this band, not just backfill-tagged
+      // ones — if the auto-seeder already logged a real decline into this band today,
+      // don't fabricate a second one. A never-seeded account has no such event, so a
+      // legitimate first seed is never suppressed.
+      const alreadyLogged = (a.healthEvents || []).some(ev => ev.date === today && ev.to === a.risk);
+      const event = alreadyLogged ? null : { date: today, from: "Green", to: a.risk, source: "backfill" };
+      if (items.length === 0 && !event) return;
+      tasks += items.length;
+      accounts += 1;
+      // Deliberate re-arm: an account that recovered Red→Yellow keeps healthPlaybookBand
+      // "Red" (the auto-seeder only clears it on recovery to Green). Overwriting it here
+      // with the current band re-arms a future Red auto-seed. Intended, not an oversight.
+      dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: a.risk,
+        healthPlaybookBand: a.risk, items, event });
+    });
+    setDone({ accounts, tasks });
+    setConfirming(false);
+  };
+  return (
+    <div className="mt-3 border-t border-slate-200 pt-3">
+      <div className="mb-1 text-xs font-bold uppercase tracking-widest text-slate-500">Backfill</div>
+      <p className="mb-2 text-sm text-slate-600">
+        {cands.length === 0
+          ? "No at-risk accounts — nothing to seed."
+          : `${cands.length} at-risk accounts — ${fresh} never seeded, ${seeded} already have a playbook (will get a fresh set).`}
+      </p>
+      {confirming ? (
+        <div className="flex items-center gap-2">
+          <Btn onClick={run}>{`Confirm — seed ${cands.length} accounts?`}</Btn>
+          <Btn onClick={() => setConfirming(false)}>Cancel</Btn>
+        </div>
+      ) : (
+        <Btn disabled={cands.length === 0} onClick={() => { setDone(null); setConfirming(true); }}>Seed playbooks now</Btn>
+      )}
+      {done && <p className="mt-2 text-sm font-semibold text-emerald-600">
+        {done.accounts === 0 ? "Already up to date — nothing to seed." : `Seeded ${done.accounts} accounts (${done.tasks} tasks).`}
+      </p>}
+    </div>
+  );
+}
+
 /* --------------------------- Health playbook --------------------------- */
-function HealthPlaybookCard({ st, dispatch }) {
+function HealthPlaybookCard({ st, dispatch, scored }) {
   const hpb = healthPlaybookOf(st.settings);
   const setBand = (band, list) => dispatch({ type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { ...hpb, [band]: list } });
   const editStep = (band, id, patch) => setBand(band, hpb[band].map(s => s.id === id ? { ...s, ...patch } : s));
@@ -2115,12 +2182,13 @@ function HealthPlaybookCard({ st, dispatch }) {
       <Section band="Yellow" tone="text-amber-600" />
       <Section band="Red" tone="text-rose-600" />
       <p className="mt-1 text-xs text-slate-500">When an account crosses into Yellow or Red, one task per step is created automatically for its CSM (due = crossing date + days, marked ♥). Tasks seed once per decline into a band; recovery to Green re-arms them. Shared by the whole team.</p>
+      <HealthBackfillCard st={st} dispatch={dispatch} scored={scored} />
     </Card>
   );
 }
 
 /* ------------------------------- Settings ------------------------------- */
-function Settings({ st, dispatch, user }) {
+function Settings({ st, dispatch, user, scored }) {
   const w = st.settings.weights;
   const rates = st.settings.rates;
   const total = Object.values(w).reduce((a, b) => a + b, 0);
@@ -2169,7 +2237,7 @@ function Settings({ st, dispatch, user }) {
       </Card>
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
-      <HealthPlaybookCard st={st} dispatch={dispatch} />
+      <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
       <UsersCard me={user} />
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
@@ -2517,6 +2585,8 @@ function App({ user }) {
       let items = [], pbBand = a.healthPlaybookBand;
       if (worsening && (cur === "Yellow" || cur === "Red") &&
           (pbBand === undefined || BAND_RANK[cur] > BAND_RANK[pbBand])) {
+        // Task shape mirrors HealthBackfillCard's construction — see the cross-reference
+        // comment there. Id shape is load-bearing for both dedup guards, keep them in sync.
         items = (hpb[cur] || []).filter(s => s.title.trim()).map(s => ({
           id: `hpb-${a.id}-${cur}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
           healthBand: cur, healthFor: today, title: "♥ " + s.title,
@@ -2631,7 +2701,7 @@ function App({ user }) {
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} />)}
       {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-      {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} />}
+      {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
         go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
       <Copyright />
@@ -2660,7 +2730,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
