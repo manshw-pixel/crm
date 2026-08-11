@@ -169,3 +169,16 @@ test("a same-day re-run does not duplicate backfill events", async () => {
   assert(r.tasks === 9, "total tasks should still be 9, got " + r.tasks);
   await browser.close();
 });
+
+test("backfilled accounts appear in the dashboard Recently-declined card", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await confirmBackfill(page);
+  await page.getByRole("button", { name: "Dashboard" }).click();
+  await page.waitForFunction(() => document.querySelector("#root")?.textContent.includes("Recently declined"));
+  const txt = await rootText(page);
+  assert(/Never Red/.test(txt), "backfilled account missing from Recently declined: " + txt.slice(0, 600));
+  assert(!/Churned Red/.test(txt), "churned account must not appear as recently declined");
+  await browser.close();
+});
