@@ -451,6 +451,44 @@ const healthPlaybookOf = settings => settings.healthPlaybook || DEFAULT_HEALTH_P
  * Re-seeds accounts that already have a playbook (deliberate — see the 2026-08-11 spec). */
 const backfillCandidates = scored => scored.filter(a => !a.churn && (a.risk === "Yellow" || a.risk === "Red"));
 
+/* ------------------------------ task queue ------------------------------ */
+const PRIORITY_RANK = { High: 0, Medium: 1, Low: 2 };
+/* Buckets tasks for the work queue. `today` is an ISO YYYY-MM-DD string; comparing two
+ * UTC-midnight timestamps keeps this deterministic (daysUntil compares against Date.now(),
+ * which makes results depend on the time of day the suite happens to run). */
+const bucketTasks = (tasks, today) => {
+  const out = { overdue: [], today: [], week: [], later: [], done: [] };
+  const t0 = new Date(today).getTime();
+  tasks.forEach(t => {
+    if (t.status === "Done") { out.done.push(t); return; }
+    if (!t.due) { out.later.push(t); return; }        // guards imported/hand-edited rows
+    const d = Math.round((new Date(t.due).getTime() - t0) / DAY);
+    if (d < 0) out.overdue.push(t);
+    else if (d === 0) out.today.push(t);
+    else if (d <= 7) out.week.push(t);
+    else out.later.push(t);
+  });
+  const cmp = (a, b) => (a.due || "9999-99-99").localeCompare(b.due || "9999-99-99")
+    || (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3);
+  Object.keys(out).forEach(k => out[k].sort(cmp));
+  return out;
+};
+/* Source of a task: the two seeders tag their own rows, anything untagged is hand-created. */
+const taskSource = t => (t.healthPlaybook ? "health" : t.playbook ? "renewal" : "manual");
+/* accountsById maps account id -> scored account (carries `risk` and `name`). */
+const filterTasks = (tasks, accountsById, { scope = "all", userName = "", source = "all", band = "all", q = "" } = {}) =>
+  tasks.filter(t => {
+    if (scope === "mine" && t.owner !== userName) return false;
+    if (source !== "all" && taskSource(t) !== source) return false;
+    const a = accountsById[t.accountId];
+    if (band !== "all" && (!a || a.risk !== band)) return false;
+    if (q.trim()) {
+      const hay = `${t.title || ""} ${a ? a.name : ""}`.toLowerCase();
+      if (!hay.includes(q.trim().toLowerCase())) return false;
+    }
+    return true;
+  });
+
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
   if (!points.length) return null;
@@ -2005,6 +2043,91 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   );
 }
 
+/* ------------------------------ tasks view ------------------------------ */
+const SOURCE_GLYPH = { health: "♥", renewal: "▶", manual: "" };
+function TaskRow({ t, a, dispatch, openAccount }) {
+  const [custom, setCustom] = useState(false);
+  const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
+  return (
+    <div className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+      <input type="checkbox" checked={t.status === "Done"} title="Complete"
+        onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+      <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
+      <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
+      <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
+      <select value="" title="Reschedule" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
+        onChange={e => {
+          const v = e.target.value;
+          if (v === "custom") { setCustom(true); return; }
+          if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
+        }}>
+        <option value="">⋯</option>
+        <option value="0">Today</option>
+        <option value="1">Tomorrow</option>
+        <option value="7">+1 week</option>
+        <option value="custom">Pick date…</option>
+      </select>
+      {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
+        onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
+        onBlur={() => setCustom(false)} />}
+      <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
+      <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
+    </div>
+  );
+}
+function TasksView({ st, scored, dispatch, user, openAccount }) {
+  const [scope, setScope] = useState("all");
+  const [source, setSource] = useState("all");
+  const [band, setBand] = useState("all");
+  const [q, setQ] = useState("");
+  const [open, setOpen] = useState({ overdue: true, today: true, week: false, later: false, done: false });
+  const byId = useMemo(() => Object.fromEntries(scored.map(a => [a.id, a])), [scored]);
+  const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q });
+  const buckets = bucketTasks(filtered, iso(Date.now()));
+  const total = Object.values(buckets).reduce((n, list) => n + list.length, 0);
+  const SECTIONS = [
+    ["overdue", "Overdue"], ["today", "Today"], ["week", "This week"], ["later", "Later"], ["done", "Done"],
+  ];
+  return (
+    <Card title={`Work queue (${total})`} right={
+      <div className="flex flex-wrap items-center gap-2">
+        <Btn kind={scope === "mine" ? "primary" : "default"} onClick={() => setScope("mine")}>Mine</Btn>
+        <Btn kind={scope === "all" ? "primary" : "default"} onClick={() => setScope("all")}>All</Btn>
+        {/* plain <select> rather than the shared Select: these need readable labels with
+            short values (the values feed filterTasks, so they must stay as-is) */}
+        <select value={source} title="Source" onChange={e => setSource(e.target.value)}
+          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <option value="all">All sources</option>
+          <option value="health">♥ Health</option>
+          <option value="renewal">▶ Renewal</option>
+          <option value="manual">Manual</option>
+        </select>
+        <select value={band} title="Health band" onChange={e => setBand(e.target.value)}
+          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <option value="all">All health</option>
+          <option value="Red">Red</option>
+          <option value="Yellow">Yellow</option>
+          <option value="Green">Green</option>
+        </select>
+        <Input value={q} placeholder="Search tasks…" onChange={e => setQ(e.target.value)} className="w-44" />
+      </div>
+    }>
+      {st.tasks.length === 0 && <p className="text-sm text-slate-500">Nothing in the queue — tasks appear here as playbooks seed them.</p>}
+      {st.tasks.length > 0 && total === 0 && <p className="text-sm text-slate-500">No tasks match these filters.</p>}
+      {SECTIONS.map(([key, label]) => buckets[key].length > 0 && (
+        <div key={key} className="mb-3">
+          <button className="mb-1 flex w-full items-center gap-2 text-left" onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
+            <span className={`text-xs font-bold uppercase tracking-widest ${key === "overdue" ? "text-rose-600" : "text-slate-500"}`}>{label}</span>
+            <span className="text-xs text-slate-400">({buckets[key].length})</span>
+            <span className="text-xs text-slate-400">{open[key] ? "▾" : "▸"}</span>
+          </button>
+          {open[key] && buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}
+        </div>
+      ))}
+    </Card>
+  );
+}
+
 /* ------------------------------- Renewals ------------------------------- */
 const RENEWAL_STAGES = ["Not started", "Outreach", "Quote sent", "Negotiating", "Committed", "At risk"];
 const RENEWAL_STAGE_STYLE = {
@@ -2421,6 +2544,7 @@ const NavIcon = ({ children }) => (
 );
 const NAV_ICONS = {
   Dashboard: <NavIcon><rect x="3" y="3" width="7" height="9" rx="1" /><rect x="14" y="3" width="7" height="5" rx="1" /><rect x="14" y="12" width="7" height="9" rx="1" /><rect x="3" y="16" width="7" height="5" rx="1" /></NavIcon>,
+  Tasks: <NavIcon><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" /></NavIcon>,
   Accounts: <NavIcon><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></NavIcon>,
   Renewals: <NavIcon><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></NavIcon>,
   Settings: <NavIcon><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></NavIcon>,
@@ -2487,7 +2611,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     </div>
   );
 }
-const VIEWS = ["Dashboard", "Accounts", "Renewals", "Settings"];
+const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 function App({ user }) {
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
@@ -2658,12 +2782,12 @@ function App({ user }) {
       <main className={`${collapsed ? "ml-14" : "ml-52"} min-w-0 flex-1 px-6 py-5 transition-all`}>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
-        <div className="nm-inset ml-3 flex items-center gap-0.5 !rounded-lg p-0.5">
+        {view !== "Tasks" && <div className="nm-inset ml-3 flex items-center gap-0.5 !rounded-lg p-0.5">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
           ))}
-        </div>
+        </div>}
         <div className="relative ml-1">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
@@ -2697,6 +2821,7 @@ function App({ user }) {
         </div>
       </div>
       {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
+      {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
         : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} />)}
@@ -2730,7 +2855,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
