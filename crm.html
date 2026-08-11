@@ -2093,8 +2093,22 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
       <div className="flex flex-wrap items-center gap-2">
         <Btn kind={scope === "mine" ? "primary" : "default"} onClick={() => setScope("mine")}>Mine</Btn>
         <Btn kind={scope === "all" ? "primary" : "default"} onClick={() => setScope("all")}>All</Btn>
-        <Select value={source} title="Source" onChange={e => setSource(e.target.value)} options={["all", "health", "renewal", "manual"]} />
-        <Select value={band} title="Health band" onChange={e => setBand(e.target.value)} options={["all", "Red", "Yellow", "Green"]} />
+        {/* plain <select> rather than the shared Select: these need readable labels with
+            short values (the values feed filterTasks, so they must stay as-is) */}
+        <select value={source} title="Source" onChange={e => setSource(e.target.value)}
+          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <option value="all">All sources</option>
+          <option value="health">♥ Health</option>
+          <option value="renewal">▶ Renewal</option>
+          <option value="manual">Manual</option>
+        </select>
+        <select value={band} title="Health band" onChange={e => setBand(e.target.value)}
+          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <option value="all">All health</option>
+          <option value="Red">Red</option>
+          <option value="Yellow">Yellow</option>
+          <option value="Green">Green</option>
+        </select>
         <Input value={q} placeholder="Search tasks…" onChange={e => setQ(e.target.value)} className="w-44" />
       </div>
     }>
