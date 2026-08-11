@@ -451,6 +451,29 @@ const healthPlaybookOf = settings => settings.healthPlaybook || DEFAULT_HEALTH_P
  * Re-seeds accounts that already have a playbook (deliberate — see the 2026-08-11 spec). */
 const backfillCandidates = scored => scored.filter(a => !a.churn && (a.risk === "Yellow" || a.risk === "Red"));
 
+/* ------------------------------ task queue ------------------------------ */
+const PRIORITY_RANK = { High: 0, Medium: 1, Low: 2 };
+/* Buckets tasks for the work queue. `today` is an ISO YYYY-MM-DD string; comparing two
+ * UTC-midnight timestamps keeps this deterministic (daysUntil compares against Date.now(),
+ * which makes results depend on the time of day the suite happens to run). */
+const bucketTasks = (tasks, today) => {
+  const out = { overdue: [], today: [], week: [], later: [], done: [] };
+  const t0 = new Date(today).getTime();
+  tasks.forEach(t => {
+    if (t.status === "Done") { out.done.push(t); return; }
+    if (!t.due) { out.later.push(t); return; }        // guards imported/hand-edited rows
+    const d = Math.round((new Date(t.due).getTime() - t0) / DAY);
+    if (d < 0) out.overdue.push(t);
+    else if (d === 0) out.today.push(t);
+    else if (d <= 7) out.week.push(t);
+    else out.later.push(t);
+  });
+  const cmp = (a, b) => (a.due || "9999-99-99").localeCompare(b.due || "9999-99-99")
+    || (PRIORITY_RANK[a.priority] ?? 3) - (PRIORITY_RANK[b.priority] ?? 3);
+  Object.keys(out).forEach(k => out[k].sort(cmp));
+  return out;
+};
+
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
   if (!points.length) return null;
@@ -2730,7 +2753,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
