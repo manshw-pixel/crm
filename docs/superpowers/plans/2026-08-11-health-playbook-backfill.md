@@ -492,7 +492,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: `29 passed, 0 failed`. Do not proceed until you have seen that exact line.
+Expected: `30 passed, 0 failed`. Do not proceed until you have seen that exact line.
 
 - [ ] **Step 4: Commit**
 
