@@ -145,3 +145,27 @@ test("auto-seeder adds nothing after a backfill, and a same-day re-run is idempo
   assert(second === 9, "same-day re-run must not add tasks, got " + second);
   await browser.close();
 });
+
+test("a same-day re-run does not duplicate backfill events", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await confirmBackfill(page);
+  await page.waitForTimeout(600);
+  await confirmBackfill(page);
+  await page.waitForTimeout(600);
+  const r = await page.evaluate(() => {
+    const s = window.__store.getState();
+    const backfillEvents = id => (s.accounts.find(a => a.id === id).healthEvents || [])
+      .filter(ev => ev.source === "backfill");
+    return {
+      a1: backfillEvents("a1").length, a2: backfillEvents("a2").length, a3: backfillEvents("a3").length,
+      tasks: s.tasks.filter(t => t.healthPlaybook).length,
+    };
+  });
+  assert(r.a1 === 1, "a1 should have exactly one backfill event after two same-day runs, got " + r.a1);
+  assert(r.a2 === 1, "a2 should have exactly one backfill event after two same-day runs, got " + r.a2);
+  assert(r.a3 === 1, "a3 should have exactly one backfill event after two same-day runs, got " + r.a3);
+  assert(r.tasks === 9, "total tasks should still be 9, got " + r.tasks);
+  await browser.close();
+});

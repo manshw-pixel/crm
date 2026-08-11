@@ -2105,19 +2105,23 @@ function HealthBackfillCard({ st, dispatch, scored }) {
     const today = iso(Date.now());
     const hpb = healthPlaybookOf(st.settings);
     const existingIds = new Set(st.tasks.map(t => t.id));
-    let tasks = 0;
+    let tasks = 0, accounts = 0;
     cands.forEach(a => {
       const items = (hpb[a.risk] || []).filter(s => s.title.trim()).map(s => ({
         id: `hpb-${a.id}-${a.risk}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
         healthBand: a.risk, healthFor: today, title: "♥ " + s.title,
         due: isoPlus(today, s.dueDays), priority: s.priority, status: "Open", owner: a.csm || "" }))
         .filter(it => !existingIds.has(it.id));
+      const alreadyLogged = (a.healthEvents || []).some(ev =>
+        ev.date === today && ev.to === a.risk && ev.source === "backfill");
+      const event = alreadyLogged ? null : { date: today, from: "Green", to: a.risk, source: "backfill" };
+      if (items.length === 0 && !event) return;
       tasks += items.length;
+      accounts += 1;
       dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: a.risk,
-        healthPlaybookBand: a.risk, items,
-        event: { date: today, from: "Green", to: a.risk, source: "backfill" } });
+        healthPlaybookBand: a.risk, items, event });
     });
-    setDone({ accounts: cands.length, tasks });
+    setDone({ accounts, tasks });
     setConfirming(false);
   };
   return (
