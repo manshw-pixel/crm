@@ -473,6 +473,21 @@ const bucketTasks = (tasks, today) => {
   Object.keys(out).forEach(k => out[k].sort(cmp));
   return out;
 };
+/* Source of a task: the two seeders tag their own rows, anything untagged is hand-created. */
+const taskSource = t => (t.healthPlaybook ? "health" : t.playbook ? "renewal" : "manual");
+/* accountsById maps account id -> scored account (carries `risk` and `name`). */
+const filterTasks = (tasks, accountsById, { scope = "all", userName = "", source = "all", band = "all", q = "" } = {}) =>
+  tasks.filter(t => {
+    if (scope === "mine" && t.owner !== userName) return false;
+    if (source !== "all" && taskSource(t) !== source) return false;
+    const a = accountsById[t.accountId];
+    if (band !== "all" && (!a || a.risk !== band)) return false;
+    if (q.trim()) {
+      const hay = `${t.title || ""} ${a ? a.name : ""}`.toLowerCase();
+      if (!hay.includes(q.trim().toLowerCase())) return false;
+    }
+    return true;
+  });
 
 /* ----------------------------- tiny charts ----------------------------- */
 function Sparkline({ points, w = 220, h = 48 }) {
@@ -2753,7 +2768,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <App user={profile} />;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
