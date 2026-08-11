@@ -1,5 +1,5 @@
 import { test, assert } from "./framework.mjs";
-import { launch, seedAccount } from "./harness.mjs";
+import { launch, seedAccount, rootText } from "./harness.mjs";
 
 // Score inputs chosen to land in each band (same values the crossing tests rely on).
 const GREEN  = { usage: 90, sentiment: 90, tickets: 0,  nps: 60 };
@@ -34,5 +34,47 @@ test("backfillCandidates selects non-churned Yellow/Red only", async () => {
     return window.__health.backfillCandidates(scored).map(a => a.id);
   });
   assert(ids.join(",") === "a1,a2,a3", "wrong candidates: " + ids.join(","));
+  await browser.close();
+});
+
+const openSettings = async page => {
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.waitForFunction(() => document.querySelector("#root")?.textContent.includes("Health playbook"));
+};
+
+test("backfill card reports the never-seeded / already-seeded split", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  const txt = await rootText(page);
+  assert(/3 at-risk accounts/.test(txt), "candidate count missing: " + txt.slice(0, 400));
+  assert(/2 never seeded/.test(txt), "never-seeded count missing");
+  assert(/1 already ha(s|ve) a playbook/.test(txt), "already-seeded count missing");
+  await browser.close();
+});
+
+test("backfill requires confirmation and Cancel writes nothing", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await page.getByRole("button", { name: "Seed playbooks now" }).click();
+  await page.waitForFunction(() => document.querySelector("#root")?.textContent.includes("Confirm — seed 3 accounts?"));
+  const midway = await page.evaluate(() => window.__store.getState().tasks.filter(t => t.healthPlaybook).length);
+  assert(midway === 0, "clicking the button must not write before confirmation: " + midway);
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.waitForFunction(() => document.querySelector("#root")?.textContent.includes("Seed playbooks now"));
+  const after = await page.evaluate(() => window.__store.getState().tasks.filter(t => t.healthPlaybook).length);
+  assert(after === 0, "Cancel must not write: " + after);
+  await browser.close();
+});
+
+test("backfill card disables the button when nothing is at risk", async () => {
+  const { page, browser } = await launch(seedBook([seedAccount({ id: "a5", inputs: GREEN, healthBand: "Green" })]));
+  await wait(page);
+  await openSettings(page);
+  const txt = await rootText(page);
+  assert(/No at-risk accounts/.test(txt), "empty-state copy missing: " + txt.slice(0, 400));
+  const disabled = await page.getByRole("button", { name: "Seed playbooks now" }).isDisabled();
+  assert(disabled, "button should be disabled with zero candidates");
   await browser.close();
 });
