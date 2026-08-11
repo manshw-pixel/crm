@@ -112,3 +112,50 @@ test("filterTasks q matches task title and account name", async () => {
   assert(r.none === 0, "unmatched query should return nothing, got " + r.none);
   await browser.close();
 });
+
+// A book with tasks spread across every bucket. Dates are relative so the test never ages out.
+const rel = n => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
+export const QUEUE_SEED = () => {
+  const accts = [
+    seedAccount({ id: "a1", name: "Northwind Analytics", csm: "Priya", inputs: { usage: 15, sentiment: 15, tickets: 20, nps: -80 }, healthBand: "Red", healthPlaybookBand: "Red" }),
+    seedAccount({ id: "a2", name: "Bluepeak Logistics", csm: "Marco", inputs: { usage: 90, sentiment: 90, tickets: 0, nps: 60 }, healthBand: "Green" }),
+  ];
+  const tasks = [
+    { id: "q-over", accountId: "a1", title: "Escalate to exec", due: rel(-4), priority: "High", status: "Open", owner: "Priya", healthPlaybook: true },
+    { id: "q-today", accountId: "a1", title: "Call the champion", due: rel(0), priority: "High", status: "Open", owner: "Priya" },
+    { id: "q-week", accountId: "a2", title: "Send renewal quote", due: rel(3), priority: "Medium", status: "Open", owner: "Marco", playbook: true },
+    { id: "q-later", accountId: "a2", title: "Plan expansion", due: rel(20), priority: "Low", status: "Open", owner: "Priya" },
+    { id: "q-done", accountId: "a1", title: "Old finished thing", due: rel(-9), priority: "Low", status: "Done", owner: "Priya" },
+  ];
+  return `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: ${JSON.stringify(tasks)}.map(d => ({ id: d.id, data: d })), opportunities: [], team: [], settings: [] };
+window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+};
+export const openTasks = async page => {
+  await page.getByRole("button", { name: "Tasks" }).first().click();
+  await page.waitForFunction(() => /Overdue/.test(document.querySelector("#root")?.textContent || ""));
+};
+
+test("Tasks view groups tasks into due-date sections with counts", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  const txt = await rootText(page);
+  // Scope defaults to All for admins, so every seeded task is in view.
+  assert(/Overdue\s*\(?1\)?/.test(txt) || /Overdue.*1/.test(txt), "overdue count missing: " + txt.slice(0, 500));
+  assert(/Escalate to exec/.test(txt), "overdue task not rendered");
+  assert(/Call the champion/.test(txt), "today task not rendered");
+  assert(/Northwind Analytics/.test(txt), "account name not rendered on the row");
+  await browser.close();
+});
+
+test("Tasks view shows a distinct empty state when filters match nothing", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  await page.getByPlaceholder("Search tasks…").fill("zzzznotathing");
+  await page.waitForFunction(() => /No tasks match/.test(document.querySelector("#root")?.textContent || ""));
+  const txt = await rootText(page);
+  assert(/No tasks match these filters/.test(txt), "filtered empty state missing: " + txt.slice(0, 400));
+  assert(!/Nothing in the queue/.test(txt), "should not show the no-tasks-at-all state when tasks exist");
+  await browser.close();
+});
