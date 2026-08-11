@@ -66,8 +66,6 @@ const FTASKS = [
   { id: "r1", accountId: "a1", title: "▶ Send quote", owner: "Marco", playbook: true },
   { id: "m1", accountId: "a2", title: "Call champion", owner: "Priya" },
 ];
-const ids = arr => arr.map(x => x.id).join();
-
 test("filterTasks scope keeps only the user's tasks when mine", async () => {
   const { page, browser } = await bootHelpers();
   const r = await page.evaluate(a => ({
@@ -132,7 +130,7 @@ window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
 };
 export const openTasks = async page => {
   await page.getByRole("button", { name: "Tasks" }).first().click();
-  await page.waitForFunction(() => /Overdue/.test(document.querySelector("#root")?.textContent || ""));
+  await page.waitForFunction(() => /Work queue/.test(document.querySelector("#root")?.textContent || ""));
 };
 
 test("Tasks view groups tasks into due-date sections with counts", async () => {
@@ -198,5 +196,34 @@ test("the source filter hides health-playbook tasks when set to renewal", async 
   const txt = await rootText(page);
   assert(!/Escalate to exec/.test(txt), "health task should be hidden under the renewal filter");
   assert(/Send renewal quote/.test(txt), "renewal task should still be visible");
+  await browser.close();
+});
+
+test("a task referencing a deleted account still renders, with a dash for the account", async () => {
+  const accts = [seedAccount({ id: "a1", name: "Northwind Analytics", csm: "Priya" })];
+  const tasks = [
+    { id: "orphan", accountId: "does-not-exist", title: "Follow up with ghost account", due: rel(0), priority: "Medium", status: "Open", owner: "Priya" },
+  ];
+  const seed = `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: ${JSON.stringify(tasks)}.map(d => ({ id: d.id, data: d })), opportunities: [], team: [], settings: [] };
+window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  const txt = await rootText(page);
+  assert(/Follow up with ghost account/.test(txt), "orphaned task should still render: " + txt.slice(0, 400));
+  assert(/—/.test(txt), "row should show a dash where the account name would be");
+  await browser.close();
+});
+
+test("Tasks view shows the no-tasks-at-all empty state when the seed has zero tasks", async () => {
+  const accts = [seedAccount({ id: "a1", name: "Northwind Analytics", csm: "Priya", renewalDate: "2029-01-01" })];
+  const seed = `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };
+window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+  const { page, browser } = await launch(seed);
+  const noTasks = await page.evaluate(() => window.__store && window.__store.getState().tasks.length === 0);
+  assert(noTasks, "seed should genuinely have zero tasks");
+  await openTasks(page);
+  const txt = await rootText(page);
+  assert(/Nothing in the queue — tasks appear here as playbooks seed them\./.test(txt), "empty state missing: " + txt.slice(0, 400));
   await browser.close();
 });

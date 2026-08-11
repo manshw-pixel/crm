@@ -2045,6 +2045,36 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
 
 /* ------------------------------ tasks view ------------------------------ */
 const SOURCE_GLYPH = { health: "♥", renewal: "▶", manual: "" };
+function TaskRow({ t, a, dispatch, openAccount }) {
+  const [custom, setCustom] = useState(false);
+  const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
+  return (
+    <div className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+      <input type="checkbox" checked={t.status === "Done"} title="Complete"
+        onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+      <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
+      <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
+      <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
+      <select value="" title="Reschedule" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
+        onChange={e => {
+          const v = e.target.value;
+          if (v === "custom") { setCustom(true); return; }
+          if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
+        }}>
+        <option value="">⋯</option>
+        <option value="0">Today</option>
+        <option value="1">Tomorrow</option>
+        <option value="7">+1 week</option>
+        <option value="custom">Pick date…</option>
+      </select>
+      {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
+        onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
+        onBlur={() => setCustom(false)} />}
+      <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
+      <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
+    </div>
+  );
+}
 function TasksView({ st, scored, dispatch, user, openAccount }) {
   const [scope, setScope] = useState("all");
   const [source, setSource] = useState("all");
@@ -2058,36 +2088,6 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
   const SECTIONS = [
     ["overdue", "Overdue"], ["today", "Today"], ["week", "This week"], ["later", "Later"], ["done", "Done"],
   ];
-  const Row = ({ t }) => {
-    const [custom, setCustom] = useState(false);
-    const a = byId[t.accountId];
-    const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
-    return (
-      <div className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-        <input type="checkbox" checked={t.status === "Done"} title="Complete"
-          onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-        <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
-        <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
-        <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
-        <select value="" title="Reschedule" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
-          onChange={e => {
-            const v = e.target.value;
-            if (v === "custom") { setCustom(true); return; }
-            if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
-          }}>
-          <option value="">⋯</option>
-          <option value="0">Today</option>
-          <option value="1">Tomorrow</option>
-          <option value="7">+1 week</option>
-          <option value="custom">Pick date…</option>
-        </select>
-        {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
-          onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }} />}
-        <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
-        <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
-      </div>
-    );
-  };
   return (
     <Card title={`Work queue (${total})`} right={
       <div className="flex flex-wrap items-center gap-2">
@@ -2121,12 +2121,13 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
             <span className="text-xs text-slate-400">({buckets[key].length})</span>
             <span className="text-xs text-slate-400">{open[key] ? "▾" : "▸"}</span>
           </button>
-          {open[key] && buckets[key].map(t => <Row key={t.id} t={t} />)}
+          {open[key] && buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}
         </div>
       ))}
     </Card>
   );
 }
+
 /* ------------------------------- Renewals ------------------------------- */
 const RENEWAL_STAGES = ["Not started", "Outreach", "Quote sent", "Negotiating", "Committed", "At risk"];
 const RENEWAL_STAGE_STYLE = {
@@ -2781,12 +2782,12 @@ function App({ user }) {
       <main className={`${collapsed ? "ml-14" : "ml-52"} min-w-0 flex-1 px-6 py-5 transition-all`}>
       <div className="mb-5 flex items-center gap-3">
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
-        <div className="nm-inset ml-3 flex items-center gap-0.5 !rounded-lg p-0.5">
+        {view !== "Tasks" && <div className="nm-inset ml-3 flex items-center gap-0.5 !rounded-lg p-0.5">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
           ))}
-        </div>
+        </div>}
         <div className="relative ml-1">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
