@@ -2059,6 +2059,7 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
     ["overdue", "Overdue"], ["today", "Today"], ["week", "This week"], ["later", "Later"], ["done", "Done"],
   ];
   const Row = ({ t }) => {
+    const [custom, setCustom] = useState(false);
     const a = byId[t.accountId];
     const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
     return (
@@ -2068,6 +2069,20 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
         <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
         <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
         <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
+        <select value="" title="Reschedule" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
+          onChange={e => {
+            const v = e.target.value;
+            if (v === "custom") { setCustom(true); return; }
+            if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
+          }}>
+          <option value="">⋯</option>
+          <option value="0">Today</option>
+          <option value="1">Tomorrow</option>
+          <option value="7">+1 week</option>
+          <option value="custom">Pick date…</option>
+        </select>
+        {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
+          onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }} />}
         <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
         <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
       </div>

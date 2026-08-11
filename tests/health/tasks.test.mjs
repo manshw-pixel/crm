@@ -141,7 +141,7 @@ test("Tasks view groups tasks into due-date sections with counts", async () => {
   await openTasks(page);
   const txt = await rootText(page);
   // Scope defaults to All for admins, so every seeded task is in view.
-  assert(/Overdue\s*\(?1\)?/.test(txt) || /Overdue.*1/.test(txt), "overdue count missing: " + txt.slice(0, 500));
+  assert(/Overdue\s*\(1\)/.test(txt), "overdue count missing: " + txt.slice(0, 500));
   assert(/Escalate to exec/.test(txt), "overdue task not rendered");
   assert(/Call the champion/.test(txt), "today task not rendered");
   assert(/Northwind Analytics/.test(txt), "account name not rendered on the row");
@@ -157,5 +157,46 @@ test("Tasks view shows a distinct empty state when filters match nothing", async
   const txt = await rootText(page);
   assert(/No tasks match these filters/.test(txt), "filtered empty state missing: " + txt.slice(0, 400));
   assert(!/Nothing in the queue/.test(txt), "should not show the no-tasks-at-all state when tasks exist");
+  await browser.close();
+});
+
+test("ticking a task completes it and moves it to Done", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  await page.locator('input[type="checkbox"]').first().click();
+  await page.waitForFunction(() => window.__store.getState().tasks.find(t => t.id === "q-over").status === "Done");
+  const status = await page.evaluate(() => window.__store.getState().tasks.find(t => t.id === "q-over").status);
+  assert(status === "Done", "task should be Done, got " + status);
+  const overdueGone = await page.evaluate(() => !/Escalate to exec/.test(document.querySelector("#root")?.textContent || ""));
+  assert(overdueGone, "completed task should leave the Overdue section");
+  await browser.close();
+});
+
+test("rescheduling an overdue task moves it out of Overdue", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  const before = await page.evaluate(() => window.__store.getState().tasks.find(t => t.id === "q-over").due);
+  await page.locator('select[title="Reschedule"]').first().selectOption("7");
+  await page.waitForFunction(d => window.__store.getState().tasks.find(t => t.id === "q-over").due !== d, before);
+  const after = await page.evaluate(() => window.__store.getState().tasks.find(t => t.id === "q-over").due);
+  const expected = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+  assert(after === expected, `expected due ${expected}, got ${after}`);
+  await browser.close();
+});
+
+test("the source filter hides health-playbook tasks when set to renewal", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
+  await openTasks(page);
+  assert(/Escalate to exec/.test(await rootText(page)), "health task should be visible before filtering");
+  await page.locator('select[title="Source"]').selectOption("renewal");
+  await page.waitForFunction(() => !/Escalate to exec/.test(document.querySelector("#root")?.textContent || ""));
+  await page.getByRole("button", { name: /This week/ }).click();
+  await page.waitForFunction(() => /Send renewal quote/.test(document.querySelector("#root")?.textContent || ""));
+  const txt = await rootText(page);
+  assert(!/Escalate to exec/.test(txt), "health task should be hidden under the renewal filter");
+  assert(/Send renewal quote/.test(txt), "renewal task should still be visible");
   await browser.close();
 });
