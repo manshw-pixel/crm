@@ -19,7 +19,7 @@
 - Task titles must be prefixed `"♥ "` (heart + one space).
 - Synthetic events must carry `source: "backfill"`.
 - Settings is already admin-only via view gating (`crm.html:2379`, `crm.html:2634`). Do **not** add a second role check.
-- Run the full suite with `node run.mjs` from `tests/health/` (there is no npm test script). Expect the 20 pre-existing tests to keep passing at every commit.
+- Run the full suite with `node run.mjs` from `tests/health/` (there is no npm test script). Expect the 21 pre-existing tests to keep passing at every commit.
 - Commit after each task. Work on branch `feat/health-playbook-backfill`.
 
 ## File Structure
@@ -132,7 +132,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: `PASS backfillCandidates selects non-churned Yellow/Red only`, and `21 passed, 0 failed`.
+Expected: `PASS backfillCandidates selects non-churned Yellow/Red only`, and `22 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -215,7 +215,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: the three new tests FAIL (timeouts waiting for text / `getByRole` not finding "Seed playbooks now"). Tests from Task 1 and the 20 pre-existing tests still pass.
+Expected: the three new tests FAIL (timeouts waiting for text / `getByRole` not finding "Seed playbooks now"). Tests from Task 1 and the 21 pre-existing tests still pass.
 
 - [ ] **Step 3: Add the component and thread the `scored` prop**
 
@@ -296,7 +296,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: `24 passed, 0 failed`.
+Expected: `25 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -436,7 +436,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: `27 passed, 0 failed`.
+Expected: `28 passed, 0 failed`.
 
 - [ ] **Step 5: Commit**
 
@@ -492,7 +492,7 @@ Run from `tests/health/`:
 node run.mjs
 ```
 
-Expected: `28 passed, 0 failed`. Do not proceed until you have seen that exact line.
+Expected: `29 passed, 0 failed`. Do not proceed until you have seen that exact line.
 
 - [ ] **Step 4: Commit**
 
