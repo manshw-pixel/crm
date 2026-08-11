@@ -609,7 +609,7 @@ const StatSm = ({ label, value, sub, tone, children }) => (
   </div>
 );
 const Btn = ({ children, onClick, kind = "default", type = "button", disabled }) => (
-  <button type={type} onClick={onClick} disabled={disabled} className={`px-3.5 py-1.5 text-xs font-bold ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
+  <button type={type} onClick={onClick} disabled={disabled} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
 const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
 const Select = ({ options, ...p }) => (
@@ -2107,17 +2107,26 @@ function HealthBackfillCard({ st, dispatch, scored }) {
     const existingIds = new Set(st.tasks.map(t => t.id));
     let tasks = 0, accounts = 0;
     cands.forEach(a => {
+      // Task shape mirrors the auto-seeder's construction at the SEED_HEALTH_PLAYBOOK
+      // dispatch in the health-band-crossing effect below — id shape is load-bearing
+      // for both dedup guards, keep them in sync.
       const items = (hpb[a.risk] || []).filter(s => s.title.trim()).map(s => ({
         id: `hpb-${a.id}-${a.risk}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
         healthBand: a.risk, healthFor: today, title: "♥ " + s.title,
         due: isoPlus(today, s.dueDays), priority: s.priority, status: "Open", owner: a.csm || "" }))
         .filter(it => !existingIds.has(it.id));
-      const alreadyLogged = (a.healthEvents || []).some(ev =>
-        ev.date === today && ev.to === a.risk && ev.source === "backfill");
+      // Dedupe against ANY same-day event landing on this band, not just backfill-tagged
+      // ones — if the auto-seeder already logged a real decline into this band today,
+      // don't fabricate a second one. A never-seeded account has no such event, so a
+      // legitimate first seed is never suppressed.
+      const alreadyLogged = (a.healthEvents || []).some(ev => ev.date === today && ev.to === a.risk);
       const event = alreadyLogged ? null : { date: today, from: "Green", to: a.risk, source: "backfill" };
       if (items.length === 0 && !event) return;
       tasks += items.length;
       accounts += 1;
+      // Deliberate re-arm: an account that recovered Red→Yellow keeps healthPlaybookBand
+      // "Red" (the auto-seeder only clears it on recovery to Green). Overwriting it here
+      // with the current band re-arms a future Red auto-seed. Intended, not an oversight.
       dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: a.risk,
         healthPlaybookBand: a.risk, items, event });
     });
@@ -2140,7 +2149,9 @@ function HealthBackfillCard({ st, dispatch, scored }) {
       ) : (
         <Btn disabled={cands.length === 0} onClick={() => { setDone(null); setConfirming(true); }}>Seed playbooks now</Btn>
       )}
-      {done && <p className="mt-2 text-sm font-semibold text-emerald-600">{`Seeded ${done.accounts} accounts (${done.tasks} tasks).`}</p>}
+      {done && <p className="mt-2 text-sm font-semibold text-emerald-600">
+        {done.accounts === 0 ? "Already up to date — nothing to seed." : `Seeded ${done.accounts} accounts (${done.tasks} tasks).`}
+      </p>}
     </div>
   );
 }
@@ -2574,6 +2585,8 @@ function App({ user }) {
       let items = [], pbBand = a.healthPlaybookBand;
       if (worsening && (cur === "Yellow" || cur === "Red") &&
           (pbBand === undefined || BAND_RANK[cur] > BAND_RANK[pbBand])) {
+        // Task shape mirrors HealthBackfillCard's construction — see the cross-reference
+        // comment there. Id shape is load-bearing for both dedup guards, keep them in sync.
         items = (hpb[cur] || []).filter(s => s.title.trim()).map(s => ({
           id: `hpb-${a.id}-${cur}-${today}-${s.id}`, accountId: a.id, healthPlaybook: true,
           healthBand: cur, healthFor: today, title: "♥ " + s.title,

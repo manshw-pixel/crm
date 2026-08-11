@@ -82,7 +82,10 @@ test("backfill card disables the button when nothing is at risk", async () => {
 const confirmBackfill = async page => {
   await page.getByRole("button", { name: "Seed playbooks now" }).click();
   await page.getByRole("button", { name: /^Confirm — seed \d+ accounts\?$/ }).click();
-  await page.waitForFunction(() => /Seeded \d+ accounts/.test(document.querySelector("#root")?.textContent || ""));
+  await page.waitForFunction(() => {
+    const txt = document.querySelector("#root")?.textContent || "";
+    return /Seeded \d+ accounts/.test(txt) || /Already up to date/.test(txt);
+  });
 };
 
 test("backfill seeds tasks for every at-risk account and skips the rest", async () => {
@@ -167,6 +170,25 @@ test("a same-day re-run does not duplicate backfill events", async () => {
   assert(r.a2 === 1, "a2 should have exactly one backfill event after two same-day runs, got " + r.a2);
   assert(r.a3 === 1, "a3 should have exactly one backfill event after two same-day runs, got " + r.a3);
   assert(r.tasks === 9, "total tasks should still be 9, got " + r.tasks);
+  await browser.close();
+});
+
+test("backfill does not fabricate a duplicate event when the auto-seeder already logged a real decline today", async () => {
+  // Stored healthBand is Yellow but inputs compute to Red, so on load the auto-seeder
+  // fires a genuine Yellow -> Red crossing event before the backfill ever runs.
+  const acct = seedAccount({ id: "a6", name: "Just Declined", inputs: RED, healthBand: "Yellow" });
+  const { page, browser } = await launch(seedBook([acct]));
+  await wait(page);
+  await page.waitForTimeout(600); // let the auto-seeder's crossing effect settle
+  await openSettings(page);
+  await confirmBackfill(page);
+  const r = await page.evaluate(() => {
+    const a = window.__store.getState().accounts.find(a => a.id === "a6");
+    const today = new Date().toISOString().slice(0, 10);
+    return (a.healthEvents || []).filter(ev => ev.date === today && ev.to === "Red");
+  });
+  assert(r.length === 1, "expected exactly one event for today targeting Red, got " + r.length + ": " + JSON.stringify(r));
+  assert(r[0].from === "Yellow" && !("source" in r[0]), "expected the genuine auto-seeder event, got " + JSON.stringify(r[0]));
   await browser.close();
 });
 
