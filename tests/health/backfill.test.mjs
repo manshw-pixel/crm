@@ -78,3 +78,70 @@ test("backfill card disables the button when nothing is at risk", async () => {
   assert(disabled, "button should be disabled with zero candidates");
   await browser.close();
 });
+
+const confirmBackfill = async page => {
+  await page.getByRole("button", { name: "Seed playbooks now" }).click();
+  await page.getByRole("button", { name: /^Confirm — seed \d+ accounts\?$/ }).click();
+  await page.waitForFunction(() => /Seeded \d+ accounts/.test(document.querySelector("#root")?.textContent || ""));
+};
+
+test("backfill seeds tasks for every at-risk account and skips the rest", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await confirmBackfill(page);
+  const r = await page.evaluate(() => {
+    const s = window.__store.getState();
+    const byAcct = id => s.tasks.filter(t => t.healthPlaybook && t.accountId === id);
+    return {
+      a1: byAcct("a1").map(t => t.id), a2: byAcct("a2").length, a3: byAcct("a3").length,
+      a4: byAcct("a4").length, a5: byAcct("a5").length,
+      a1owner: byAcct("a1")[0]?.owner, a1title: byAcct("a1")[0]?.title,
+      a1status: byAcct("a1")[0]?.status,
+    };
+  });
+  assert(r.a1.length === 3 && r.a1.every(id => /^hpb-a1-Red-\d{4}-\d{2}-\d{2}-hr\d$/.test(id)), "a1 task ids wrong: " + r.a1);
+  assert(r.a2 === 3, "a2 should get 3 Yellow tasks, got " + r.a2);
+  assert(r.a3 === 3, "already-seeded a3 should be re-seeded, got " + r.a3);
+  assert(r.a4 === 0, "churned a4 must be skipped, got " + r.a4);
+  assert(r.a5 === 0, "healthy a5 must be skipped, got " + r.a5);
+  assert(r.a1owner === "Priya", "task owner should be the CSM, got " + r.a1owner);
+  assert(r.a1title.startsWith("♥ "), "task title not marked: " + r.a1title);
+  assert(r.a1status === "Open", "task status should be Open, got " + r.a1status);
+  await browser.close();
+});
+
+test("backfill writes one synthetic event per candidate, tagged backfill", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await confirmBackfill(page);
+  const r = await page.evaluate(() => {
+    const s = window.__store.getState();
+    const ev = id => (s.accounts.find(a => a.id === id).healthEvents || []);
+    return { a1: ev("a1"), a3: ev("a3").length, a4: ev("a4").length, a5: ev("a5").length,
+      a1pb: s.accounts.find(a => a.id === "a1").healthPlaybookBand };
+  });
+  assert(r.a1.length === 1, "a1 should have exactly one event, got " + r.a1.length);
+  assert(r.a1[0].from === "Green" && r.a1[0].to === "Red", "a1 event bands wrong: " + JSON.stringify(r.a1[0]));
+  assert(r.a1[0].source === "backfill", "a1 event not tagged: " + JSON.stringify(r.a1[0]));
+  assert(r.a3 === 1, "a3 should gain one event, got " + r.a3);
+  assert(r.a4 === 0 && r.a5 === 0, "churned/healthy accounts must gain no events");
+  assert(r.a1pb === "Red", "a1 healthPlaybookBand should be Red, got " + r.a1pb);
+  await browser.close();
+});
+
+test("auto-seeder adds nothing after a backfill, and a same-day re-run is idempotent", async () => {
+  const { page, browser } = await launch(seedBook(MIXED));
+  await wait(page);
+  await openSettings(page);
+  await confirmBackfill(page);
+  await page.waitForTimeout(600);   // let the auto-seeder effect re-run on the new bands
+  const first = await page.evaluate(() => window.__store.getState().tasks.filter(t => t.healthPlaybook).length);
+  assert(first === 9, "expected 9 tasks after backfill + settled effects, got " + first);
+  await confirmBackfill(page);
+  await page.waitForTimeout(600);
+  const second = await page.evaluate(() => window.__store.getState().tasks.filter(t => t.healthPlaybook).length);
+  assert(second === 9, "same-day re-run must not add tasks, got " + second);
+  await browser.close();
+});
