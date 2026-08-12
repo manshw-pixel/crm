@@ -144,3 +144,59 @@ test("RESTORE_SNAPSHOT undoes a bulk churn back to Active", async () => {
   assert(after.every(a => a.audit === 0), "audit entries should be rolled back with the snapshot");
   await browser.close();
 });
+
+test("select-all covers only the filtered rows", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3"); // Accounts view
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    const setVal = (el, v) => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    setVal(document.querySelector('input[placeholder^="Search"]'), "Alpha");
+    await new Promise(r => setTimeout(r, 100));
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    return document.querySelector("[data-bulkbar]").textContent;
+  });
+  assert(res.includes("1 selected"), `expected "1 selected" with a filter applied, got: ${res}`);
+  await browser.close();
+});
+
+test("selecting a parent does not select its sub-accounts", async () => {
+  const { page, browser } = await launch(cascadeSeed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector('[data-select="p1"]');
+  const res = await page.evaluate(async () => {
+    document.querySelector('[data-select="p1"]').click();
+    await new Promise(r => setTimeout(r, 100));
+    return { bar: document.querySelector("[data-bulkbar]").textContent,
+      subChecked: document.querySelector('[data-select="s1"]').checked };
+  });
+  assert(res.bar.includes("1 selected"), `expected 1 selected, got: ${res.bar}`);
+  assert(res.subChecked === false, "sub-account was implicitly selected");
+  await browser.close();
+});
+
+test("changing a filter clears the selection", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const gone = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    const setVal = (el, v) => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    };
+    setVal(document.querySelector('input[placeholder^="Search"]'), "Alpha");
+    await new Promise(r => setTimeout(r, 150));
+    return !document.querySelector("[data-bulkbar]");
+  });
+  assert(gone === true, "selection survived a filter change");
+  await browser.close();
+});
