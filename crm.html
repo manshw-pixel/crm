@@ -240,6 +240,24 @@ function auditChanges(a, patch, by, source) {
 }
 const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit || []), ...entries] } : a;
 
+/* Prior-state capture for undo. `ids` are account ids; the snapshot also carries every
+   cascaded row DELETE_ACCOUNT would remove, plus the original parentId of each sub whose
+   parent is being deleted (DELETE_ACCOUNT nulls those out). */
+function snapshotFor(state, ids) {
+  const set = new Set(ids);
+  const touches = r => set.has(r.accountId);
+  const parentIds = {};
+  state.accounts.filter(a => a.parentId && set.has(a.parentId)).forEach(a => { parentIds[a.id] = a.parentId; });
+  return {
+    accounts: state.accounts.filter(a => set.has(a.id) || parentIds[a.id]).map(a => ({ ...a })),
+    contacts: state.contacts.filter(touches).map(r => ({ ...r })),
+    activities: state.activities.filter(touches).map(r => ({ ...r })),
+    tasks: state.tasks.filter(touches).map(r => ({ ...r })),
+    opportunities: state.opportunities.filter(touches).map(r => ({ ...r })),
+    parentIds,
+  };
+}
+
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => {
@@ -296,6 +314,25 @@ function persist(action, next) {
       return;
     }
     case "BULK_ADD_TASKS": return action.items.forEach(t => up("tasks", t));
+    case "BULK_CHURN": {
+      const ids = new Set(action.ids);
+      next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
+      return;
+    }
+    case "BULK_DELETE":
+      action.ids.forEach(id => {
+        sb.from("accounts").delete().eq("id", id).then(({ error }) => error && dbError("accounts", error));
+        ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
+          sb.from(t).delete().eq("data->>accountId", id).then(({ error }) => error && dbError(t, error)));
+      });
+      next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
+      return;
+    case "RESTORE_SNAPSHOT": {
+      const s = action.snapshot;
+      s.accounts.forEach(a => up("accounts", a));
+      ["contacts", "activities", "tasks", "opportunities"].forEach(t => s[t].forEach(r => up(t, r)));
+      return;
+    }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
@@ -422,6 +459,41 @@ function reducer(state, action) {
       }) };
     }
     case "BULK_ADD_TASKS": return { ...state, tasks: [...state.tasks, ...action.items] };
+    case "BULK_CHURN": {
+      const ids = new Set(action.ids);
+      return { ...state, accounts: state.accounts.map(a => ids.has(a.id)
+        ? withAudit({ ...a, contractStatus: "Churned",
+            churn: { date: action.date, reason: action.reason, note: action.note || "", arr: a.arr, currency: a.currency, by: action.by } },
+            [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Churned", by: action.by, source: "churn" }])
+        : a) };
+    }
+    case "BULK_DELETE": {
+      const ids = new Set(action.ids);
+      const gone = r => ids.has(r.accountId);
+      return { ...state,
+        // _orphaned marks subs whose parent was just deleted so persist() writes them back
+        accounts: state.accounts.filter(a => !ids.has(a.id))
+          .map(a => (a.parentId && ids.has(a.parentId)) ? { ...a, parentId: null, _orphaned: true } : a),
+        contacts: state.contacts.filter(r => !gone(r)),
+        activities: state.activities.filter(r => !gone(r)),
+        tasks: state.tasks.filter(r => !gone(r)),
+        opportunities: state.opportunities.filter(r => !gone(r)) };
+    }
+    case "RESTORE_SNAPSHOT": {
+      const merge = (cur, saved) => {
+        const byId = new Map(saved.map(r => [r.id, r]));
+        const kept = cur.map(r => byId.has(r.id) ? byId.get(r.id) : r);
+        const present = new Set(cur.map(r => r.id));
+        return [...kept, ...saved.filter(r => !present.has(r.id))];
+      };
+      const s = action.snapshot;
+      return { ...state,
+        accounts: merge(state.accounts, s.accounts),
+        contacts: merge(state.contacts, s.contacts),
+        activities: merge(state.activities, s.activities),
+        tasks: merge(state.tasks, s.tasks),
+        opportunities: merge(state.opportunities, s.opportunities) };
+    }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
@@ -2699,6 +2771,7 @@ function App({ user }) {
     return next;
   }), []);
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });
+  useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
