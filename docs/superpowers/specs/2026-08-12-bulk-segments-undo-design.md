@@ -196,6 +196,64 @@ via `window.__seed`, drive headless Edge via `channel: "msedge"`):
 Date comparisons in tests compare ISO strings textually, never via `Date`
 round-trips — UTC-vs-local has caused failures here twice.
 
+## 7. Regression surface
+
+The change is structurally additive — nothing existing is deleted or rewritten.
+Four places nonetheless touch current behavior and must be handled explicitly.
+
+### 7.1 The `initialFilter` effect (highest risk)
+
+Today the effect sets 5 fields (`risk`, `showChurned`, `onlyChurned`, `billing`,
+`qbrDue`) and deliberately leaves `q`, `tier`, `csm`, `renew` and `sort`
+untouched, so a dashboard card click layers a risk filter on top of whatever the
+user already typed.
+
+Extending it to carry all 10 fields for segments **must preserve keys the
+incoming filter object does not mention**. Applying a saved segment sets all 10;
+a dashboard card click still sets only the keys it passes. If this is
+implemented as an unconditional reset, clicking a dashboard card silently wipes
+the search box.
+
+Required test: type a search term, click a dashboard risk card, assert the
+search term survives.
+
+### 7.2 Escape key collision
+
+Line 2649 registers an App-level `Escape → setAcctId(null)` that closes the
+account detail view. Any Escape-to-close added to `BulkDialog` or other modals
+must call `e.stopPropagation()`, following the command palette at line 2590.
+Without it, one Escape closes the dialog *and* navigates out of the account.
+
+Required test: open a bulk dialog from inside an account, press Escape, assert
+the dialog closes and the account detail is still open.
+
+### 7.3 `alert()` → toast changes timing, not logic
+
+`alert()` blocks the page; a toast does not. All 8 sites were checked — none
+depend on the blocking pause for control flow; each failure path `return`s or
+calls `setBusy(false)` immediately after. The user-visible difference is that a
+failure no longer halts the page, which is why error toasts persist until
+dismissed.
+
+### 7.4 Account table layout
+
+The new checkbox column shifts column widths and the sub-account indentation.
+Visual only; the rollup math and grouping logic are untouched.
+
+### Safe by construction
+
+- `settings.segments` needs no migration: line 267 merges saved settings
+  per-key with the `saved.X || {}` pattern, so existing team data and older JSON
+  exports load unchanged with `segments` defaulting to `[]`.
+- Bulk actions reuse the single-account transforms rather than reimplementing
+  them, so the ARR audit trail and churn analytics cannot diverge between paths.
+
+### Merge gate
+
+All **13 existing** test files in `tests/health/` must pass unchanged, alongside
+the 3 new ones. The existing suite is the regression guarantee, not the new
+tests.
+
 ## Delivery
 
 One feature branch, one PR against `master`, verified with the E2E harness
