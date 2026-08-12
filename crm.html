@@ -290,6 +290,12 @@ function persist(action, next) {
     case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); return t && up("tasks", t); }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); return x && up("activities", x); }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT": case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = next.accounts.find(x => x.id === action.id); return a && up("accounts", a); }
+    case "BULK_PATCH_ACCOUNTS": {
+      const ids = new Set(action.ids);
+      next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
+      return;
+    }
+    case "BULK_ADD_TASKS": return action.items.forEach(t => up("tasks", t));
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
       sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
@@ -404,6 +410,18 @@ function reducer(state, action) {
         return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }
+    case "BULK_PATCH_ACCOUNTS": {
+      const ids = new Set(action.ids);
+      return { ...state, accounts: state.accounts.map(a => {
+        if (!ids.has(a.id)) return a;
+        // one audit entry per genuinely-changed field, matching EDIT_ACCOUNT's shape
+        const entries = Object.entries(action.patch)
+          .filter(([f, v]) => a[f] !== v)
+          .map(([f, v]) => ({ id: uid(), date: iso(Date.now()), field: f, from: a[f], to: v, by: action.by, source: "bulk" }));
+        return withAudit({ ...a, ...action.patch }, entries);
+      }) };
+    }
+    case "BULK_ADD_TASKS": return { ...state, tasks: [...state.tasks, ...action.items] };
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
