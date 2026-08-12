@@ -52,7 +52,7 @@
  * automatically.
  * ============================================================================
  */
-const { useState, useEffect, useReducer, useMemo, useRef, useCallback } = React;
+const { useState, useEffect, useReducer, useMemo, useRef, useCallback, useContext } = React;
 
 /* ==================== TEAM CONFIG — EDIT THESE TWO LINES ====================
  * 1. Create a free project at https://supabase.com
@@ -242,7 +242,11 @@ const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit |
 
 /* ------------------------------ store (Supabase) ------------------------------ */
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
-const dbError = (where, error) => { console.error(where, error); alert(`Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`); };
+const dbError = (where, error) => {
+  console.error(where, error);
+  const text = `Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`;
+  if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
+};
 
 async function fetchAll() {
   const res = await Promise.all([
@@ -656,6 +660,49 @@ const Select = ({ options, ...p }) => (
   </select>
 );
 
+/* ------------------------------ toasts ------------------------------ */
+const ToastCtx = React.createContext(() => {});
+const useToast = () => useContext(ToastCtx);
+const TOAST_TONE = {
+  info: "border-slate-300 text-slate-800",
+  success: "border-emerald-300 text-emerald-800",
+  error: "border-rose-300 text-rose-700",
+};
+function ToastProvider({ children }) {
+  const [toasts, setToasts] = useState([]);
+  const timers = useRef({});
+  const dismiss = useCallback(id => {
+    clearTimeout(timers.current[id]); delete timers.current[id];
+    setToasts(ts => ts.filter(t => t.id !== id));
+  }, []);
+  const pushToast = useCallback(({ text, tone = "info", undo }) => {
+    const id = uid();
+    // errors never auto-dismiss: a failed write may not have reached the team
+    setToasts(ts => [...ts, { id, text, tone, undo }].slice(-3));
+    if (tone !== "error") timers.current[id] = setTimeout(() => dismiss(id), undo ? 10000 : 5000);
+    return id;
+  }, [dismiss]);
+  useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
+  useEffect(() => { window.__toast = pushToast; }, [pushToast]);
+  return (
+    <ToastCtx.Provider value={pushToast}>
+      {children}
+      <div className="fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2" aria-live="polite">
+        {toasts.map(t => (
+          <div key={t.id} data-toast data-tone={t.tone} role={t.tone === "error" ? "alert" : "status"}
+               className={`nm flex items-start gap-2 border-l-4 p-3 text-sm ${TOAST_TONE[t.tone]}`}>
+            <span className="flex-1 whitespace-pre-line">{t.text}</span>
+            {t.undo && <button data-toast-undo className="font-bold text-indigo-600 hover:underline"
+              onClick={() => { t.undo(); dismiss(t.id); }}>Undo</button>}
+            <button aria-label="Dismiss notification" className="text-slate-400 hover:text-slate-700"
+              onClick={() => dismiss(t.id)}>✕</button>
+          </div>
+        ))}
+      </div>
+    </ToastCtx.Provider>
+  );
+}
+
 /* ------------------------- attachments ------------------------- */
 const MAX_FILE_MB = 10;
 async function uploadFiles(fileList, accountId) {
@@ -763,6 +810,7 @@ function docExpiryBadge(doc) {
   return null;
 }
 function DocumentsCard({ a, dispatch, user }) {
+  const toast = useToast();
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
@@ -788,7 +836,7 @@ function DocumentsCard({ a, dispatch, user }) {
                   <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
                     onClick={async () => {
                       if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
-                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { alert("Could not delete file: " + error.message); return; } }
+                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { toast({ text: "Could not delete file: " + error.message, tone: "error" }); return; } }
                       dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
                     }}>✕</button>
                 </div>
@@ -803,6 +851,7 @@ function DocumentsCard({ a, dispatch, user }) {
 }
 
 function LogActivityForm({ acct, dispatch, onDone, existing }) {
+  const toast = useToast();
   const [type, setType] = useState(existing ? existing.type : "call");
   const [summary, setSummary] = useState(existing ? existing.summary : "");
   const [details, setDetails] = useState(existing ? existing.details || "" : "");
@@ -819,7 +868,7 @@ function LogActivityForm({ acct, dispatch, onDone, existing }) {
         if (existing) dispatch({ type: "EDIT_ACTIVITY", id: existing.id, patch: { type, summary: summary.trim(), details: details.trim(), attachments } });
         else dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: acct.id, type, date: iso(Date.now()), summary: summary.trim(), details: details.trim(), attachments } });
         onDone();
-      } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
+      } catch (ex) { toast({ text: "Upload failed: " + ex.message, tone: "error" }); setBusy(false); }
     }}>
       <div className="flex flex-wrap items-center gap-2">
         {existing && <span className="text-xs font-bold text-slate-500">Editing activity from {fmtDate(existing.date)}</span>}
@@ -838,6 +887,7 @@ function LogActivityForm({ acct, dispatch, onDone, existing }) {
   );
 }
 function AddTaskForm({ acct, dispatch, onDone, team = [], user, existing }) {
+  const toast = useToast();
   const [title, setTitle] = useState(existing ? existing.title : "");
   const [due, setDue] = useState(existing ? existing.due : addDays(7));
   const [priority, setPriority] = useState(existing ? existing.priority : "Medium");
@@ -857,7 +907,7 @@ function AddTaskForm({ acct, dispatch, onDone, team = [], user, existing }) {
         if (existing) dispatch({ type: "EDIT_TASK", id: existing.id, patch: { title: title.trim(), due, priority, owner, details: details.trim(), attachments } });
         else dispatch({ type: "ADD_TASK", item: { id: uid(), accountId: acct.id, title: title.trim(), due, priority, status: "Open", owner, details: details.trim(), attachments } });
         onDone();
-      } catch (ex) { alert("Upload failed: " + ex.message); setBusy(false); }
+      } catch (ex) { toast({ text: "Upload failed: " + ex.message, tone: "error" }); setBusy(false); }
     }}>
       <div className="flex flex-wrap items-center gap-2">
         {existing && <span className="text-xs font-bold text-slate-500">Editing task</span>}
@@ -2312,6 +2362,7 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
 
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user, scored }) {
+  const toast = useToast();
   const w = st.settings.weights;
   const rates = st.settings.rates;
   const total = Object.values(w).reduce((a, b) => a + b, 0);
@@ -2324,12 +2375,12 @@ function Settings({ st, dispatch, user, scored }) {
   };
   const bulkReplace = async state => {
     try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state: { ...state, team: st.team } }); }
-    catch (ex) { alert("Bulk update failed: " + ex.message); }
+    catch (ex) { toast({ text: "Bulk update failed: " + ex.message, tone: "error" }); }
   };
   const doImport = e => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
-    r.onload = async () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; await bulkReplace(s); alert("Imported for the whole team."); } catch (ex) { alert(ex && ex.message ? "Import failed: " + ex.message : "Invalid JSON file."); } };
+    r.onload = async () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; await bulkReplace(s); toast({ text: "Imported for the whole team.", tone: "success" }); } catch (ex) { toast({ text: ex && ex.message ? "Import failed: " + ex.message : "Invalid JSON file.", tone: "error" }); } };
     r.readAsText(f); e.target.value = "";
   };
   return (
@@ -2613,6 +2664,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
 }
 const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 function App({ user }) {
+  const toast = useToast();
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
@@ -2631,7 +2683,7 @@ function App({ user }) {
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
-    .catch(e => { console.error(e); alert("Could not load shared data: " + e.message); }), []);
+    .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
   useEffect(() => { refetch(); }, [refetch]);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
@@ -2847,13 +2899,13 @@ function Root() {
   useEffect(() => {
     if (!session) { setProfile(null); return; }
     sb.from("profiles").select("id,name,role").eq("id", session.user.id).single()
-      .then(({ data, error }) => error ? alert("Could not load your profile: " + error.message) : setProfile(data));
+      .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : setProfile(data));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
-  return <App user={profile} />;
+  return <ToastProvider><App user={profile} /></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
