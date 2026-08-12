@@ -314,6 +314,8 @@ function persist(action, next) {
       return;
     }
     case "BULK_ADD_TASKS": return action.items.forEach(t => up("tasks", t));
+    case "BULK_DELETE_TASKS":
+      return action.ids.forEach(id => sb.from("tasks").delete().eq("id", id).then(({ error }) => error && dbError("tasks", error)));
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
       next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
@@ -459,6 +461,7 @@ function reducer(state, action) {
       }) };
     }
     case "BULK_ADD_TASKS": return { ...state, tasks: [...state.tasks, ...action.items] };
+    case "BULK_DELETE_TASKS": { const ids = new Set(action.ids); return { ...state, tasks: state.tasks.filter(t => !ids.has(t.id)) }; }
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
       return { ...state, accounts: state.accounts.map(a => ids.has(a.id)
@@ -740,8 +743,8 @@ const StatSm = ({ label, value, sub, tone, children }) => (
     {children || <div className={`text-lg font-extrabold ${tone || "text-slate-700"}`}>{value}</div>}
   </div>
 );
-const Btn = ({ children, onClick, kind = "default", type = "button", disabled }) => (
-  <button type={type} onClick={onClick} disabled={disabled} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
+const Btn = ({ children, onClick, kind = "default", type = "button", disabled, ...rest }) => (
+  <button type={type} onClick={onClick} disabled={disabled} {...rest} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
 const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
 const Select = ({ options, ...p }) => (
@@ -1803,6 +1806,104 @@ function IntegrationsCard({ st, dispatch, user }) {
   );
 }
 
+/* ------------------------------ bulk actions ------------------------------ */
+const BULK_TITLE = { csm: "Reassign CSM", tier: "Change tier", task: "Add task to each", churn: "Churn accounts", delete: "Delete accounts" };
+function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
+  const toast = useToast();
+  const names = team.map(t => t.name).filter(Boolean);
+  const [csmVal, setCsmVal] = useState(names[0] || user.name);
+  const [tierVal, setTierVal] = useState("Mid");
+  const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
+  const [owner, setOwner] = useState(user.name);
+  const [reason, setReason] = useState(""); const [note, setNote] = useState("");
+  const [date, setDate] = useState(iso(Date.now()));
+  const [confirmText, setConfirmText] = useState("");
+  const ref = useRef();
+  useEffect(() => { ref.current?.focus(); }, []);
+  // stopPropagation is required: App registers a window-level Escape that closes the
+  // account detail view, so an unguarded Escape would close the dialog AND navigate.
+  const onKeyDown = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+  useEffect(() => {
+    const h = e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } };
+    window.addEventListener("keydown", h, true); // capture phase: runs before App's handler
+    return () => window.removeEventListener("keydown", h, true);
+  }, [onClose]);
+
+  const ready = kind === "churn" ? !!reason
+    : kind === "delete" ? confirmText === "DELETE"
+    : kind === "task" ? !!title.trim()
+    : true;
+
+  const submit = () => {
+    if (!ready) return;
+    // a selection can go stale between when it was made and when this button is clicked
+    // (realtime refetch may have dropped a row out from under it) -- never act on ids
+    // that no longer exist.
+    const state = window.__store.getState();
+    const live = new Set(state.accounts.map(a => a.id));
+    const liveIds = ids.filter(id => live.has(id));
+    const n = liveIds.length;
+    if (n === 0) { onClose(); return; }
+    if (kind === "task") {
+      const items = liveIds.map(id => ({ id: uid(), accountId: id, title: title.trim(), due, owner, status: "Open" }));
+      dispatch({ type: "BULK_ADD_TASKS", items });
+      const created = new Set(items.map(t => t.id));
+      toast({ text: `Added a task to ${n} account${n === 1 ? "" : "s"}.`, tone: "success",
+        undo: () => dispatch({ type: "BULK_DELETE_TASKS", ids: [...created] }) });
+    } else {
+      const snapshot = snapshotFor(state, liveIds);
+      if (kind === "csm") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { csm: csmVal }, by: user.name });
+      else if (kind === "tier") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { tier: tierVal }, by: user.name });
+      else if (kind === "churn") dispatch({ type: "BULK_CHURN", ids: liveIds, reason, note, date, by: user.name });
+      else if (kind === "delete") dispatch({ type: "BULK_DELETE", ids: liveIds });
+      const verb = { csm: "Reassigned", tier: "Retiered", churn: "Churned", delete: "Deleted" }[kind];
+      toast({ text: `${verb} ${n} account${n === 1 ? "" : "s"}.`, tone: "success",
+        undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+    }
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
+      <div data-bulkdialog role="dialog" aria-modal="true" aria-label={BULK_TITLE[kind]}
+           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()} onKeyDown={onKeyDown}>
+        <div className="mb-3 flex items-center">
+          <h3 className="flex-1 text-sm font-bold text-slate-800">{BULK_TITLE[kind]} · {ids.length} account{ids.length === 1 ? "" : "s"}</h3>
+          <button aria-label="Close dialog" className="text-slate-400 hover:text-slate-700" onClick={onClose}>✕</button>
+        </div>
+        <div className="flex flex-col gap-2">
+          {kind === "csm" && <label className="text-xs text-slate-700">New CSM
+            <Select value={csmVal} onChange={e => setCsmVal(e.target.value)} options={names.length ? names : [user.name]} /></label>}
+          {kind === "tier" && <label className="text-xs text-slate-700">New tier
+            <Select value={tierVal} onChange={e => setTierVal(e.target.value)} options={["Enterprise", "Mid", "SMB"]} /></label>}
+          {kind === "task" && <>
+            <label className="text-xs text-slate-700">Title<Input ref={ref} value={title} onChange={e => setTitle(e.target.value)} /></label>
+            <label className="text-xs text-slate-700">Due<Input type="date" value={due} onChange={e => setDue(e.target.value)} /></label>
+            <label className="text-xs text-slate-700">Owner
+              <Select value={owner} onChange={e => setOwner(e.target.value)} options={names.length ? names : [user.name]} /></label>
+          </>}
+          {kind === "churn" && <>
+            <label className="text-xs text-slate-700">Reason (required)
+              <Select value={reason} onChange={e => setReason(e.target.value)} options={["", ...CHURN_REASONS]} /></label>
+            <label className="text-xs text-slate-700">Date<Input type="date" value={date} onChange={e => setDate(e.target.value)} /></label>
+            <label className="text-xs text-slate-700">Note<Input value={note} onChange={e => setNote(e.target.value)} /></label>
+            <p className="text-[11px] text-slate-500">One shared reason is written to all {ids.length} accounts.</p>
+          </>}
+          {kind === "delete" && <>
+            <p className="text-xs text-rose-700">This deletes {ids.length} account{ids.length === 1 ? "" : "s"} and all their contacts, activities, tasks and opportunities. Sub-accounts survive but lose their parent.</p>
+            <label className="text-xs text-slate-700">Type DELETE to confirm
+              <Input ref={ref} value={confirmText} onChange={e => setConfirmText(e.target.value)} /></label>
+          </>}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <Btn kind="primary" disabled={!ready} data-bulk-confirm onClick={submit}>Apply</Btn>
+          <Btn onClick={onClose}>Cancel</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -1851,6 +1952,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue]);
   // a selection must never outlive the rows that produced it
   useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue]);
+  // teammates' edits arrive via a ~800ms realtime refetch and can change the visible
+  // row set underneath a selection -- prune ids that no longer exist, but never wipe
+  // the rest of an in-progress selection just because something elsewhere changed.
+  useEffect(() => {
+    const live = new Set(scored.map(a => a.id));
+    setSelected(s => {
+      const n = new Set([...s].filter(id => live.has(id)));
+      return n.size === s.size ? s : n;
+    });
+  }, [scored]);
   const allVisibleSelected = rows.length > 0 && rows.every(a => selected.has(a.id));
   const toggleAll = () => setSelected(allVisibleSelected ? new Set() : new Set(rows.map(a => a.id)));
   // rollup: sum of non-churned sub ARR (USD) per parent, over the whole book
@@ -1905,6 +2016,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
             onClick={() => setSelected(new Set())}>Clear selection</button>
         </div>
       )}
+      {bulkAction && <BulkDialog kind={bulkAction} ids={[...selected]} accounts={allAccounts}
+        team={team} user={user} dispatch={dispatch}
+        onClose={() => { setBulkAction(null); setSelected(new Set()); }} />}
       <div className="max-h-[65vh] overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">

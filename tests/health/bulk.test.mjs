@@ -3,7 +3,10 @@ import { launch, seedAccount } from "./harness.mjs";
 
 const A = seedAccount({ id: "a1", name: "Alpha", csm: "Priya", tier: "Mid" });
 const B = seedAccount({ id: "a2", name: "Beta", csm: "Priya", tier: "SMB" });
-export const seed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
+// the team list (and so the CSM dropdown's options) comes from profiles, not the team key.
+// "Dana" must be a real profile or selecting it in the dialog resolves to "".
+const PROFILES = [{ id: "u1", name: "Test User", role: "admin" }, { id: "u2", name: "Dana", role: "csm" }];
+export const seed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: ${JSON.stringify(PROFILES)} };`;
 
 test("BULK_PATCH_ACCOUNTS reassigns CSM and writes one audit entry each", async () => {
   const { page, browser } = await launch(seed);
@@ -198,5 +201,105 @@ test("changing a filter clears the selection", async () => {
     return !document.querySelector("[data-bulkbar]");
   });
   assert(gone === true, "selection survived a filter change");
+  await browser.close();
+});
+
+test("bulk churn requires a reason before it will submit", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Churn").click();
+    await new Promise(r => setTimeout(r, 100));
+    const btn = document.querySelector("[data-bulk-confirm]");
+    return { disabled: btn.disabled };
+  });
+  assert(res.disabled === true, "confirm should be disabled until a reason is chosen");
+  await browser.close();
+});
+
+test("bulk reassign shows an undo toast that restores the prior CSM", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Reassign CSM").click();
+    await new Promise(r => setTimeout(r, 100));
+    const sel = document.querySelector("[data-bulkdialog] select");
+    const setSel = (el, v) => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(el, v);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    setSel(sel, "Dana");
+    await new Promise(r => setTimeout(r, 50));
+    document.querySelector("[data-bulk-confirm]").click();
+    await new Promise(r => setTimeout(r, 150));
+    const afterApply = window.__store.getState().accounts.map(a => a.csm);
+    document.querySelector("[data-toast-undo]").click();
+    await new Promise(r => setTimeout(r, 150));
+    const afterUndo = window.__store.getState().accounts.map(a => a.csm);
+    return { afterApply, afterUndo };
+  });
+  assert(res.afterApply.every(c => c === "Dana"), `reassign did not apply: ${JSON.stringify(res.afterApply)}`);
+  assert(res.afterUndo.every(c => c === "Priya"), `undo did not restore: ${JSON.stringify(res.afterUndo)}`);
+  await browser.close();
+});
+
+test("Escape closes the bulk dialog without closing the account view", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Change tier").click();
+  });
+  await page.waitForSelector("[data-bulkdialog]");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(150);
+  const state = await page.evaluate(() => ({
+    dialog: !!document.querySelector("[data-bulkdialog]"),
+    stillOnList: !!document.querySelector("[data-select-all]"),
+  }));
+  assert(state.dialog === false, "dialog did not close on Escape");
+  assert(state.stillOnList === true, "Escape leaked past the dialog and changed the view");
+  await browser.close();
+});
+
+test("a selected account that disappears from data is excluded from a subsequent bulk action", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    // simulate a teammate's realtime delete of a1 arriving underneath the selection
+    window.__store.dispatch({ type: "BULK_DELETE", ids: ["a1"] });
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Reassign CSM").click();
+    await new Promise(r => setTimeout(r, 100));
+    const sel = document.querySelector("[data-bulkdialog] select");
+    const setSel = (el, v) => {
+      Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(el, v);
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    };
+    setSel(sel, "Dana");
+    await new Promise(r => setTimeout(r, 50));
+    document.querySelector("[data-bulk-confirm]").click();
+    await new Promise(r => setTimeout(r, 150));
+    const toastText = document.querySelector("[data-toast-undo]")?.closest("div")?.parentElement?.textContent || "";
+    return { accounts: window.__store.getState().accounts.map(a => ({ id: a.id, csm: a.csm })), toastText };
+  });
+  const a2 = res.accounts.find(a => a.id === "a2");
+  assert(a2 && a2.csm === "Dana", `surviving account should have been reassigned: ${JSON.stringify(res.accounts)}`);
+  assert(res.toastText.includes("1 account"), `toast should report only 1 account affected, got: ${res.toastText}`);
   await browser.close();
 });
