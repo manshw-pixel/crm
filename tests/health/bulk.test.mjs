@@ -64,9 +64,11 @@ const P = seedAccount({ id: "p1", name: "Parent" });
 const S = seedAccount({ id: "s1", name: "Sub", parentId: "p1" });
 const cascadeSeed = `window.__seedRows = {
   accounts: ${JSON.stringify([P, S])}.map(d => ({ id: d.id, data: d })),
-  contacts: [{ id: "c1", data: { id: "c1", accountId: "p1", name: "Ann" } }],
+  contacts: [{ id: "c1", data: { id: "c1", accountId: "p1", name: "Ann" } },
+    { id: "c2", data: { id: "c2", accountId: "s1", name: "Bea" } }],
   activities: [{ id: "v1", data: { id: "v1", accountId: "p1", date: "2026-07-01", type: "call", summary: "hi" } }],
-  tasks: [{ id: "k1", data: { id: "k1", accountId: "p1", title: "T", status: "Open", due: "2026-09-01" } }],
+  tasks: [{ id: "k1", data: { id: "k1", accountId: "p1", title: "T", status: "Open", due: "2026-09-01" } },
+    { id: "k2", data: { id: "k2", accountId: "s1", title: "T2", status: "Open", due: "2026-09-02" } }],
   opportunities: [{ id: "o1", data: { id: "o1", accountId: "p1", stage: "Open", amount: 10 } }],
   team: [], settings: [] };`;
 
@@ -95,11 +97,13 @@ test("BULK_DELETE removes accounts and cascades to all four collections", async 
     await new Promise(r => setTimeout(r, 50));
     const s = window.__store.getState();
     return { accounts: s.accounts.map(a => a.id), subParent: s.accounts.find(a => a.id === "s1").parentId,
-      contacts: s.contacts.length, activities: s.activities.length, tasks: s.tasks.length, opps: s.opportunities.length };
+      contacts: s.contacts.map(c => c.id), activities: s.activities.length, tasks: s.tasks.map(t => t.id), opps: s.opportunities.length };
   });
   assert(after.accounts.length === 1 && after.accounts[0] === "s1", `expected only the sub to survive, got ${JSON.stringify(after.accounts)}`);
   assert(after.subParent === null, "sub should be orphaned (parentId null)");
-  assert(after.contacts === 0 && after.activities === 0 && after.tasks === 0 && after.opps === 0, "cascade incomplete");
+  assert(after.activities === 0 && after.opps === 0, "cascade incomplete for p1-only collections");
+  assert(after.contacts.length === 1 && after.contacts[0] === "c2", `p1's contact should be gone, s1's should survive: ${JSON.stringify(after.contacts)}`);
+  assert(after.tasks.length === 1 && after.tasks[0] === "k2", `p1's task should be gone, s1's should survive: ${JSON.stringify(after.tasks)}`);
   await browser.close();
 });
 
@@ -114,11 +118,13 @@ test("RESTORE_SNAPSHOT undoes a bulk delete including cascades and sub parentId"
     await new Promise(r => setTimeout(r, 50));
     const s = window.__store.getState();
     return { accounts: s.accounts.map(a => a.id).sort(), subParent: s.accounts.find(a => a.id === "s1").parentId,
-      contacts: s.contacts.length, activities: s.activities.length, tasks: s.tasks.length, opps: s.opportunities.length };
+      contacts: s.contacts.map(c => c.id).sort(), activities: s.activities.length, tasks: s.tasks.map(t => t.id).sort(), opps: s.opportunities.length };
   });
   assert(after.accounts.join() === "p1,s1", `accounts not restored: ${JSON.stringify(after.accounts)}`);
   assert(after.subParent === "p1", `sub parentId not restored, got ${after.subParent}`);
-  assert(after.contacts === 1 && after.activities === 1 && after.tasks === 1 && after.opps === 1, "cascaded rows not restored");
+  assert(after.activities === 1 && after.opps === 1, "cascaded p1-only rows not restored");
+  assert(after.contacts.join() === "c1,c2", `p1's contact not restored (s1's should have survived throughout): ${JSON.stringify(after.contacts)}`);
+  assert(after.tasks.join() === "k1,k2", `p1's task not restored (s1's should have survived throughout): ${JSON.stringify(after.tasks)}`);
   await browser.close();
 });
 
