@@ -2210,6 +2210,7 @@ const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
   </span>
 );
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm }) {
+  const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
@@ -2282,7 +2283,16 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
-          onClick={() => { if (confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) { dispatch({ type: "DELETE_ACCOUNT", id: a.id }); back(); } }}>Delete account</button>}
+          onClick={() => {
+            if (!confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) return;
+            // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
+            // already handles a single id, including sub-account parentIds
+            const snapshot = snapshotFor(st, [a.id]);
+            dispatch({ type: "DELETE_ACCOUNT", id: a.id });
+            toast({ text: `Deleted ${a.name}.`, tone: "success",
+              undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+            back();
+          }}>Delete account</button>}
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
