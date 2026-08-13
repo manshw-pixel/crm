@@ -396,3 +396,72 @@ test("applying a bulk action after every selected account vanished warns instead
   assert(res.accounts === 0, "no dispatch should have occurred");
   await browser.close();
 });
+
+// Bulk churn used to write no timeline activity, so a bulk-churned account had a gap
+// that a single-churned one did not (ChurnForm dispatches ADD_ACTIVITY alongside
+// CHURN_ACCOUNT). BULK_CHURN now carries the activities with it.
+test("BULK_CHURN writes a churn activity per account, matching single churn", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  const acts = await page.evaluate(async () => {
+    window.__store.dispatch({ type: "BULK_CHURN", ids: ["a1", "a2"], reason: "Price", note: "batch",
+      date: "2026-08-12", by: "Tester",
+      activities: ["a1", "a2"].map(id => ({ id: "act-" + id, accountId: id, type: "churn",
+        date: "2026-08-12", summary: "Account churned (Price — batch) · by Tester" })) });
+    await new Promise(r => setTimeout(r, 50));
+    return window.__store.getState().activities;
+  });
+  assert(acts.length === 2, `expected one churn activity per account, got ${acts.length}`);
+  assert(acts.every(a => a.type === "churn"), `activities should be type "churn": ${JSON.stringify(acts)}`);
+  assert(acts.every(a => a.date === "2026-08-12"), "activity should use the churn date, not today");
+  assert(new Set(acts.map(a => a.accountId)).size === 2, "each account needs its own activity");
+  await browser.close();
+});
+
+test("BULK_CHURN drops activities for accounts that no longer exist", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  const acts = await page.evaluate(async () => {
+    window.__store.dispatch({ type: "BULK_CHURN", ids: ["a1", "ghost"], reason: "Price", note: "",
+      date: "2026-08-12", by: "Tester",
+      activities: ["a1", "ghost"].map(id => ({ id: "act-" + id, accountId: id, type: "churn",
+        date: "2026-08-12", summary: "Account churned" })) });
+    await new Promise(r => setTimeout(r, 50));
+    return window.__store.getState().activities;
+  });
+  assert(acts.length === 1 && acts[0].accountId === "a1",
+    `a churn activity must not be created for a missing account: ${JSON.stringify(acts)}`);
+  await browser.close();
+});
+
+// RESTORE_SNAPSHOT merges rather than replaces (it keeps current rows absent from the
+// snapshot), so undoing a bulk churn does NOT remove the churn activity on its own --
+// the account would go back to Active while still showing "Account churned" on its
+// timeline. The undo has to delete those activities explicitly.
+test("undoing a bulk churn removes the churn activities it created", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Churn").click();
+    await new Promise(r => setTimeout(r, 150));
+    const sel = document.querySelector("[data-bulkdialog] select");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(sel, "Price");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 50));
+    document.querySelector("[data-bulk-confirm]").click();
+    await new Promise(r => setTimeout(r, 200));
+    const afterChurn = window.__store.getState().activities.length;
+    document.querySelector("[data-toast-undo]").click();
+    await new Promise(r => setTimeout(r, 250));
+    const s = window.__store.getState();
+    return { afterChurn, activities: s.activities.length, statuses: s.accounts.map(a => a.contractStatus) };
+  });
+  assert(res.afterChurn === 2, `bulk churn should have written 2 activities, got ${res.afterChurn}`);
+  assert(res.statuses.every(s => s === "Active"), `undo should restore Active, got ${JSON.stringify(res.statuses)}`);
+  assert(res.activities === 0, `undo must remove the churn activities, ${res.activities} left behind`);
+  await browser.close();
+});

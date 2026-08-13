@@ -325,8 +325,13 @@ function persist(action, next) {
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
       next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
+      // write only the activities the reducer kept, as BULK_ADD_TASKS does
+      const kept = new Set(next.activities.map(v => v.id));
+      (action.activities || []).filter(v => kept.has(v.id)).forEach(v => up("activities", v));
       return;
     }
+    case "BULK_DELETE_ACTIVITIES":
+      return action.ids.forEach(id => sb.from("activities").delete().eq("id", id).then(({ error }) => error && dbError("activities", error)));
     case "BULK_DELETE":
       action.ids.forEach(id => {
         sb.from("accounts").delete().eq("id", id).then(({ error }) => error && dbError("accounts", error));
@@ -477,12 +482,21 @@ function reducer(state, action) {
     case "BULK_DELETE_TASKS": { const ids = new Set(action.ids); return { ...state, tasks: state.tasks.filter(t => !ids.has(t.id)) }; }
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
-      return { ...state, accounts: state.accounts.map(a => ids.has(a.id)
+      const live = new Set(state.accounts.map(a => a.id));
+      // ChurnForm dispatches ADD_ACTIVITY alongside CHURN_ACCOUNT, so a single churn
+      // lands on the account timeline. Carrying the activities here keeps bulk churn's
+      // timeline identical instead of leaving a gap. Filtered like BULK_ADD_TASKS so a
+      // stale id cannot fabricate an activity against an account that is gone.
+      const acts = (action.activities || []).filter(v => live.has(v.accountId));
+      return { ...state,
+        activities: acts.length ? [...state.activities, ...acts] : state.activities,
+        accounts: state.accounts.map(a => ids.has(a.id)
         ? withAudit({ ...a, contractStatus: "Churned",
             churn: { date: action.date, reason: action.reason, note: action.note || "", arr: a.arr, currency: a.currency, by: action.by } },
             [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Churned", by: action.by, source: "churn" }])
         : a) };
     }
+    case "BULK_DELETE_ACTIVITIES": { const ids = new Set(action.ids); return { ...state, activities: state.activities.filter(v => !ids.has(v.id)) }; }
     case "BULK_DELETE": {
       const ids = new Set(action.ids);
       const gone = r => ids.has(r.accountId);
@@ -1889,13 +1903,24 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
         undo: () => dispatch({ type: "BULK_DELETE_TASKS", ids: [...created] }) });
     } else {
       const snapshot = snapshotFor(state, liveIds);
+      // built here (not in the reducer) so the undo callback can name the exact rows to
+      // delete: RESTORE_SNAPSHOT merges rather than replaces, so it restores the account
+      // to Active but leaves any activity added after the snapshot in place.
+      const churnActs = kind !== "churn" ? [] : liveIds.map(id => {
+        const a = state.accounts.find(x => x.id === id);
+        return { id: uid(), accountId: id, type: "churn", date,
+          summary: `Account churned (${reason}${note.trim() ? " — " + note.trim() : ""}) · ${fmtMoney(a.arr, a.currency)} ARR lost · by ${user.name}` };
+      });
       if (kind === "csm") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { csm: csmVal }, by: user.name });
       else if (kind === "tier") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { tier: tierVal }, by: user.name });
-      else if (kind === "churn") dispatch({ type: "BULK_CHURN", ids: liveIds, reason, note, date, by: user.name });
+      else if (kind === "churn") dispatch({ type: "BULK_CHURN", ids: liveIds, reason, note, date, by: user.name, activities: churnActs });
       else if (kind === "delete") dispatch({ type: "BULK_DELETE", ids: liveIds });
       const verb = { csm: "Reassigned", tier: "Retiered", churn: "Churned", delete: "Deleted" }[kind];
       toast({ text: `${verb} ${n} account${n === 1 ? "" : "s"}.`, tone: "success",
-        undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+        undo: () => {
+          dispatch({ type: "RESTORE_SNAPSHOT", snapshot });
+          if (churnActs.length) dispatch({ type: "BULK_DELETE_ACTIVITIES", ids: churnActs.map(v => v.id) });
+        } });
     }
     onClose();
   };
