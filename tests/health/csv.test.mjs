@@ -151,3 +151,74 @@ test("import coerces a non-numeric arr to 0 rather than NaN", async () => {
   assert(add.item.arr === 0, `arr should coerce to 0, got ${JSON.stringify(add.item.arr)}`);
   await browser.close();
 });
+
+// An unrecognized tier silently becomes "Mid" and an unrecognized contractStatus
+// silently becomes "Active". A wrongly-mapped column therefore retiers a whole book
+// with no signal. Keep the fallback -- failing the import outright is worse -- but
+// count the coercions and report them.
+test("import counts an unrecognized tier and still falls back to Mid", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  const { result, dispatched } = await runImport(page, "name,tier\nDelta Co,Enterprise-Plus\n");
+  assert(result.badTier === 1, `expected badTier 1, got ${JSON.stringify(result)}`);
+  const add = dispatched.find(d => d.type === "ADD_ACCOUNT");
+  assert(add.item.tier === "Mid", `fallback value should be unchanged, got ${add.item.tier}`);
+  await browser.close();
+});
+
+test("import counts an unrecognized contractStatus", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  const { result, dispatched } = await runImport(page, "name,contractStatus\nEcho Co,Pending Signature\n");
+  assert(result.badStatus === 1, `expected badStatus 1, got ${JSON.stringify(result)}`);
+  const add = dispatched.find(d => d.type === "ADD_ACCOUNT");
+  assert(add.item.contractStatus === "Active", `fallback value should be unchanged, got ${add.item.contractStatus}`);
+  await browser.close();
+});
+
+// An empty cell is a missing value, not a mis-typed one, and must not be reported.
+test("an empty tier cell is not counted as a coercion", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  const { result } = await runImport(page, "name,tier\nFoxtrot Co,\n");
+  assert(result.badTier === 0, `an empty cell must not count, got ${JSON.stringify(result)}`);
+  await browser.close();
+});
+
+test("a valid tier in different case is not counted as a coercion", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  const { result, dispatched } = await runImport(page, "name,tier\nGolf Co,enterprise\n");
+  assert(result.badTier === 0, `case-insensitive match must not count, got ${JSON.stringify(result)}`);
+  const add = dispatched.find(d => d.type === "ADD_ACCOUNT");
+  assert(add.item.tier === "Enterprise", `expected Enterprise, got ${add.item.tier}`);
+  await browser.close();
+});
+
+test("the error paths still return the coercion counters", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  const { result } = await runImport(page, "tier,arr\nMid,1000\n");
+  assert(result.badTier === 0 && result.badStatus === 0, `error payload must carry counters, got ${JSON.stringify(result)}`);
+  await browser.close();
+});
+
+test("the import banner reports unrecognized tiers", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const text = await page.evaluate(async () => {
+    const file = new File(["name,tier\nHotel Co,Enterprise-Plus\n"], "a.csv", { type: "text/csv" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    const input = document.querySelector('input[type="file"][accept*="csv"]');
+    input.files = dt.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 400));
+    const banner = [...document.querySelectorAll("div")].find(d => d.textContent.startsWith("Imported "));
+    return banner ? banner.textContent : "";
+  });
+  assert(text.includes("unrecognized tier"), `banner should warn about the coercion, got: ${text.slice(0, 200)}`);
+  await browser.close();
+});
