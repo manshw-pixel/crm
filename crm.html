@@ -220,10 +220,10 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] } } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 
 /* ------------------------------ audit trail ------------------------------ */
 const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage"];
@@ -287,7 +287,8 @@ async function fetchAll() {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
     settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
-      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook },
+      integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
+      segments: saved.segments || [] },
   };
 }
 
@@ -348,7 +349,7 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK":
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS":
       return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
   }
 }
@@ -514,6 +515,7 @@ function reducer(state, action) {
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
+    case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };
     case "SEED_PLAYBOOK": return { ...state,
       tasks: [...state.tasks, ...action.items],
       accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };
@@ -759,9 +761,11 @@ const Btn = ({ children, onClick, kind = "default", type = "button", disabled, .
   <button type={type} onClick={onClick} disabled={disabled} {...rest} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
 const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
-const Select = ({ options, ...p }) => (
+// `labels` is optional and additive: without it every option renders its own value, as
+// it always has. With it, a value missing from the map still falls back to the value.
+const Select = ({ options, labels, ...p }) => (
   <select {...p} className={"nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none " + (p.className || "")}>
-    {options.map(o => <option key={o} value={o}>{o}</option>)}
+    {options.map(o => <option key={o} value={o}>{labels ? (labels[o] ?? o) : o}</option>)}
   </select>
 );
 
@@ -1917,7 +1921,7 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   );
 }
 
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user }) {
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
   const churnedCount = scored.filter(a => a.churn).length;
@@ -1929,15 +1933,29 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const [selected, setSelected] = useState(() => new Set());
   const toggleOne = id => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [bulkAction, setBulkAction] = useState(null); // "csm" | "tier" | "task" | "churn" | "delete"
-  useEffect(() => {
-    if (!initialFilter) return;
-    setRisk(initialFilter.risk || "All");
-    setShowChurned(!!initialFilter.showChurned);
-    setOnlyChurned(!!initialFilter.onlyChurned);
-    setBilling(initialFilter.billing || "All");
-    setQbrDue(!!initialFilter.qbrDue);
-  }, [initialFilter]);
   const [sort, setSort] = useState({ k: "accountNo", dir: 1 });
+  const [activeSeg, setActiveSeg] = useState("");
+  const [pendingSeg, setPendingSeg] = useState(null);
+  const segments = (settings && settings.segments) || [];
+  // Applies ONLY the keys the caller actually supplied. Dashboard cards pass a partial
+  // filter and must leave everything else -- notably the user's typed `q` -- untouched;
+  // a saved segment carries all ten keys, so applying one sets every field. Same code
+  // path, different payloads. Do NOT turn this into a full reset.
+  const applyFilter = useCallback(f => {
+    const has = k => Object.prototype.hasOwnProperty.call(f, k);
+    if (has("q")) setQ(f.q);
+    if (has("tier")) setTier(f.tier);
+    if (has("risk")) setRisk(f.risk);
+    if (has("csm")) setCsm(f.csm);
+    if (has("renew")) setRenew(f.renew);
+    if (has("billing")) setBilling(f.billing);
+    if (has("showChurned")) setShowChurned(!!f.showChurned);
+    if (has("onlyChurned")) setOnlyChurned(!!f.onlyChurned);
+    if (has("qbrDue")) setQbrDue(!!f.qbrDue);
+    if (has("sort")) setSort(f.sort);
+  }, []);
+  useEffect(() => { if (initialFilter) applyFilter(initialFilter); }, [initialFilter, applyFilter]);
+  useEffect(() => { if (pendingSeg) applyFilter(pendingSeg); }, [pendingSeg, applyFilter]);
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState(null);
   const csms = ["All", ...new Set(scored.map(a => a.csm))];
@@ -2004,6 +2022,26 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Select data-segment-select value={activeSeg} className="w-40" aria-label="Saved segment"
+          onChange={e => {
+            const id = e.target.value; setActiveSeg(id);
+            const s = segments.find(x => x.id === id);
+            // stamp with `t` so re-picking the same segment is still a new object and
+            // the effect re-applies it after the user has hand-edited the filters
+            if (s) setPendingSeg({ ...s.filter, t: Date.now() });
+          }}
+          options={["", ...segments.map(s => s.id)]}
+          labels={{ "": "— segment —", ...Object.fromEntries(segments.map(s => [s.id, s.name])) }} />
+        <Btn data-save-segment onClick={() => {
+          const name = window.prompt("Name this segment");
+          if (!name) return;
+          const seg = { id: uid(), name, filter: { q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue, sort } };
+          dispatch({ type: "SET_SEGMENTS", segments: [...segments, seg] });
+        }}>Save view</Btn>
+        {activeSeg && <Btn data-delete-segment onClick={() => {
+          dispatch({ type: "SET_SEGMENTS", segments: segments.filter(s => s.id !== activeSeg) });
+          setActiveSeg("");
+        }}>Delete segment</Btn>}
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
         <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
         <Select value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
@@ -2917,7 +2955,16 @@ function App({ user }) {
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingForm, setPendingForm] = useState(null); // form to auto-open on next AccountDetail mount (from palette)
-  const openAccounts = filter => { setView("Accounts"); setAcctId(null); setAcctFilter({ ...(filter || {}), t: Date.now() }); };
+  // The five keys below are supplied explicitly on every card click because AccountList
+  // now applies only the keys it actually receives. Before saved segments existed the
+  // effect read them as `initialFilter.risk || "All"`, so an absent key meant "reset";
+  // spelling them out here preserves that exact behavior -- a card means "show me this
+  // slice", not "add to whatever was already filtered". `q`/`tier`/`csm`/`renew`/`sort`
+  // are deliberately omitted: they were never reset by a card and must survive it.
+  const openAccounts = filter => {
+    setView("Accounts"); setAcctId(null);
+    setAcctFilter({ risk: "All", showChurned: false, onlyChurned: false, billing: "All", qbrDue: false, ...(filter || {}), t: Date.now() });
+  };
   const searchRef = useRef();
   const dispatch = useCallback(action => setSt(prev => {
     const next = reducer(prev, action);
@@ -2925,6 +2972,7 @@ function App({ user }) {
     return next;
   }), []);
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });
+  useEffect(() => { window.__openAccounts = openAccounts; });
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
@@ -3121,7 +3169,7 @@ function App({ user }) {
       {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
       {view === "Accounts" && (acctId
         ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
-        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} />)}
+        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
       {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
       {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
