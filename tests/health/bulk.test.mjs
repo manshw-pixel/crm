@@ -303,3 +303,96 @@ test("a selected account that disappears from data is excluded from a subsequent
   assert(res.toastText.includes("1 account"), `toast should report only 1 account affected, got: ${res.toastText}`);
   await browser.close();
 });
+
+// The test above deletes a1 BEFORE the dialog opens. Here the delete lands while the
+// dialog is already open and mounted -- the harder timing, and the one a teammate's
+// ~800ms realtime refetch actually produces.
+//
+// This uses "Add task to each" deliberately. The reassign path cannot detect a
+// missing filter: BULK_PATCH_ACCOUNTS looks each id up and silently skips the ones
+// that are gone, so a stale id is a harmless no-op there. BULK_ADD_TASKS instead
+// MAPS ids to new rows, so an unfiltered stale id fabricates a task pointing at a
+// deleted account -- an orphan that shows up in the Tasks view with a dash for its
+// account. That is the observable damage the filter exists to prevent.
+//
+// Note on what this does and does not prove. It does NOT exercise the liveIds filter
+// inside submit(), and CANNOT: submit() reads window.__store.getState(), which an
+// effect republishes each render, so it returns the last COMMITTED render's state. A
+// dispatch fired in the same tick as the click has not been reduced yet and is
+// invisible to it. The guarantee is enforced in the BULK_ADD_TASKS reducer instead,
+// which is the only layer that sees authoritative state; this test covers that guard.
+//
+// For the same reason the toast count is best-effort and is deliberately NOT asserted
+// here: the dialog cannot know how many rows a dispatch it just fired actually
+// created. The count is correct in every reachable case -- a realtime refetch and a
+// user click cannot share a synchronous tick, so in production `ids` has already been
+// narrowed by the prune effect before submit() runs.
+test("an account deleted while the bulk dialog is open is excluded at dispatch time", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Add task").click();
+    await new Promise(r => setTimeout(r, 100));
+    const dialogSawBoth = document.querySelector("[data-bulkdialog] h3").textContent.includes("2 account");
+    const input = document.querySelector("[data-bulkdialog] input");
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(input, "Check in");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 50));
+    // The teammate's realtime delete and the user's click land in the SAME tick, with
+    // no await between them -- the worst case for the reducer guard. The dialog's
+    // `ids` prop is still [a1, a2] because React has not re-rendered yet, so neither
+    // the prune effect nor the updated prop can help, and submit()'s own filter reads
+    // pre-delete state. Only the reducer can catch this. Do not insert a wait here --
+    // with one, React re-renders, `ids` arrives already narrowed, and the test stops
+    // exercising the guard at all.
+    window.__store.dispatch({ type: "BULK_DELETE", ids: ["a1"] });
+    document.querySelector("[data-bulk-confirm]").click();
+    await new Promise(r => setTimeout(r, 150));
+    const toastText = document.querySelector("[data-toast-undo]")?.closest("div")?.parentElement?.textContent || "";
+    const s = window.__store.getState();
+    return { dialogSawBoth, tasks: s.tasks.map(t => ({ accountId: t.accountId, title: t.title })), toastText };
+  });
+  assert(res.dialogSawBoth, "dialog should have opened with both accounts selected, or the test proves nothing");
+  assert(res.tasks.length === 1, `exactly one task should have been created, not one per stale id: ${JSON.stringify(res.tasks)}`);
+  assert(res.tasks[0].accountId === "a2", `task should belong to the surviving account: ${JSON.stringify(res.tasks)}`);
+  await browser.close();
+});
+
+test("applying a bulk action after every selected account vanished warns instead of closing silently", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    document.querySelector("[data-select-all]").click();
+    await new Promise(r => setTimeout(r, 100));
+    [...document.querySelectorAll("[data-bulkbar] button")].find(b => b.textContent === "Change tier").click();
+    await new Promise(r => setTimeout(r, 100));
+    // both selected accounts disappear underneath the open dialog
+    window.__store.dispatch({ type: "BULK_DELETE", ids: ["a1", "a2"] });
+    await new Promise(r => setTimeout(r, 100));
+    const auditBefore = window.__store.getState().accounts.length;
+    document.querySelector("[data-bulk-confirm]").click();
+    await new Promise(r => setTimeout(r, 150));
+    const toasts = [...document.querySelectorAll("[data-toast]")];
+    return {
+      auditBefore,
+      dialog: !!document.querySelector("[data-bulkdialog]"),
+      toastText: toasts.map(t => t.textContent).join(" | "),
+      tones: toasts.map(t => t.getAttribute("data-tone")),
+      undo: !!document.querySelector("[data-toast-undo]"),
+      accounts: window.__store.getState().accounts.length,
+    };
+  });
+  assert(res.auditBefore === 0, "precondition: both accounts should already be gone");
+  assert(res.toastText.includes("no longer available"), `expected an explanatory toast, got: ${res.toastText}`);
+  assert(res.tones.includes("error"), `toast should be an error tone, got: ${JSON.stringify(res.tones)}`);
+  assert(res.undo === false, "a no-op must not offer an undo");
+  assert(res.dialog === false, "dialog should still close");
+  assert(res.accounts === 0, "no dispatch should have occurred");
+  await browser.close();
+});

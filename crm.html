@@ -313,7 +313,12 @@ function persist(action, next) {
       next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
       return;
     }
-    case "BULK_ADD_TASKS": return action.items.forEach(t => up("tasks", t));
+    case "BULK_ADD_TASKS": {
+      // mirror the reducer's existence filter by writing only the items it kept,
+      // so a dropped orphan never reaches the database either
+      const kept = new Set(next.tasks.map(t => t.id));
+      return action.items.filter(t => kept.has(t.id)).forEach(t => up("tasks", t));
+    }
     case "BULK_DELETE_TASKS":
       return action.ids.forEach(id => sb.from("tasks").delete().eq("id", id).then(({ error }) => error && dbError("tasks", error)));
     case "BULK_CHURN": {
@@ -460,7 +465,14 @@ function reducer(state, action) {
         return withAudit({ ...a, ...action.patch }, entries);
       }) };
     }
-    case "BULK_ADD_TASKS": return { ...state, tasks: [...state.tasks, ...action.items] };
+    case "BULK_ADD_TASKS": {
+      // ids can go stale between the dialog opening and this dispatch landing. The
+      // reducer is the only layer that sees authoritative state -- a caller reading
+      // window.__store sees the last committed render, not a dispatch still in flight
+      // -- so drop items whose account is gone rather than fabricating orphan tasks.
+      const live = new Set(state.accounts.map(a => a.id));
+      return { ...state, tasks: [...state.tasks, ...action.items.filter(t => live.has(t.accountId))] };
+    }
     case "BULK_DELETE_TASKS": { const ids = new Set(action.ids); return { ...state, tasks: state.tasks.filter(t => !ids.has(t.id)) }; }
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
@@ -1843,7 +1855,8 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
     const live = new Set(state.accounts.map(a => a.id));
     const liveIds = ids.filter(id => live.has(id));
     const n = liveIds.length;
-    if (n === 0) { onClose(); return; }
+    // every selected account vanished -- closing silently would look like success
+    if (n === 0) { toast({ text: "Those accounts are no longer available.", tone: "error" }); onClose(); return; }
     if (kind === "task") {
       const items = liveIds.map(id => ({ id: uid(), accountId: id, title: title.trim(), due, owner, status: "Open" }));
       dispatch({ type: "BULK_ADD_TASKS", items });
