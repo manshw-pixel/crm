@@ -222,3 +222,38 @@ test("the import banner reports unrecognized tiers", async () => {
   assert(text.includes("unrecognized tier"), `banner should warn about the coercion, got: ${text.slice(0, 200)}`);
   await browser.close();
 });
+
+// the banner used to render coercion warnings in the same success green as a clean
+// import, so a silently rewritten row looked identical to a clean one
+const bannerClass = async (page, csv) => page.evaluate(async body => {
+  const file = new File([body], "a.csv", { type: "text/csv" });
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  const input = document.querySelector('input[type="file"][accept*="csv"]');
+  input.files = dt.files;
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  await new Promise(r => setTimeout(r, 400));
+  const banner = [...document.querySelectorAll("div")].find(d => d.textContent.startsWith("Imported "));
+  return banner ? banner.className : "";
+}, csv);
+
+test("a coercion tones the import banner amber, not success green", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const cls = await bannerClass(page, "name,tier\nHotel Co,Enterprise-Plus\n");
+  assert(cls.includes("text-amber-700"), `coerced import should read as a warning, got class: ${cls}`);
+  assert(!cls.includes("text-emerald-700"), `coerced import must not read as a clean success, got class: ${cls}`);
+  await browser.close();
+});
+
+test("a clean import keeps the success green banner", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const cls = await bannerClass(page, "name,tier\nHotel Co,Enterprise\n");
+  assert(cls.includes("text-emerald-700"), `a clean import should stay green, got class: ${cls}`);
+  await browser.close();
+});
