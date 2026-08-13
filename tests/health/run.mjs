@@ -14,6 +14,11 @@ import "./pill.test.mjs";
 import "./dates.test.mjs";
 import "./backfill.test.mjs";
 import "./tasks.test.mjs";
+import "./toast.test.mjs";
+import "./bulk.test.mjs";
+import "./segments.test.mjs";
+import "./a11y.test.mjs";
+import "./persistence.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
