@@ -2078,13 +2078,18 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           }}
           options={["", ...segments.map(s => s.id)]}
           labels={{ "": "— segment —", ...Object.fromEntries(segments.map(s => [s.id, s.name])) }} />
-        <Btn data-save-segment onClick={() => {
+        {/* Segments live in the `settings` row, whose RLS policy is admin-only
+            (settings_write ... using (is_admin())). Showing these to a CSM would give
+            them an optimistic segment, a rejected write and a "Save failed (settings)"
+            toast, with nothing left after a reload. Everyone can still APPLY a segment
+            an admin saved -- reads are open to all authenticated users. */}
+        {user.role === "admin" && <Btn data-save-segment onClick={() => {
           const name = window.prompt("Name this segment");
           if (!name) return;
           const seg = { id: uid(), name, filter: { q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue, sort } };
           dispatch({ type: "SET_SEGMENTS", segments: [...segments, seg] });
-        }}>Save view</Btn>
-        {activeSeg && <Btn data-delete-segment onClick={() => {
+        }}>Save view</Btn>}
+        {user.role === "admin" && activeSeg && <Btn data-delete-segment onClick={() => {
           dispatch({ type: "SET_SEGMENTS", segments: segments.filter(s => s.id !== activeSeg) });
           setActiveSeg("");
         }}>Delete segment</Btn>}

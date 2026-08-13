@@ -182,3 +182,47 @@ test("the segment dropdown shows segment names, not raw ids", async () => {
   assert(named.t === "Dana book", `option should show the name, got "${named.t}"`);
   await browser.close();
 });
+
+// Segments persist into the `settings` table, whose RLS policy is admin-only
+// (settings_write ... using (is_admin())). A non-admin clicking "Save view" would get
+// an optimistic segment locally, a rejected write, a "Save failed (settings)" toast,
+// and nothing left after a reload. Non-admins can still APPLY segments an admin saved.
+const csmSeed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [{ id: "u1", name: "Casey CSM", role: "csm" }] };`;
+
+test("a non-admin cannot save or delete segments, but can still apply them", async () => {
+  const { page, browser } = await launch(csmSeed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-segment-select]");
+  const res = await page.evaluate(async () => {
+    window.__store.dispatch({ type: "SET_SEGMENTS", segments: [{ id: "s1", name: "Dana book", filter: {
+      q: "", tier: "All", risk: "All", csm: "Dana", renew: "All", billing: "All",
+      showChurned: false, onlyChurned: false, qbrDue: false, sort: { k: "accountNo", dir: 1 } } }] });
+    await new Promise(r => setTimeout(r, 200));
+    const sel = document.querySelector("[data-segment-select]");
+    Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value").set.call(sel, "s1");
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    await new Promise(r => setTimeout(r, 200));
+    return {
+      save: !!document.querySelector("[data-save-segment]"),
+      del: !!document.querySelector("[data-delete-segment]"),
+      picker: !!document.querySelector("[data-segment-select]"),
+      rows: [...document.querySelectorAll("tbody tr")].map(r => r.textContent),
+    };
+  });
+  assert(res.save === false, "a non-admin must not see Save view — the settings write would be denied by RLS");
+  assert(res.del === false, "a non-admin must not see Delete segment");
+  assert(res.picker === true, "a non-admin should still be able to pick a saved segment");
+  assert(res.rows.length === 1 && res.rows[0].includes("Beta"), `applying a segment should still filter for a non-admin: ${JSON.stringify(res.rows)}`);
+  await browser.close();
+});
+
+test("an admin still sees the segment controls", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-segment-select]");
+  const save = await page.evaluate(() => !!document.querySelector("[data-save-segment]"));
+  assert(save, "an admin must still be able to save a view");
+  await browser.close();
+});
