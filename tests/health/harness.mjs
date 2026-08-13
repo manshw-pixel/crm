@@ -49,6 +49,92 @@ const sb = (() => {
   };
 })();`;
 
+// Stateful variant of MOCK. The default mock throws every write away, which is exactly
+// why the persist path (does RESTORE_SNAPSHOT actually write the undo back?) had no
+// automated coverage. This one keeps a real store, applies upserts and deletes to it,
+// and exposes __dump() so a test can reload the app from what was actually persisted.
+// It models the app's contract with Supabase, NOT Supabase itself -- RLS, schema types
+// and network failures still need a real backend.
+const STATEFUL_MOCK = `const CONFIGURED = true;
+const sb = (() => {
+  window.__db = {};
+  for (const [t, rows] of Object.entries(window.__seedRows || {})) {
+    window.__db[t] = new Map((rows || []).map(r => [r.id, JSON.parse(JSON.stringify(r))]));
+  }
+  const tbl = t => (window.__db[t] = window.__db[t] || new Map());
+  window.__dump = () => {
+    const out = {};
+    for (const [t, m] of Object.entries(window.__db)) out[t] = [...m.values()];
+    return out;
+  };
+  const rowsOf = t => [...tbl(t).values()];
+  const api = t => ({
+    select: () => {
+      const p = Promise.resolve({ data: rowsOf(t), error: null });
+      p.eq = () => Promise.resolve({ data: rowsOf(t), error: null, single: () => Promise.resolve({ data: rowsOf(t)[0] || null, error: null }) });
+      return p;
+    },
+    upsert: async row => { tbl(t).set(row.id, JSON.parse(JSON.stringify(row))); return { error: null }; },
+    insert: async rows => { (Array.isArray(rows) ? rows : [rows]).forEach(r => tbl(t).set(r.id, JSON.parse(JSON.stringify(r)))); return { error: null }; },
+    delete: () => ({
+      eq: async (col, val) => {
+        if (col === "id") tbl(t).delete(val);
+        // the app cascades with .eq("data->>accountId", id) -- match that JSON path
+        else if (col === "data->>accountId") for (const [k, r] of tbl(t)) { if (r.data && r.data.accountId === val) tbl(t).delete(k); }
+        return { error: null };
+      },
+      neq: async () => { tbl(t).clear(); return { error: null }; },
+    }),
+  });
+  const profilesApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.profiles || [{ id: "u1", name: "Test User", role: "admin" }];
+      const p = Promise.resolve({ data: rows, error: null });
+      p.eq = (_col, val) => ({ single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }) });
+      p.order = () => Promise.resolve({ data: rows, error: null });
+      return p;
+    },
+  });
+  return {
+    from: t => (t === "profiles" ? profilesApi() : api(t)),
+    channel: () => ({ on() { return this; }, subscribe() { return this; } }),
+    removeChannel: () => {},
+    auth: {
+      getSession: async () => ({ data: { session: { user: { id: "u1", email: "t@t.io" } } } }),
+      getUser: async () => ({ data: { user: { id: "u1", email: "t@t.io" } } }),
+      signOut() {},
+      onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
+    },
+    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
+  };
+})();`;
+
+function buildHtml(seedJs, mock) {
+  let html = readFileSync(CRM, "utf8");
+  html = html.replace(/const CONFIGURED = [^\n]*\nconst sb = [^\n]*\n/, mock + "\n");
+  html = html.replace(/<body[^>]*>/, m => `${m}<script>${seedJs}</script>`);
+  const dir = mkdtempSync(join(tmpdir(), "crm-health-"));
+  const file = join(dir, "crm.html");
+  writeFileSync(file, html);
+  return "file://" + file.replace(/\\/g, "/");
+}
+
+// Launch with a store that survives writes; `reload(page)` re-opens the app seeded from
+// whatever was actually persisted, which is the closest an offline harness can get to
+// "reload the browser and confirm it stuck".
+export async function launchPersistent(seedJs) {
+  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  const page = await browser.newPage();
+  await page.goto(buildHtml(seedJs, STATEFUL_MOCK));
+  await page.waitForSelector("#root", { timeout: 15000 });
+  const reload = async () => {
+    const dumped = await page.evaluate(() => window.__dump());
+    await page.goto(buildHtml(`window.__seedRows = ${JSON.stringify(dumped)};`, STATEFUL_MOCK));
+    await page.waitForSelector("#root", { timeout: 15000 });
+  };
+  return { page, browser, reload };
+}
+
 export function buildMockedHtml(seedJs) {
   let html = readFileSync(CRM, "utf8");
   // Replace the CONFIGURED + Supabase constructor lines with the mock (CONFIGURED forced true).
