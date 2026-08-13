@@ -2105,12 +2105,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           setActiveSeg("");
         }}>Delete segment</Btn>}
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
-        <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
-        <Select value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
-        <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
-        <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
+        <Select aria-label="Filter by tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
+        <Select aria-label="Filter by health risk" value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
+        <Select aria-label="Filter by CSM" value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
+        <Select aria-label="Filter by renewal window in days" value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
         <span className="text-xs text-slate-500">renew ≤ days</span>
-        <Select value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
+        <Select aria-label="Filter by billing status" value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
         <span className="text-xs text-slate-500">billing</span>
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => { setShowChurned(e.target.checked); if (!e.target.checked) setOnlyChurned(false); }} />show churned ({churnedCount})</label>}
