@@ -1660,30 +1660,41 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
   const reader = new FileReader();
   reader.onload = () => {
     const rows = parseCSV(String(reader.result));
-    if (rows.length < 2) return done({ ok: 0, updated: 0, skipped: 0, err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
+    if (rows.length < 2) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
     const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
     const header = rows[0].map(norm);
     const has = key => header.indexOf(key) >= 0;
     const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
-    if (!has("name")) return done({ ok: 0, updated: 0, skipped: 0, err: 'The header row needs a "name" column (matching Export CSV format works).' });
+    if (!has("name")) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: 'The header row needs a "name" column (matching Export CSV format works).' });
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0;
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0;
     rows.slice(1).forEach(r => {
       const name = col(r, "name");
       if (!name) { skipped++; return; }
       const num = (key, dflt) => { const v = parseFloat(col(r, key)); return isNaN(v) ? dflt : v; };
       const date = v => { const d = new Date(v); return v && !isNaN(d) ? iso(d.getTime()) : null; };
       const vals = { name };
-      if (has("tier")) vals.tier = ["Enterprise", "Mid", "SMB"].find(t => t.toLowerCase() === col(r, "tier").toLowerCase()) || "Mid";
+      if (has("tier")) {
+        const raw = col(r, "tier");
+        const match = ["Enterprise", "Mid", "SMB"].find(t => t.toLowerCase() === raw.toLowerCase());
+        // an empty cell is a missing value, not a mis-typed one -- don't report it
+        if (raw && !match) badTier++;
+        vals.tier = match || "Mid";
+      }
       if (has("arr")) vals.arr = Math.max(0, num("arr", 0));
       if (has("currency")) vals.currency = CURRENCIES.includes(col(r, "currency").toUpperCase()) ? col(r, "currency").toUpperCase() : "USD";
       if (has("industry")) vals.industry = col(r, "industry");
       if (has("csm")) vals.csm = col(r, "csm");
       if (has("startdate") && date(col(r, "startdate"))) vals.startDate = date(col(r, "startdate"));
       if (has("renewaldate") && date(col(r, "renewaldate"))) vals.renewalDate = date(col(r, "renewaldate"));
-      if (has("contractstatus")) vals.contractStatus = ["Active", "Auto-renew", "In negotiation", "Churn risk"].find(s => s.toLowerCase() === col(r, "contractstatus").toLowerCase()) || "Active";
+      if (has("contractstatus")) {
+        const raw = col(r, "contractstatus");
+        const match = ["Active", "Auto-renew", "In negotiation", "Churn risk"].find(s => s.toLowerCase() === raw.toLowerCase());
+        if (raw && !match) badStatus++;
+        vals.contractStatus = match || "Active";
+      }
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
@@ -1709,7 +1720,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         ok++;
       }
     });
-    done({ ok, updated, skipped });
+    done({ ok, updated, skipped, badTier, badStatus });
   };
   reader.readAsText(file);
 }
@@ -2063,7 +2074,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
     </div>}>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.</>}
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}{importMsg.badTier ? ` · ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid)` : ""}{importMsg.badStatus ? ` · ${importMsg.badStatus} row(s) had an unrecognized status (set to Active)` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.</>}
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
       </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} /></div>}
@@ -2094,12 +2105,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           setActiveSeg("");
         }}>Delete segment</Btn>}
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
-        <Select value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
-        <Select value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
-        <Select value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
-        <Select value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
+        <Select aria-label="Filter by tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
+        <Select aria-label="Filter by health risk" value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
+        <Select aria-label="Filter by CSM" value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
+        <Select aria-label="Filter by renewal window in days" value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
         <span className="text-xs text-slate-500">renew ≤ days</span>
-        <Select value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
+        <Select aria-label="Filter by billing status" value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
         <span className="text-xs text-slate-500">billing</span>
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => { setShowChurned(e.target.checked); if (!e.target.checked) setOnlyChurned(false); }} />show churned ({churnedCount})</label>}
@@ -2199,6 +2210,7 @@ const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
   </span>
 );
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm }) {
+  const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
@@ -2271,7 +2283,16 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
-          onClick={() => { if (confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) { dispatch({ type: "DELETE_ACCOUNT", id: a.id }); back(); } }}>Delete account</button>}
+          onClick={() => {
+            if (!confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) return;
+            // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
+            // already handles a single id, including sub-account parentIds
+            const snapshot = snapshotFor(st, [a.id]);
+            dispatch({ type: "DELETE_ACCOUNT", id: a.id });
+            toast({ text: `Deleted ${a.name}.`, tone: "success",
+              undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+            back();
+          }}>Delete account</button>}
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
@@ -3252,7 +3273,7 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <ToastProvider><App user={profile} /></ToastProvider>;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>

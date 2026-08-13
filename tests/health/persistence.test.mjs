@@ -162,3 +162,39 @@ test("SMOKE: pre-existing single-account flows still work and persist", async ()
   assert(s.accounts.join() === "p1,s1", `unrelated accounts must survive, got ${JSON.stringify(s.accounts)}`);
   await browser.close();
 });
+
+test("SMOKE: undoing a single-account delete survives a reload", async () => {
+  const { page, browser, reload } = await launchPersistent(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const mid = await page.evaluate(async () => {
+    window.confirm = () => true;
+    const row = [...document.querySelectorAll("tbody tr")].find(r => r.textContent.includes("Other Co"));
+    if (!row) return { err: "Other Co row not found" };
+    row.click();
+    await new Promise(r => setTimeout(r, 250));
+    const del = [...document.querySelectorAll("button")].find(b => b.textContent === "Delete account");
+    if (!del) return { err: "no delete button" };
+    del.click();
+    await new Promise(r => setTimeout(r, 250));
+    const gone = !window.__store.getState().accounts.some(a => a.id === "o1");
+    const undo = document.querySelector("[data-toast-undo]");
+    if (!undo) return { err: "no undo toast", gone };
+    undo.click();
+    await new Promise(r => setTimeout(r, 400));
+    return { gone };
+  });
+  assert(!mid.err, mid.err);
+  assert(mid.gone, "the account should have been deleted before the undo");
+  await reload();
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length > 0);
+  const after = await page.evaluate(() => {
+    const s = window.__store.getState();
+    return { accounts: s.accounts.map(a => a.id).sort(), contacts: s.contacts.filter(c => c.accountId === "o1").length, tasks: s.tasks.filter(t => t.accountId === "o1").length };
+  });
+  assert(after.accounts.includes("o1"), `the undone delete must survive a reload, got ${JSON.stringify(after.accounts)}`);
+  assert(after.contacts === 1, `its contact should be restored too, got ${after.contacts}`);
+  assert(after.tasks === 1, `its task should be restored too, got ${after.tasks}`);
+  await browser.close();
+});

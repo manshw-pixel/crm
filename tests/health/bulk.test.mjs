@@ -465,3 +465,47 @@ test("undoing a bulk churn removes the churn activities it created", async () =>
   assert(res.activities === 0, `undo must remove the churn activities, ${res.activities} left behind`);
   await browser.close();
 });
+
+// Bulk-deleting 20 accounts was undoable while deleting one was permanent. A user who
+// learns to trust undo on the bulk path would get burned on the more common one.
+test("deleting a single account offers an undo that restores it with its children", async () => {
+  const { page, browser } = await launch(cascadeSeed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const res = await page.evaluate(async () => {
+    window.confirm = () => true; // the blocking confirm stays; auto-accept it
+    // each row is <tr onClick={() => openAccount(a.id)}>, so clicking it opens detail
+    const row = [...document.querySelectorAll("tbody tr")].find(r => r.textContent.includes("Parent"));
+    if (!row) return { err: "parent row not found" };
+    row.click();
+    await new Promise(r => setTimeout(r, 250));
+    const del = [...document.querySelectorAll("button")].find(b => b.textContent === "Delete account");
+    if (!del) return { err: "no delete button — is the seeded user an admin?" };
+    del.click();
+    await new Promise(r => setTimeout(r, 250));
+    const afterDelete = window.__store.getState().accounts.map(a => a.id);
+    const undo = document.querySelector("[data-toast-undo]");
+    if (!undo) return { err: "no undo toast after single delete", afterDelete };
+    undo.click();
+    await new Promise(r => setTimeout(r, 300));
+    const s = window.__store.getState();
+    return {
+      afterDelete,
+      accounts: s.accounts.map(a => a.id).sort(),
+      subParent: (s.accounts.find(a => a.id === "s1") || {}).parentId,
+      contacts: s.contacts.map(c => c.id).sort(),
+      tasks: s.tasks.map(t => t.id).sort(),
+      activities: s.activities.length,
+      opps: s.opportunities.length,
+    };
+  });
+  assert(!res.err, res.err);
+  assert(res.afterDelete.join() === "s1", `only the orphaned sub should remain after delete, got ${JSON.stringify(res.afterDelete)}`);
+  assert(res.accounts.join() === "p1,s1", `undo should restore the parent, got ${JSON.stringify(res.accounts)}`);
+  assert(res.subParent === "p1", `undo should restore the sub's parentId, got ${JSON.stringify(res.subParent)}`);
+  assert(res.contacts.join() === "c1,c2", `undo should restore contacts, got ${JSON.stringify(res.contacts)}`);
+  assert(res.tasks.join() === "k1,k2", `undo should restore tasks, got ${JSON.stringify(res.tasks)}`);
+  assert(res.activities === 1 && res.opps === 1, `undo should restore activities and opportunities, got ${res.activities}/${res.opps}`);
+  await browser.close();
+});

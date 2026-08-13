@@ -144,3 +144,17 @@ test("Tab is trapped inside the bulk dialog", async () => {
   assert(afterBack, "Shift+Tab cycling should stay inside the dialog");
   await browser.close();
 });
+
+// Written as a sweep rather than five assertions so a newly added select cannot
+// regress it, matching the icon-only-button sweep above.
+test("every select in the account list has an accessible name", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
+  await page.keyboard.press("3");
+  await page.waitForSelector("[data-select-all]");
+  const bare = await page.evaluate(() => [...document.querySelectorAll("select")]
+    .filter(s => !s.getAttribute("aria-label") && !s.getAttribute("aria-labelledby") && !s.closest("label"))
+    .map(s => s.outerHTML.slice(0, 100)));
+  assert(bare.length === 0, `selects without an accessible name:\n${bare.join("\n")}`);
+  await browser.close();
+});
