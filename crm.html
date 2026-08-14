@@ -1164,7 +1164,9 @@ function AddOppForm({ acct, dispatch, onDone }) {
 }
 
 function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
-  const [newDate, setNewDate] = useState(() => iso(new Date(acct.renewalDate).getTime() + 365 * DAY));
+  // addMonths clamps month-ends and is leap-safe; +365*DAY lands a day early whenever the
+  // span crosses a leap day (a 2027-03-01 renewal defaulted to 2028-02-29).
+  const [newDate, setNewDate] = useState(() => addMonths(acct.renewalDate, 12));
   const [newArr, setNewArr] = useState(acct.arr);
   return (
     <form className="flex flex-wrap items-end gap-3" onSubmit={e => {
@@ -1330,25 +1332,26 @@ function CohortGrid({ accounts }) {
 
 /* ---------------------------- churn analysis ---------------------------- */
 const CHURN_DIMS = ["Reason", "CSM", "Tier", "Quarterly"];
+function churnRows(accounts, rates, dim, now = new Date()) {
+  const m = new Map();
+  accounts.filter(a => a.churn).forEach(a => {
+    const lost = toUSD(a.churn.arr || 0, a.churn.currency || a.currency, rates);
+    const k = dim === "Reason" ? (a.churn.reason || "Other")
+      : dim === "CSM" ? (a.csm || "Unassigned")
+      : dim === "Tier" ? (a.tier || "—")
+      : quarterKey(a.churn.date);
+    const r = m.get(k) || { k, n: 0, arr: 0 };
+    r.n++; r.arr += lost; m.set(k, r);
+  });
+  if (dim !== "Quarterly") return [...m.values()].sort((x, y) => y.arr - x.arr);
+  // Quarterly: last 8 quarters, chronological, zero-filled
+  const keys = [];
+  for (let i = 7; i >= 0; i--) keys.push(quarterKey(new Date(now.getFullYear(), now.getMonth() - i * 3, 1)));
+  return keys.map(k => m.get(k) || { k, n: 0, arr: 0 });
+}
 function ChurnAnalysis({ accounts, rates }) {
   const [dim, setDim] = useState("Reason");
-  const rows = useMemo(() => {
-    const m = new Map();
-    accounts.filter(a => a.churn).forEach(a => {
-      const lost = toUSD(a.churn.arr || 0, a.churn.currency || a.currency, rates);
-      const k = dim === "Reason" ? (a.churn.reason || "Other")
-        : dim === "CSM" ? (a.csm || "Unassigned")
-        : dim === "Tier" ? (a.tier || "—")
-        : quarterKey(a.churn.date);
-      const r = m.get(k) || { k, n: 0, arr: 0 };
-      r.n++; r.arr += lost; m.set(k, r);
-    });
-    if (dim !== "Quarterly") return [...m.values()].sort((x, y) => y.arr - x.arr);
-    // Quarterly: last 8 quarters, chronological, zero-filled
-    const keys = []; const now = new Date();
-    for (let i = 7; i >= 0; i--) keys.push(quarterKey(new Date(now.getFullYear(), now.getMonth() - i * 3, 1)));
-    return keys.map(k => m.get(k) || { k, n: 0, arr: 0 });
-  }, [accounts, rates, dim]);
+  const rows = useMemo(() => churnRows(accounts, rates, dim), [accounts, rates, dim]);
   const total = rows.reduce((s, r) => s + r.arr, 0);
   const max = Math.max(...rows.map(r => r.arr), 1);
   return (
@@ -1373,9 +1376,8 @@ function ChurnAnalysis({ accounts, rates }) {
 }
 
 /* ----------------------- renewal outcomes by quarter ----------------------- */
-function RenewalOutcomes({ accounts, rates, snapshots }) {
-  const rows = useMemo(() => [4, 3, 2, 1, 0].map(off => {
-    const now = new Date();
+function renewalOutcomeRows(accounts, rates, snapshots, now = new Date()) {
+  return [4, 3, 2, 1, 0].map(off => {
     const startMonth = Math.floor(now.getMonth() / 3) * 3 - off * 3;
     const start = new Date(now.getFullYear(), startMonth, 1);
     const end = new Date(now.getFullYear(), startMonth + 3, 1);
@@ -1393,7 +1395,10 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
     const wr = renewed + churned > 0 ? renewed / (renewed + churned) : null;
     return { key: quarterKey(start), renewed, renewedN, churned, churnedN, slipped, wr,
       forecast: snap ? snap.commit90 : null, current: off === 0 };
-  }), [accounts, rates, snapshots]);
+  });
+}
+function RenewalOutcomes({ accounts, rates, snapshots }) {
+  const rows = useMemo(() => renewalOutcomeRows(accounts, rates, snapshots), [accounts, rates, snapshots]);
   const firstForecast = (snapshots || []).find(s => s.commit90 !== undefined);
   const anyForecast = rows.some(r => r.forecast !== null);
   const wrChip = wr => wr === null ? <span className="text-slate-400">—</span>
@@ -3279,7 +3284,8 @@ function Root() {
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   return <ToastProvider><App user={profile} /></ToastProvider>;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV };
+window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>

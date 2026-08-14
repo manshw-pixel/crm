@@ -31,6 +31,14 @@ test("SEED_HEALTH_PLAYBOOK with empty items still records transition", async () 
     window.__store.dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: "t1",
       healthBand: "Green", healthPlaybookBand: undefined,
       event: { date: "2026-07-29", from: "Yellow", to: "Green" }, items: [] });
+    // The 0 here is load-bearing — do NOT raise it. This reads in the gap between the
+    // dispatch and the health auto-seeder's effect. The seeded account scores Yellow
+    // (stale inputsUpdatedAt drags recency down), so the auto-seeder overwrites this
+    // artificial Green and appends a second event: at 50ms this reads Yellow/2 events
+    // and the assertions below fail. Verified 2026-08-14 at 0/50/250ms.
+    // Known flake: at 0ms the auto-seeder occasionally wins anyway (2 of 8 runs).
+    // The real fix is a fixture that scores Green so the auto-seeder agrees — see the
+    // follow-up noted in the money-math PR.
     await new Promise(r => setTimeout(r, 0));
     const a = window.__store.getState().accounts.find(x => x.id === "t1");
     return { band: a.healthBand, pbBand: a.healthPlaybookBand, events: a.healthEvents.length,
