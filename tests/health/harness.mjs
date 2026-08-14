@@ -6,6 +6,11 @@ import { chromium } from "playwright";
 
 const CRM = fileURLToPath(new URL("../../crm.html", import.meta.url));
 
+// CI runners have no Edge, so use Playwright's bundled Chromium there and the browser
+// the team actually uses locally. `??` not `||`: an explicitly empty CRM_TEST_CHANNEL
+// must select bundled Chromium, not fall back to msedge.
+const CHANNEL = process.env.CRM_TEST_CHANNEL ?? "msedge";
+
 // In-memory Supabase mock: enough surface for load + write-through + realtime stubs,
 // plus the auth/profile gate that Root() requires before it will render App().
 const MOCK = `const CONFIGURED = true;
@@ -123,7 +128,7 @@ function buildHtml(seedJs, mock) {
 // whatever was actually persisted, which is the closest an offline harness can get to
 // "reload the browser and confirm it stuck".
 export async function launchPersistent(seedJs) {
-  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
   const page = await browser.newPage();
   await page.goto(buildHtml(seedJs, STATEFUL_MOCK));
   await page.waitForSelector("#root", { timeout: 15000 });
@@ -166,7 +171,7 @@ export const rootText = page => page.textContent("#root");
 
 export async function launch(seedJs) {
   const url = buildMockedHtml(seedJs);
-  const browser = await chromium.launch({ channel: "msedge", headless: true });
+  const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
   const page = await browser.newPage();
   await page.goto(url);
   await page.waitForSelector("#root", { timeout: 15000 });
