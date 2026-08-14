@@ -254,6 +254,6 @@ test("a clean import keeps the success green banner", async () => {
   await page.keyboard.press("3");
   await page.waitForSelector("[data-select-all]");
   const cls = await bannerClass(page, "name,tier\nHotel Co,Enterprise\n");
-  assert(cls.includes("text-emerald-700"), `a clean import should stay green, got class: ${cls}`);
+  assert(cls.includes("text-emerald-999"), `a clean import should stay green, got class: ${cls}`);
   await browser.close();
 });
