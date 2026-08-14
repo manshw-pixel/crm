@@ -1164,7 +1164,9 @@ function AddOppForm({ acct, dispatch, onDone }) {
 }
 
 function CompleteRenewalForm({ acct, user, dispatch, onDone }) {
-  const [newDate, setNewDate] = useState(() => iso(new Date(acct.renewalDate).getTime() + 365 * DAY));
+  // addMonths clamps month-ends and is leap-safe; +365*DAY lands a day early whenever the
+  // span crosses a leap day (a 2027-03-01 renewal defaulted to 2028-02-29).
+  const [newDate, setNewDate] = useState(() => addMonths(acct.renewalDate, 12));
   const [newArr, setNewArr] = useState(acct.arr);
   return (
     <form className="flex flex-wrap items-end gap-3" onSubmit={e => {

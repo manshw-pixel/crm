@@ -92,6 +92,30 @@ test("a flat renewal writes no ARR audit entry", async () => {
   await browser.close();
 });
 
+test("the renewal form's date field is prefilled one year out, not 365 days out", async () => {
+  // Renewing a 2027-03-01 contract must prefill 2028-03-01. Adding 365 days lands on
+  // 2028-02-29, a day early, because the span crosses leap day.
+  const { page, browser } = await launch(bookSeed([
+    scored({ id: "a1", name: "Leap Corp", arr: 100000, renewalDate: "2027-03-01" })]));
+  await ready(page);
+  await page.click('button[title="Accounts"]');
+  await page.getByText("Leap Corp").first().click();
+  await page.getByText("Complete renewal").first().click();
+  const v = await page.locator('form input[type="date"]').first().inputValue();
+  assert(v === "2028-03-01", `the prefilled renewal date should be 2028-03-01, got ${v}`);
+  await browser.close();
+});
+
+test("addMonths keeps the calendar day when the year it spans contains a leap day", async () => {
+  // Pins the helper the form now delegates to, so a future change there cannot silently
+  // reintroduce the off-by-one-day defect.
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__health);
+  const d = await page.evaluate(() => window.__health.addMonths("2027-03-01", 12));
+  assert(d === "2028-03-01", `expected 2028-03-01, got ${d}`);
+  await browser.close();
+});
+
 test("COMPLETE_RENEWAL writes no arrEvent, so retention counts the renewal once", async () => {
   const { page, browser } = await launch(seed);
   await ready(page);
