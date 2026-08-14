@@ -365,7 +365,7 @@ Create `tests/health/cohort.test.mjs`:
 ```js
 import { launch } from "./harness.mjs";
 import { test, assert } from "./framework.mjs";
-import { rel, RATES, scored, bookSeed } from "./money-fixture.mjs";
+import { rel, scored, bookSeed } from "./money-fixture.mjs";
 
 // Cohorts key off startDate. Offsets are chosen to sit well inside a quarter so the
 // suite cannot break on a quarter boundary: rel(-400) is ~13 months back, rel(-1500)
@@ -886,16 +886,20 @@ test("COMPLETE_RENEWAL resets billing and the renewal stage for the new term", a
   await browser.close();
 });
 
-test("COMPLETE_RENEWAL preserves the prior billing state on the renewals entry", async () => {
+test("COMPLETE_RENEWAL stores the renewal entry verbatim, losing no fields", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store);
-  // The account's live billing flags reset, but the entry keeps what was true for the
-  // term that just ended — otherwise the history is unreadable.
-  const u = await complete(page, { newDate: "2028-01-01", newArr: 120000 });
-  assert(u.renewals[0].billingCompleted === true,
-    `the entry should remember billing was completed, got ${u.renewals[0].billingCompleted}`);
-  assert(u.renewals[0].billingCompletedDate === "2026-02-01",
-    `the entry should remember the billing date, got ${u.renewals[0].billingCompletedDate}`);
+  // The reducer must append action.entry whole. The account's live billing flags reset
+  // for the new term, so the entry is the ONLY record of what was true for the term that
+  // just ended — a reducer that rebuilt it field-by-field would silently drop history.
+  const r = await page.evaluate(() => {
+    const entry = { id: "e9", completedOn: "2026-08-14", from: "2027-01-01", to: "2028-01-01",
+      prevArr: 100000, arr: 120000, by: "Tester", billingCompleted: true, billingCompletedDate: "2026-02-01" };
+    window.__store.dispatch({ type: "COMPLETE_RENEWAL", id: "a1", newDate: "2028-01-01", newArr: 120000, entry });
+    const stored = window.__store.getState().accounts.find(x => x.id === "a1").renewals[0];
+    return { stored, same: JSON.stringify(stored) === JSON.stringify(entry) };
+  });
+  assert(r.same, `the entry should be stored unchanged, got ${JSON.stringify(r.stored)}`);
   await browser.close();
 });
 
@@ -1186,21 +1190,30 @@ Expected: **159 passed, 0 failed**.
 `AdjustArrForm` returns early when the delta is zero (`crm.html:1213`), so no action is
 dispatched at all. Append:
 
+The guard lives in the form, so it must be tested through the form. A test that recomputes
+`delta` itself and then declines to dispatch proves nothing — it asserts the test's own
+arithmetic and can never fail.
+
 ```js
-test("adjusting to the same ARR dispatches nothing", async () => {
+test("submitting the adjust form without changing ARR writes nothing", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store);
-  const before = await page.evaluate(() => JSON.stringify(window.__store.getState().accounts.find(x => x.id === "a1")));
-  const after = await page.evaluate(() => {
-    const a = window.__store.getState().accounts.find(x => x.id === "a1");
-    const delta = a.arr - a.arr;
-    if (delta !== 0) window.__store.dispatch({ type: "ADJUST_ARR", id: "a1", newArr: a.arr, entry: {} });
-    return JSON.stringify(window.__store.getState().accounts.find(x => x.id === "a1"));
-  });
-  assert(before === after, "a zero-delta adjustment must leave the account untouched");
+  await page.click('text=Alpha Corp');
+  await page.click('text=Adjust ARR');
+  const before = await page.evaluate(() =>
+    JSON.stringify(window.__store.getState().accounts.find(x => x.id === "a1")));
+  // Submit with the ARR field untouched. The button reads "No change" at zero delta.
+  await page.click('text=No change');
+  const after = await page.evaluate(() =>
+    JSON.stringify(window.__store.getState().accounts.find(x => x.id === "a1")));
+  assert(before === after, "a zero-delta submit must leave the account untouched");
   await browser.close();
 });
 ```
+
+If those selectors don't match the rendered UI, find the real ones with `page.locator(...)`.
+Do not fall back to dispatching the action directly — the form's early return at
+`crm.html:1213` is the behavior under test, and the reducer has no such guard.
 
 Run again. Expected: **160 passed, 0 failed**.
 
