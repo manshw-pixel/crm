@@ -3,6 +3,10 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [master]
+  # so the gate runs before a merge, not only after one. deploy is skipped on
+  # pull_request runs — publishing a branch to the live site would defeat the point.
+  pull_request:
+    branches: [master]
   workflow_dispatch:
 
 permissions:
@@ -11,11 +15,38 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
+  # per-ref now that PRs run too, so a PR's test run cannot cancel a master deploy
+  group: pages-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CRM_TEST_CHANNEL: ""      # no Edge on the runner; use bundled Chromium
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/package-lock.json
+      - run: npm ci
+        working-directory: tests
+      - run: npx playwright install --with-deps chromium
+        working-directory: tests
+      # NEVER pipe this — run.mjs's exit code IS the gate, and a pipe replaces it
+      - id: suite
+        run: node tests/health/run.mjs
+        continue-on-error: true
+      # the suite loads React/Babel/Tailwind from unpkg on every page; a CDN blip is not
+      # a regression. Same retry-once shape as deploy-pages below.
+      - if: steps.suite.outcome == 'failure'
+        run: node tests/health/run.mjs
+
   deploy:
+    needs: test
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages
