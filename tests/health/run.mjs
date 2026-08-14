@@ -25,6 +25,7 @@ import "./cohort.test.mjs";
 import "./churn-analysis.test.mjs";
 import "./renewal-outcomes.test.mjs";
 import "./renewal-write.test.mjs";
+import "./arr-audit.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
