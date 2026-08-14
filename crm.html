@@ -263,6 +263,9 @@ const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportuni
 const dbError = (where, error) => {
   console.error(where, error);
   const text = `Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`;
+  // alert() is the fallback, not the primary path: this helper can fire before
+  // ToastProvider mounts, and losing a failed-save warning entirely would be worse than
+  // an unstyled dialog. Deliberately kept — see the UX robustness spec.
   if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
 };
 
@@ -937,6 +940,7 @@ function DocumentsCard({ a, dispatch, user }) {
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [confirmDoc, setConfirmDoc] = useState(null);
   return (
     <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
       {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
@@ -957,11 +961,7 @@ function DocumentsCard({ a, dispatch, user }) {
                   <button title="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
                     onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
                   <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
-                    onClick={async () => {
-                      if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
-                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { toast({ text: "Could not delete file: " + error.message, tone: "error" }); return; } }
-                      dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
-                    }}>✕</button>
+                    onClick={() => setConfirmDoc(d)}>✕</button>
                 </div>
                 {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
               </div>
@@ -969,6 +969,18 @@ function DocumentsCard({ a, dispatch, user }) {
           </div>
         );
       })}
+      {confirmDoc && <ConfirmDialog
+        title="Delete document"
+        body={`Delete "${confirmDoc.title || confirmDoc.name}"? This permanently removes the file and cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          if (sb) {
+            const { error } = await sb.storage.from("attachments").remove([confirmDoc.path]);
+            if (error) { toast({ text: "Could not delete file: " + error.message, tone: "error" }); return; }
+          }
+          dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: confirmDoc.id, by: user?.name, source: "delete" });
+        }}
+        onClose={() => setConfirmDoc(null)} />}
     </Card>
   );
 }
@@ -2263,6 +2275,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
+  const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
@@ -2440,15 +2453,17 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                   const stage = e.target.value;
                   if (stage === o.stage) return;
                   if (stage === "Won") {
-                    if (!confirm(`Mark this ${o.type} as WON and book ${fmtMoney(o.value, a.currency)} expansion ARR onto ${a.name}?`)) return;
-                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
-                    dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
-                      entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
-                    dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
-                      summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                    // The select is controlled by o.stage, so opening the dialog re-renders
+                    // it back to the current stage until the change is actually confirmed.
+                    setConfirmOpp({ kind: "won", opp: o, run: () => {
+                      dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                      dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
+                        entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
+                      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
+                        summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                    } });
                   } else if (o.stage === "Won") {
-                    if (!confirm("This opportunity was already booked as Won expansion. Changing its stage does NOT reverse the ARR — use ⇄ Adjust ARR for that. Continue?")) return;
-                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                    setConfirmOpp({ kind: "stage", opp: o, run: () => dispatch({ type: "SET_OPP_STAGE", id: o.id, stage }) });
                   } else {
                     dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
                   }
@@ -2458,6 +2473,15 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           ))}
         </Card>
       </div>
+      {confirmOpp && <ConfirmDialog
+        title={confirmOpp.kind === "won" ? "Book expansion ARR" : "Change a booked opportunity"}
+        tone={confirmOpp.kind === "won" ? "normal" : "danger"}
+        body={confirmOpp.kind === "won"
+          ? `Mark this ${confirmOpp.opp.type} as WON and book ${fmtMoney(confirmOpp.opp.value, a.currency)} expansion ARR onto ${a.name}?`
+          : "This opportunity was already booked as Won expansion. Changing its stage does NOT reverse the ARR — use ⇄ Adjust ARR for that."}
+        confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
+        onConfirm={() => confirmOpp.run()}
+        onClose={() => setConfirmOpp(null)} />}
       <DocumentsCard a={a} dispatch={dispatch} user={user} />
       {(() => {
         const events = [
@@ -3330,6 +3354,9 @@ function Root() {
   useEffect(() => {
     if (!session) { setProfile(null); return; }
     sb.from("profiles").select("id,name,role").eq("id", session.user.id).single()
+      // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
+      // wraps App, so window.__toast is genuinely undefined here and alert is the only
+      // channel left. Deliberately kept.
       .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : setProfile(data));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
