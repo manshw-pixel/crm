@@ -1896,6 +1896,33 @@ function Modal({ label, onClose, initialFocusRef, children, ...rest }) {
     </div>
   );
 }
+
+// Guards actions in proportion to how reversible they are. Reversible actions do not use
+// this at all -- they act immediately and offer an Undo toast, which is safer than a
+// dialog people click through reflexively.
+function ConfirmDialog({ title, body, confirmLabel = "Confirm", tone = "danger", typedWord, onConfirm, onClose }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef();
+  const ready = !typedWord || typed === typedWord;
+  const go = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    try { await onConfirm(); } finally { onClose(); }
+  };
+  return (
+    <Modal label={title} onClose={onClose} initialFocusRef={typedWord ? inputRef : undefined} data-confirmdialog>
+      <h3 className="mb-2 text-sm font-bold text-slate-800">{title}</h3>
+      <p className={`text-xs ${tone === "danger" ? "text-rose-700" : "text-slate-600"}`}>{body}</p>
+      {typedWord && <label className="mt-3 block text-xs text-slate-700">Type {typedWord} to confirm
+        <Input ref={inputRef} value={typed} onChange={e => setTyped(e.target.value)} /></label>}
+      <div className="mt-4 flex gap-2">
+        <Btn kind="primary" disabled={!ready || busy} data-confirm-go onClick={go}>{confirmLabel}</Btn>
+        <Btn onClick={onClose}>Cancel</Btn>
+      </div>
+    </Modal>
+  );
+}
 function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   const toast = useToast();
   const names = team.map(t => t.name).filter(Boolean);
@@ -2300,12 +2327,19 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
         {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
-            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
+          onClick={() => {
+            // Reversible in one dispatch, so no dialog: act, then offer Undo.
+            const prev = a.churn;
+            dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
+            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
+            toast({ text: `Reactivated ${a.name}.`, tone: "success",
+              undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
+          }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
           onClick={() => {
-            if (!confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) return;
+            // No dialog: the Undo toast below is the guard, and it is a better one --
+            // a confirm people click through protects nothing.
             // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
             // already handles a single id, including sub-account parentIds
             const snapshot = snapshotFor(st, [a.id]);
@@ -2742,6 +2776,7 @@ function Settings({ st, dispatch, user, scored }) {
   const rates = st.settings.rates;
   const total = Object.values(w).reduce((a, b) => a + b, 0);
   const fileRef = useRef();
+  const [confirmData, setConfirmData] = useState(null); // "sample" | "clear"
   const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
@@ -2793,9 +2828,18 @@ function Settings({ st, dispatch, user, scored }) {
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
           <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
           <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
-          <Btn onClick={() => { if (confirm("Replace the team's data with the sample dataset? This affects everyone.")) bulkReplace(seedData()); }}>Load sample data</Btn>
-          <Btn onClick={() => { if (confirm("Delete ALL of the team's accounts and data? Export JSON first if you want a backup.")) bulkReplace(emptyData()); }}>Clear all data</Btn>
+          <Btn onClick={() => setConfirmData("sample")}>Load sample data</Btn>
+          <Btn onClick={() => setConfirmData("clear")}>Clear all data</Btn>
         </div>
+        {confirmData && <ConfirmDialog
+          title={confirmData === "sample" ? "Replace all team data" : "Delete all team data"}
+          body={confirmData === "sample"
+            ? "This replaces the team's data with the sample dataset. Everyone sees this change, and it cannot be undone."
+            : "This deletes ALL of the team's accounts and data for everyone. Export JSON first if you want a backup. It cannot be undone."}
+          confirmLabel={confirmData === "sample" ? "Replace data" : "Delete everything"}
+          typedWord={confirmData === "sample" ? "REPLACE" : "DELETE"}
+          onConfirm={() => bulkReplace(confirmData === "sample" ? seedData() : emptyData())}
+          onClose={() => setConfirmData(null)} />}
         <p className="mt-3 text-xs text-slate-700">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
       </Card>
     </div>
