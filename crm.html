@@ -2127,6 +2127,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
     </div>}>
+      {/* The filtered count lives in the Card's title prop, so there is no element there to
+          annotate. A visually-hidden live region announces it instead. */}
+      <span data-live="results" aria-live="polite" className="sr-only">{rows.length} accounts</span>
+      {/* A live region must already be in the DOM when its content changes, or the change is
+          frequently not announced. This sr-only region is permanent and mirrors a short form
+          of the result; the visual banner below is left structurally untouched, because
+          csv.test.mjs locates it as "the first div whose text starts with Imported". */}
+      <span data-live="import" aria-live="polite" className="sr-only">
+        {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
+      </span>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus) ? "text-amber-700" : "text-emerald-700"}`}>
         {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
@@ -2179,7 +2189,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       </div>
       {selected.size > 0 && (
         <div data-bulkbar className="nm-sm mb-3 flex flex-wrap items-center gap-2 p-3">
-          <span className="text-sm font-bold text-slate-800">{selected.size} selected</span>
+          <span data-live="selection" aria-live="polite" className="text-sm font-bold text-slate-800">{selected.size} selected</span>
           <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>
           <Btn onClick={() => setBulkAction("tier")}>Change tier</Btn>
           <Btn onClick={() => setBulkAction("task")}>Add task</Btn>
@@ -3106,6 +3116,29 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   );
 }
 const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
+// Catches render/lifecycle errors in the view area only, so a crash costs one screen
+// instead of the session. Does NOT catch errors in event handlers or async callbacks --
+// those already route through the try/catch blocks and the error toast.
+class ViewBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, attempt: 0 }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("View crashed:", this.props.view, error, info); }
+  render() {
+    // Fragment, not a div: the views are laid out by their parent, and injecting a wrapper
+    // element would change that layout. The key is still what remounts the subtree on retry.
+    if (!this.state.error) return <React.Fragment key={this.state.attempt}>{this.props.children}</React.Fragment>;
+    return (
+      <div data-viewerror className="nm m-4 p-6" role="alert">
+        <h2 className="mb-2 text-sm font-bold text-rose-700">Something went wrong in {this.props.view}</h2>
+        <p className="mb-1 text-xs text-slate-600">This view couldn't be displayed. Your data is safe — nothing was changed.</p>
+        <p className="mb-4 font-mono text-[11px] text-slate-500">{String(this.state.error?.message || this.state.error)}</p>
+        <button className="nm-btn px-3 py-1.5 text-xs font-bold text-indigo-600"
+          onClick={() => this.setState(s => ({ error: null, attempt: s.attempt + 1 }))}>Try again</button>
+      </div>
+    );
+  }
+}
+
 function App({ user }) {
   const toast = useToast();
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
@@ -3327,13 +3360,15 @@ function App({ user }) {
           )}
         </div>
       </div>
-      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
-      {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
-      {view === "Accounts" && (acctId
-        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
-        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-      {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+      <ViewBoundary key={view} view={view}>
+        {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
+        {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
+        {view === "Accounts" && (acctId
+          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
+          : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
+        {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
+        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+      </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
         go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
       <Copyright />
@@ -3363,7 +3398,11 @@ function Root() {
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
-  return <ToastProvider><App user={profile} /></ToastProvider>;
+  // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
+  // Renewals leaves the nav and every other view usable. This outer one is the backstop --
+  // App's own body computes analytics (retentionStats at ~3204), so data that breaks THAT
+  // throws before any view renders, and without this the user gets a blank white page.
+  return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD };

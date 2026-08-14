@@ -158,3 +158,41 @@ test("every select in the account list has an accessible name", async () => {
   assert(bare.length === 0, `selects without an accessible name:\n${bare.join("\n")}`);
   await browser.close();
 });
+
+test("the account list result count is announced", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store);
+  await page.click('button[title="Accounts"]');
+  const ok = await page.evaluate(() => {
+    const el = document.querySelector('[data-live="results"]');
+    return el && el.getAttribute("aria-live") === "polite" && /\d+ accounts/.test(el.textContent);
+  });
+  assert(ok, "the result count should be a polite live region naming the count");
+  await browser.close();
+});
+
+test("the bulk selection count is announced", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store);
+  await page.click('button[title="Accounts"]');
+  await page.locator('input[type="checkbox"]').first().check();
+  const ok = await page.evaluate(() => {
+    const el = document.querySelector('[data-live="selection"]');
+    return el && el.getAttribute("aria-live") === "polite";
+  });
+  assert(ok, "the selection count should carry aria-live=polite");
+  await browser.close();
+});
+
+test("the import result region exists before an import runs", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store);
+  await page.click('button[title="Accounts"]');
+  // The region must be mounted BEFORE it gains content, or the change is not announced.
+  const ok = await page.evaluate(() => {
+    const el = document.querySelector('[data-live="import"]');
+    return el && el.getAttribute("aria-live") === "polite" && el.textContent === "";
+  });
+  assert(ok, "the import live region should be present and empty before any import");
+  await browser.close();
+});
