@@ -1854,35 +1854,28 @@ function IntegrationsCard({ st, dispatch, user }) {
 
 /* ------------------------------ bulk actions ------------------------------ */
 const BULK_TITLE = { csm: "Reassign CSM", tier: "Change tier", task: "Add task to each", churn: "Churn accounts", delete: "Delete accounts" };
-function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
-  const toast = useToast();
-  const names = team.map(t => t.name).filter(Boolean);
-  const [csmVal, setCsmVal] = useState(names[0] || user.name);
-  const [tierVal, setTierVal] = useState("Mid");
-  const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
-  const [owner, setOwner] = useState(user.name);
-  const [reason, setReason] = useState(""); const [note, setNote] = useState("");
-  const [date, setDate] = useState(iso(Date.now()));
-  const [confirmText, setConfirmText] = useState("");
-  const ref = useRef();
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+// The modal shell, extracted from BulkDialog so ConfirmDialog cannot drift from it.
+// Both the focus-on-open behavior and the capture-phase Escape handling below fix real
+// bugs; a second hand-written copy is how one of them silently regresses.
+function Modal({ label, onClose, initialFocusRef, children, ...rest }) {
   const dlgRef = useRef(null);
-  const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
-  // Focus the dialog's first control on open. This is done from the container rather
-  // than with a ref on each input because the csm/tier kinds render a <Select>, which
-  // is a plain function component and does not forward refs -- the old per-input ref
-  // silently did nothing for three of the five kinds.
+  // Focus the first control from the container rather than a ref on each input: <Select>
+  // is a plain function component and does not forward refs, so per-input refs silently
+  // did nothing for three of the five bulk kinds.
   useEffect(() => {
     const first = dlgRef.current?.querySelector(FOCUSABLE);
-    (ref.current || first)?.focus();
-  }, []);
-  // stopPropagation is required: App registers a window-level Escape that closes the
-  // account detail view, so an unguarded Escape would close the dialog AND navigate.
+    (initialFocusRef?.current || first)?.focus();
+  }, [initialFocusRef]);
   useEffect(() => {
     const h = e => {
+      // stopPropagation is required: App registers a window-level Escape that closes the
+      // account detail view, so an unguarded Escape would close the dialog AND navigate.
       if (e.key === "Escape") { e.stopPropagation(); onClose(); return; }
       if (e.key !== "Tab") return;
-      // trap Tab inside the modal: without this it walks into the account table
-      // behind the overlay, which is inert to the eye but not to the keyboard
+      // trap Tab inside the modal: without this it walks into the table behind the
+      // overlay, which is inert to the eye but not to the keyboard
       const items = [...(dlgRef.current?.querySelectorAll(FOCUSABLE) || [])];
       if (items.length === 0) return;
       const first = items[0], last = items[items.length - 1];
@@ -1894,6 +1887,26 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
     window.addEventListener("keydown", h, true); // capture phase: runs before App's handler
     return () => window.removeEventListener("keydown", h, true);
   }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
+      <div ref={dlgRef} role="dialog" aria-modal="true" aria-label={label}
+           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()} {...rest}>
+        {children}
+      </div>
+    </div>
+  );
+}
+function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
+  const toast = useToast();
+  const names = team.map(t => t.name).filter(Boolean);
+  const [csmVal, setCsmVal] = useState(names[0] || user.name);
+  const [tierVal, setTierVal] = useState("Mid");
+  const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
+  const [owner, setOwner] = useState(user.name);
+  const [reason, setReason] = useState(""); const [note, setNote] = useState("");
+  const [date, setDate] = useState(iso(Date.now()));
+  const [confirmText, setConfirmText] = useState("");
+  const ref = useRef();
 
   const ready = kind === "churn" ? !!reason
     : kind === "delete" ? confirmText === "DELETE"
@@ -1942,9 +1955,7 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
-      <div data-bulkdialog ref={dlgRef} role="dialog" aria-modal="true" aria-label={BULK_TITLE[kind]}
-           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()}>
+    <Modal label={BULK_TITLE[kind]} onClose={onClose} initialFocusRef={ref} data-bulkdialog>
         <div className="mb-3 flex items-center">
           <h3 className="flex-1 text-sm font-bold text-slate-800">{BULK_TITLE[kind]} · {ids.length} account{ids.length === 1 ? "" : "s"}</h3>
           <button aria-label="Close dialog" className="text-slate-400 hover:text-slate-700" onClick={onClose}>✕</button>
@@ -1977,8 +1988,7 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
           <Btn kind="primary" disabled={!ready} data-bulk-confirm onClick={submit}>Apply</Btn>
           <Btn onClick={onClose}>Cancel</Btn>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
