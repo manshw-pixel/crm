@@ -683,7 +683,9 @@ class ViewBoundary extends React.Component {
   static getDerivedStateFromError(error) { return { error }; }
   componentDidCatch(error, info) { console.error("View crashed:", this.props.view, error, info); }
   render() {
-    if (!this.state.error) return <div key={this.state.attempt}>{this.props.children}</div>;
+    // Fragment, not a div: the views are laid out by their parent, and injecting a wrapper
+    // element would change that layout. The key is still what remounts the subtree on retry.
+    if (!this.state.error) return <React.Fragment key={this.state.attempt}>{this.props.children}</React.Fragment>;
     return (
       <div data-viewerror className="nm m-4 p-6" role="alert">
         <h2 className="mb-2 text-sm font-bold text-rose-700">Something went wrong in {this.props.view}</h2>
