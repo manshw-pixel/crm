@@ -263,6 +263,9 @@ const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportuni
 const dbError = (where, error) => {
   console.error(where, error);
   const text = `Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`;
+  // alert() is the fallback, not the primary path: this helper can fire before
+  // ToastProvider mounts, and losing a failed-save warning entirely would be worse than
+  // an unstyled dialog. Deliberately kept — see the UX robustness spec.
   if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
 };
 
@@ -937,6 +940,7 @@ function DocumentsCard({ a, dispatch, user }) {
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
+  const [confirmDoc, setConfirmDoc] = useState(null);
   return (
     <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
       {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
@@ -957,11 +961,7 @@ function DocumentsCard({ a, dispatch, user }) {
                   <button title="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
                     onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
                   <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
-                    onClick={async () => {
-                      if (!confirm(`Delete "${d.title || d.name}"? This permanently removes the file.`)) return;
-                      if (sb) { const { error } = await sb.storage.from("attachments").remove([d.path]); if (error) { toast({ text: "Could not delete file: " + error.message, tone: "error" }); return; } }
-                      dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: d.id, by: user?.name, source: "delete" });
-                    }}>✕</button>
+                    onClick={() => setConfirmDoc(d)}>✕</button>
                 </div>
                 {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
               </div>
@@ -969,6 +969,18 @@ function DocumentsCard({ a, dispatch, user }) {
           </div>
         );
       })}
+      {confirmDoc && <ConfirmDialog
+        title="Delete document"
+        body={`Delete "${confirmDoc.title || confirmDoc.name}"? This permanently removes the file and cannot be undone.`}
+        confirmLabel="Delete"
+        onConfirm={async () => {
+          if (sb) {
+            const { error } = await sb.storage.from("attachments").remove([confirmDoc.path]);
+            if (error) { toast({ text: "Could not delete file: " + error.message, tone: "error" }); return; }
+          }
+          dispatch({ type: "DELETE_DOCUMENT", id: a.id, docId: confirmDoc.id, by: user?.name, source: "delete" });
+        }}
+        onClose={() => setConfirmDoc(null)} />}
     </Card>
   );
 }
@@ -1854,35 +1866,28 @@ function IntegrationsCard({ st, dispatch, user }) {
 
 /* ------------------------------ bulk actions ------------------------------ */
 const BULK_TITLE = { csm: "Reassign CSM", tier: "Change tier", task: "Add task to each", churn: "Churn accounts", delete: "Delete accounts" };
-function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
-  const toast = useToast();
-  const names = team.map(t => t.name).filter(Boolean);
-  const [csmVal, setCsmVal] = useState(names[0] || user.name);
-  const [tierVal, setTierVal] = useState("Mid");
-  const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
-  const [owner, setOwner] = useState(user.name);
-  const [reason, setReason] = useState(""); const [note, setNote] = useState("");
-  const [date, setDate] = useState(iso(Date.now()));
-  const [confirmText, setConfirmText] = useState("");
-  const ref = useRef();
+const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+// The modal shell, extracted from BulkDialog so ConfirmDialog cannot drift from it.
+// Both the focus-on-open behavior and the capture-phase Escape handling below fix real
+// bugs; a second hand-written copy is how one of them silently regresses.
+function Modal({ label, onClose, initialFocusRef, children, ...rest }) {
   const dlgRef = useRef(null);
-  const FOCUSABLE = "a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
-  // Focus the dialog's first control on open. This is done from the container rather
-  // than with a ref on each input because the csm/tier kinds render a <Select>, which
-  // is a plain function component and does not forward refs -- the old per-input ref
-  // silently did nothing for three of the five kinds.
+  // Focus the first control from the container rather than a ref on each input: <Select>
+  // is a plain function component and does not forward refs, so per-input refs silently
+  // did nothing for three of the five bulk kinds.
   useEffect(() => {
     const first = dlgRef.current?.querySelector(FOCUSABLE);
-    (ref.current || first)?.focus();
-  }, []);
-  // stopPropagation is required: App registers a window-level Escape that closes the
-  // account detail view, so an unguarded Escape would close the dialog AND navigate.
+    (initialFocusRef?.current || first)?.focus();
+  }, [initialFocusRef]);
   useEffect(() => {
     const h = e => {
+      // stopPropagation is required: App registers a window-level Escape that closes the
+      // account detail view, so an unguarded Escape would close the dialog AND navigate.
       if (e.key === "Escape") { e.stopPropagation(); onClose(); return; }
       if (e.key !== "Tab") return;
-      // trap Tab inside the modal: without this it walks into the account table
-      // behind the overlay, which is inert to the eye but not to the keyboard
+      // trap Tab inside the modal: without this it walks into the table behind the
+      // overlay, which is inert to the eye but not to the keyboard
       const items = [...(dlgRef.current?.querySelectorAll(FOCUSABLE) || [])];
       if (items.length === 0) return;
       const first = items[0], last = items[items.length - 1];
@@ -1894,6 +1899,53 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
     window.addEventListener("keydown", h, true); // capture phase: runs before App's handler
     return () => window.removeEventListener("keydown", h, true);
   }, [onClose]);
+  return (
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
+      <div ref={dlgRef} role="dialog" aria-modal="true" aria-label={label}
+           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()} {...rest}>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Guards actions in proportion to how reversible they are. Reversible actions do not use
+// this at all -- they act immediately and offer an Undo toast, which is safer than a
+// dialog people click through reflexively.
+function ConfirmDialog({ title, body, confirmLabel = "Confirm", tone = "danger", typedWord, onConfirm, onClose }) {
+  const [typed, setTyped] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef();
+  const ready = !typedWord || typed === typedWord;
+  const go = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    try { await onConfirm(); } finally { onClose(); }
+  };
+  return (
+    <Modal label={title} onClose={onClose} initialFocusRef={typedWord ? inputRef : undefined} data-confirmdialog>
+      <h3 className="mb-2 text-sm font-bold text-slate-800">{title}</h3>
+      <p className={`text-xs ${tone === "danger" ? "text-rose-700" : "text-slate-600"}`}>{body}</p>
+      {typedWord && <label className="mt-3 block text-xs text-slate-700">Type {typedWord} to confirm
+        <Input ref={inputRef} value={typed} onChange={e => setTyped(e.target.value)} /></label>}
+      <div className="mt-4 flex gap-2">
+        <Btn kind="primary" disabled={!ready || busy} data-confirm-go onClick={go}>{confirmLabel}</Btn>
+        <Btn onClick={onClose}>Cancel</Btn>
+      </div>
+    </Modal>
+  );
+}
+function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
+  const toast = useToast();
+  const names = team.map(t => t.name).filter(Boolean);
+  const [csmVal, setCsmVal] = useState(names[0] || user.name);
+  const [tierVal, setTierVal] = useState("Mid");
+  const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
+  const [owner, setOwner] = useState(user.name);
+  const [reason, setReason] = useState(""); const [note, setNote] = useState("");
+  const [date, setDate] = useState(iso(Date.now()));
+  const [confirmText, setConfirmText] = useState("");
+  const ref = useRef();
 
   const ready = kind === "churn" ? !!reason
     : kind === "delete" ? confirmText === "DELETE"
@@ -1942,9 +1994,7 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
-      <div data-bulkdialog ref={dlgRef} role="dialog" aria-modal="true" aria-label={BULK_TITLE[kind]}
-           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()}>
+    <Modal label={BULK_TITLE[kind]} onClose={onClose} initialFocusRef={ref} data-bulkdialog>
         <div className="mb-3 flex items-center">
           <h3 className="flex-1 text-sm font-bold text-slate-800">{BULK_TITLE[kind]} · {ids.length} account{ids.length === 1 ? "" : "s"}</h3>
           <button aria-label="Close dialog" className="text-slate-400 hover:text-slate-700" onClick={onClose}>✕</button>
@@ -1977,8 +2027,7 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
           <Btn kind="primary" disabled={!ready} data-bulk-confirm onClick={submit}>Apply</Btn>
           <Btn onClick={onClose}>Cancel</Btn>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
 
@@ -2078,6 +2127,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
     </div>}>
+      {/* The filtered count lives in the Card's title prop, so there is no element there to
+          annotate. A visually-hidden live region announces it instead. */}
+      <span data-live="results" aria-live="polite" className="sr-only">{rows.length} accounts</span>
+      {/* A live region must already be in the DOM when its content changes, or the change is
+          frequently not announced. This sr-only region is permanent and mirrors a short form
+          of the result; the visual banner below is left structurally untouched, because
+          csv.test.mjs locates it as "the first div whose text starts with Imported". */}
+      <span data-live="import" aria-live="polite" className="sr-only">
+        {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
+      </span>
       {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus) ? "text-amber-700" : "text-emerald-700"}`}>
         {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
@@ -2130,7 +2189,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       </div>
       {selected.size > 0 && (
         <div data-bulkbar className="nm-sm mb-3 flex flex-wrap items-center gap-2 p-3">
-          <span className="text-sm font-bold text-slate-800">{selected.size} selected</span>
+          <span data-live="selection" aria-live="polite" className="text-sm font-bold text-slate-800">{selected.size} selected</span>
           <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>
           <Btn onClick={() => setBulkAction("tier")}>Change tier</Btn>
           <Btn onClick={() => setBulkAction("task")}>Add task</Btn>
@@ -2226,6 +2285,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
+  const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
@@ -2290,12 +2350,19 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
         {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-          onClick={() => { if (confirm(`Reactivate ${a.name}?`)) { dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
-            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } }); } }}>↻ Reactivate</button>}
+          onClick={() => {
+            // Reversible in one dispatch, so no dialog: act, then offer Undo.
+            const prev = a.churn;
+            dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
+            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
+            toast({ text: `Reactivated ${a.name}.`, tone: "success",
+              undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
+          }}>↻ Reactivate</button>}
         {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
           onClick={() => {
-            if (!confirm(`Delete ${a.name} for the whole team, including its contacts, activities, tasks and opportunities?`)) return;
+            // No dialog: the Undo toast below is the guard, and it is a better one --
+            // a confirm people click through protects nothing.
             // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
             // already handles a single id, including sub-account parentIds
             const snapshot = snapshotFor(st, [a.id]);
@@ -2396,15 +2463,17 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                   const stage = e.target.value;
                   if (stage === o.stage) return;
                   if (stage === "Won") {
-                    if (!confirm(`Mark this ${o.type} as WON and book ${fmtMoney(o.value, a.currency)} expansion ARR onto ${a.name}?`)) return;
-                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
-                    dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
-                      entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
-                    dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
-                      summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                    // The select is controlled by o.stage, so opening the dialog re-renders
+                    // it back to the current stage until the change is actually confirmed.
+                    setConfirmOpp({ kind: "won", opp: o, run: () => {
+                      dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                      dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
+                        entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
+                      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
+                        summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                    } });
                   } else if (o.stage === "Won") {
-                    if (!confirm("This opportunity was already booked as Won expansion. Changing its stage does NOT reverse the ARR — use ⇄ Adjust ARR for that. Continue?")) return;
-                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                    setConfirmOpp({ kind: "stage", opp: o, run: () => dispatch({ type: "SET_OPP_STAGE", id: o.id, stage }) });
                   } else {
                     dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
                   }
@@ -2414,6 +2483,15 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           ))}
         </Card>
       </div>
+      {confirmOpp && <ConfirmDialog
+        title={confirmOpp.kind === "won" ? "Book expansion ARR" : "Change a booked opportunity"}
+        tone={confirmOpp.kind === "won" ? "normal" : "danger"}
+        body={confirmOpp.kind === "won"
+          ? `Mark this ${confirmOpp.opp.type} as WON and book ${fmtMoney(confirmOpp.opp.value, a.currency)} expansion ARR onto ${a.name}?`
+          : "This opportunity was already booked as Won expansion. Changing its stage does NOT reverse the ARR — use ⇄ Adjust ARR for that."}
+        confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
+        onConfirm={() => confirmOpp.run()}
+        onClose={() => setConfirmOpp(null)} />}
       <DocumentsCard a={a} dispatch={dispatch} user={user} />
       {(() => {
         const events = [
@@ -2732,6 +2810,7 @@ function Settings({ st, dispatch, user, scored }) {
   const rates = st.settings.rates;
   const total = Object.values(w).reduce((a, b) => a + b, 0);
   const fileRef = useRef();
+  const [confirmData, setConfirmData] = useState(null); // "sample" | "clear"
   const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
@@ -2783,9 +2862,18 @@ function Settings({ st, dispatch, user, scored }) {
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
           <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
           <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
-          <Btn onClick={() => { if (confirm("Replace the team's data with the sample dataset? This affects everyone.")) bulkReplace(seedData()); }}>Load sample data</Btn>
-          <Btn onClick={() => { if (confirm("Delete ALL of the team's accounts and data? Export JSON first if you want a backup.")) bulkReplace(emptyData()); }}>Clear all data</Btn>
+          <Btn onClick={() => setConfirmData("sample")}>Load sample data</Btn>
+          <Btn onClick={() => setConfirmData("clear")}>Clear all data</Btn>
         </div>
+        {confirmData && <ConfirmDialog
+          title={confirmData === "sample" ? "Replace all team data" : "Delete all team data"}
+          body={confirmData === "sample"
+            ? "This replaces the team's data with the sample dataset. Everyone sees this change, and it cannot be undone."
+            : "This deletes ALL of the team's accounts and data for everyone. Export JSON first if you want a backup. It cannot be undone."}
+          confirmLabel={confirmData === "sample" ? "Replace data" : "Delete everything"}
+          typedWord={confirmData === "sample" ? "REPLACE" : "DELETE"}
+          onConfirm={() => bulkReplace(confirmData === "sample" ? seedData() : emptyData())}
+          onClose={() => setConfirmData(null)} />}
         <p className="mt-3 text-xs text-slate-700">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
       </Card>
     </div>
@@ -3028,6 +3116,29 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   );
 }
 const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
+// Catches render/lifecycle errors in the view area only, so a crash costs one screen
+// instead of the session. Does NOT catch errors in event handlers or async callbacks --
+// those already route through the try/catch blocks and the error toast.
+class ViewBoundary extends React.Component {
+  constructor(props) { super(props); this.state = { error: null, attempt: 0 }; }
+  static getDerivedStateFromError(error) { return { error }; }
+  componentDidCatch(error, info) { console.error("View crashed:", this.props.view, error, info); }
+  render() {
+    // Fragment, not a div: the views are laid out by their parent, and injecting a wrapper
+    // element would change that layout. The key is still what remounts the subtree on retry.
+    if (!this.state.error) return <React.Fragment key={this.state.attempt}>{this.props.children}</React.Fragment>;
+    return (
+      <div data-viewerror className="nm m-4 p-6" role="alert">
+        <h2 className="mb-2 text-sm font-bold text-rose-700">Something went wrong in {this.props.view}</h2>
+        <p className="mb-1 text-xs text-slate-600">This view couldn't be displayed. Your data is safe — nothing was changed.</p>
+        <p className="mb-4 font-mono text-[11px] text-slate-500">{String(this.state.error?.message || this.state.error)}</p>
+        <button className="nm-btn px-3 py-1.5 text-xs font-bold text-indigo-600"
+          onClick={() => this.setState(s => ({ error: null, attempt: s.attempt + 1 }))}>Try again</button>
+      </div>
+    );
+  }
+}
+
 function App({ user }) {
   const toast = useToast();
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
@@ -3249,13 +3360,15 @@ function App({ user }) {
           )}
         </div>
       </div>
-      {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
-      {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
-      {view === "Accounts" && (acctId
-        ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
-        : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
-      {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-      {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+      <ViewBoundary key={view} view={view}>
+        {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
+        {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
+        {view === "Accounts" && (acctId
+          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
+          : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
+        {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
+        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+      </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
         go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
       <Copyright />
@@ -3276,13 +3389,20 @@ function Root() {
   useEffect(() => {
     if (!session) { setProfile(null); return; }
     sb.from("profiles").select("id,name,role").eq("id", session.user.id).single()
+      // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
+      // wraps App, so window.__toast is genuinely undefined here and alert is the only
+      // channel left. Deliberately kept.
       .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : setProfile(data));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
-  return <ToastProvider><App user={profile} /></ToastProvider>;
+  // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
+  // Renewals leaves the nav and every other view usable. This outer one is the backstop --
+  // App's own body computes analytics (retentionStats at ~3204), so data that breaks THAT
+  // throws before any view renders, and without this the user gets a blank white page.
+  return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD };
