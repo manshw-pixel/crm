@@ -24,22 +24,25 @@ test("SEED_HEALTH_PLAYBOOK records event, band, and tasks", async () => {
   await browser.close();
 });
 
+// Scores Green on its own — top inputs and a fresh inputsUpdatedAt, so recency does not
+// drag the score below the 70 threshold. The default seedAccount scores Yellow, which made
+// the test below race the health auto-seeder: it dispatched Green, the seeder recomputed
+// Yellow and overwrote it, and the assertions failed ~2 runs in 8 regardless of the wait
+// length. With a fixture the seeder agrees with, there is no race left to lose.
+const GREEN = seedAccount({ id: "t1", inputs: { usage: 100, sentiment: 100, tickets: 0, nps: 100 } });
+GREEN.inputsUpdatedAt = new Date().toISOString().slice(0, 10);
+const greenSeed = `window.__seedRows = { accounts: [${JSON.stringify(GREEN)}].map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
+
 test("SEED_HEALTH_PLAYBOOK with empty items still records transition", async () => {
-  const { page, browser } = await launch(seed);
+  const { page, browser } = await launch(greenSeed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length);
   const res = await page.evaluate(async () => {
     window.__store.dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: "t1",
       healthBand: "Green", healthPlaybookBand: undefined,
       event: { date: "2026-07-29", from: "Yellow", to: "Green" }, items: [] });
-    // The 0 here is load-bearing — do NOT raise it. This reads in the gap between the
-    // dispatch and the health auto-seeder's effect. The seeded account scores Yellow
-    // (stale inputsUpdatedAt drags recency down), so the auto-seeder overwrites this
-    // artificial Green and appends a second event: at 50ms this reads Yellow/2 events
-    // and the assertions below fail. Verified 2026-08-14 at 0/50/250ms.
-    // Known flake: at 0ms the auto-seeder occasionally wins anyway (2 of 8 runs).
-    // The real fix is a fixture that scores Green so the auto-seeder agrees — see the
-    // follow-up noted in the money-math PR.
-    await new Promise(r => setTimeout(r, 0));
+    // 50ms is safe now that greenSeed removes the auto-seeder race: the seeder recomputes
+    // Green, agrees with the dispatched band, and has nothing to overwrite.
+    await new Promise(r => setTimeout(r, 50));
     const a = window.__store.getState().accounts.find(x => x.id === "t1");
     return { band: a.healthBand, pbBand: a.healthPlaybookBand, events: a.healthEvents.length,
       tasks: window.__store.getState().tasks.filter(t => t.healthPlaybook).length };
