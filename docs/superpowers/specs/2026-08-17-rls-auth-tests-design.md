@@ -121,7 +121,11 @@ works. `run.mjs` mirrors `tests/health/run.mjs`, including its exit-code contrac
 15. An authenticated user can read from and insert into `attachments`.
 16. An authenticated user **can** delete any object in `attachments`, including one another
     user uploaded. *Documents current behaviour — see finding F2.*
-17. An unauthenticated client can do none of the above.
+17. An unauthenticated client **cannot insert or delete** in `attachments`.
+18. An unauthenticated client **can read** an object via its public URL. The bucket is
+    created with `public = true` (`supabase-setup.sql:136`) and the comment there says so
+    deliberately: "anyone with a file's URL can view it". The test pins that intent rather
+    than asserting a denial that would not hold. See finding F5.
 
 ## CI
 
@@ -184,6 +188,15 @@ from profiles)` and inserts, with no lock. Two signups landing together can both
 empty table and both become admin. The window is small and the blast radius is "one extra
 admin on day one", but it is a real race. `guard_admin_count` does not help — it only
 prevents removing the last admin.
+
+**F5 — the attachments bucket is public, so `attachments_read` is close to decorative.**
+The bucket is created with `public = true`, which means any object can be fetched by URL
+with no auth at all. The policy restricting reads to authenticated users therefore only
+governs the API path, not the public URL path. This is deliberate per the comment in
+`supabase-setup.sql` ("links are long and unguessable, but treat uploads as shareable"),
+but it is worth stating plainly: **uploaded customer documents are readable by anyone who
+obtains the URL.** For a CRM holding contracts, that may deserve a second look — making
+the bucket private and issuing signed URLs is the alternative.
 
 **F4 — every user can read every profile.** `profiles_select using (true)` exposes all
 names and roles to any authenticated user. Almost certainly fine for an internal CRM;
