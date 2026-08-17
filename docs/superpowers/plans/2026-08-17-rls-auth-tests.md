@@ -6,7 +6,7 @@
 
 **Architecture:** A second, independent test suite under `tests/rls/`. The Supabase CLI brings up real Postgres + GoTrue + Storage in Docker; `supabase-setup.sql` is applied verbatim; tests sign up real users through GoTrue and act as them via `@supabase/supabase-js` with their real session tokens. It reuses the existing nine-line test framework and exit-code contract, and runs as a parallel CI job that gates deploy alongside the mocked E2E suite.
 
-**Tech Stack:** Node 24 (ESM), Supabase CLI, Docker, `@supabase/supabase-js` v2, `psql`, the existing `tests/health/framework.mjs`.
+**Tech Stack:** Node 24 (ESM), Supabase CLI, Docker, `@supabase/supabase-js` v2, `pg`, the existing `tests/health/framework.mjs`.
 
 **Spec:** `docs/superpowers/specs/2026-08-17-rls-auth-tests-design.md`
 
@@ -115,9 +115,16 @@ Create `tests/rls/package.json`:
   "name": "crm-rls-tests",
   "private": true,
   "type": "module",
-  "dependencies": { "@supabase/supabase-js": "^2.45.4" }
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "pg": "^8.13.0"
+  }
 }
 ```
+
+`pg` applies `supabase-setup.sql` directly. An earlier draft shelled out to `psql`, which
+would have meant installing the whole PostgreSQL server distribution on every developer
+machine to obtain one client binary (ruling P1 in the ledger).
 
 Run: `cd tests/rls && npm install`
 Expected: a `package-lock.json` is created. Commit it — CI uses `npm ci`.
@@ -130,9 +137,10 @@ Create `tests/rls/fixtures.mjs`:
 // Fixtures for the RLS suite. Unlike tests/health, NOTHING here is mocked: this talks to a
 // real local Postgres + GoTrue + Storage brought up by `supabase start`, with the real
 // supabase-setup.sql applied. See docs/superpowers/specs/2026-08-17-rls-auth-tests-design.md
-import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createClient } from "@supabase/supabase-js";
+import pg from "pg";
 
 export const API_URL = process.env.SUPABASE_API_URL || "http://127.0.0.1:54321";
 export const DB_URL = process.env.SUPABASE_DB_URL || "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
@@ -155,19 +163,22 @@ export const sessions = { admin: null, user: null, anon: newClient() };
 // first-signup-becomes-admin trigger testable: handle_new_user() checks for an EMPTY
 // profiles table, so a stale user from a previous run would silently change the outcome.
 export async function resetStack() {
-  const sql = `
-    drop schema if exists public cascade;
-    create schema public;
-    grant usage on schema public to postgres, anon, authenticated, service_role;
-    delete from auth.users;
-    delete from storage.objects where bucket_id = 'attachments';
-  `;
-  psql(sql);
-  execFileSync("psql", [DB_URL, "-v", "ON_ERROR_STOP=1", "-f", SETUP_SQL], { stdio: "pipe" });
-}
-
-function psql(sql) {
-  execFileSync("psql", [DB_URL, "-v", "ON_ERROR_STOP=1", "-c", sql], { stdio: "pipe" });
+  const client = new pg.Client({ connectionString: DB_URL });
+  await client.connect();
+  try {
+    // One multi-statement query: node-postgres uses the simple query protocol for a
+    // string with no parameters, which permits several statements in one call.
+    await client.query(`
+      drop schema if exists public cascade;
+      create schema public;
+      grant usage on schema public to postgres, anon, authenticated, service_role;
+      delete from auth.users;
+      delete from storage.objects where bucket_id = 'attachments';
+    `);
+    await client.query(readFileSync(SETUP_SQL, "utf8"));
+  } finally {
+    await client.end();
+  }
 }
 
 async function signUp(email, name) {
