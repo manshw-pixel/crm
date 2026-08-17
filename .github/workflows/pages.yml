@@ -54,8 +54,32 @@ jobs:
           path: dist/
           retention-days: 1
 
+  # The access-control gate. Runs in parallel with `test`, against a REAL postgres +
+  # gotrue + storage rather than a mock, so a change to a policy, a trigger or the signup
+  # path fails the build instead of reaching production silently.
+  rls:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: tests/rls/package-lock.json
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+      # brings up real postgres + gotrue + storage; supabase-setup.sql is applied by the
+      # suite's own fixtures, so the policies under test are the ones in the repo
+      - run: supabase start
+      - run: npm ci
+        working-directory: tests/rls
+      # NEVER pipe this — run.mjs's exit code IS the gate. No retry: a second attempt
+      # could only mask a flaky test.
+      - run: node tests/rls/run.mjs
+
   deploy:
-    needs: test
+    needs: [test, rls]
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:

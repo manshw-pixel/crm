@@ -52,6 +52,26 @@ Open `dist/crm.html` directly, or serve `dist/` over localhost. Never edit anyth
 `dist/` — it is generated and gitignored. The test suite builds automatically before it
 runs, so `node tests/health/run.mjs` needs no separate build step.
 
+### Running the security tests
+
+`tests/rls/` checks the database's access rules — who can delete an account, who can
+change a role, what a logged-out visitor can reach. They run against a real Supabase stack
+in Docker, not a mock, so they need Docker running and the Supabase CLI installed.
+
+```sh
+supabase start           # real postgres + auth + storage, locally
+cd tests/rls && npm ci
+node tests/rls/run.mjs
+```
+
+These tests **pin the rules as they are today**. If one starts failing, the access model
+changed — decide whether that was intended before making the test agree with the code.
+Schema changes belong in `supabase-setup.sql`, which is what both the tests and the hosted
+project are built from.
+
+On Windows, Docker Desktop needs the WSL2 backend (`wsl --install`, then reboot). Without
+it `supabase start` cannot run and the suite is CI-only on that machine.
+
 ## 6. First logins
 
 - **You sign up first** — the first account automatically becomes **admin**.
