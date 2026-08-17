@@ -392,13 +392,19 @@ function reducer(state, action) {
       const entries = auditChanges(a, action.patch, action.by, action.source);
       let upd = withAudit({ ...a, ...action.patch }, entries);
       const arrCh = entries.find(x => x.field === "arr");
-      if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()),
+      // `a` is pre-patch, so a.currency is the one arrCh.from was denominated in. NOTE: if
+      // an edit changes currency AND arr together, the delta straddles two currencies and
+      // is not meaningful whatever we stamp — see the follow-up spec.
+      if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()), currency: a.currency,
         delta: arrCh.to - arrCh.from, kind: arrCh.to > arrCh.from ? "expansion" : "contraction",
         source: action.source === "csv import" ? "import" : "edit", reason: "ARR edited", note: "", by: arrCh.by }] };
       return upd;
     }) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? withAudit({ ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), action.entry] },
+      // stamp the billing currency onto the entry: analytics convert historical money at
+      // the currency it was BOOKED in, not at whatever the account is billed in today.
+      // Stamped here rather than at each dispatch site so every caller is covered.
+      ? withAudit({ ...a, renewalDate: action.newDate, arr: action.newArr, contractStatus: "Active", billingCompleted: false, billingCompletedDate: null, renewalStage: "Not started", renewals: [...(a.renewals || []), { ...action.entry, currency: action.entry.currency ?? a.currency }] },
           [ ...((+a.arr || 0) !== (+action.newArr || 0) ? [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: "renewal" }] : []),
             ...(a.renewalDate !== action.newDate ? [{ id: uid(), date: iso(Date.now()), field: "renewalDate", from: a.renewalDate, to: action.newDate, by: action.entry.by, source: "renewal" }] : []) ])
       : a) };
@@ -409,7 +415,9 @@ function reducer(state, action) {
       ? withAudit({ ...a, contractStatus: "Active", churn: null },
           [{ id: uid(), date: iso(Date.now()), field: "contractStatus", from: a.contractStatus, to: "Active", by: action.by || "unknown", source: "reactivate" }]) : a) };
     case "ADJUST_ARR": return { ...state, accounts: state.accounts.map(a => a.id === action.id
-      ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), action.entry] },
+      // same currency stamp as COMPLETE_RENEWAL — covers the adjust form, opportunity-won,
+      // and any future dispatcher without touching their call sites
+      ? withAudit({ ...a, arr: action.newArr, arrEvents: [...(a.arrEvents || []), { ...action.entry, currency: action.entry.currency ?? a.currency }] },
           [{ id: uid(), date: iso(Date.now()), field: "arr", from: +a.arr || 0, to: +action.newArr || 0, by: action.entry.by, source: action.entry.source === "opportunity" ? "opportunity" : "adjustment" }]) : a) };
     case "ADD_DOCUMENT": return { ...state, accounts: state.accounts.map(a => {
       if (a.id !== action.id) return a;
@@ -1256,13 +1264,13 @@ function retentionStats(accounts, rates) {
     if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
     (a.renewals || []).forEach(r => {
       if (new Date(r.completedOn).getTime() >= yearAgo) {
-        const d = toUSD(r.arr - r.prevArr, a.currency, rates);
+        const d = toUSD(r.arr - r.prevArr, r.currency || a.currency, rates);
         if (d >= 0) expansion += d; else contraction -= d;
       }
     });
     (a.arrEvents || []).forEach(ev => { // won opportunities + manual ARR adjustments
       if (new Date(ev.date).getTime() >= yearAgo) {
-        const d = toUSD(ev.delta, a.currency, rates);
+        const d = toUSD(ev.delta, ev.currency || a.currency, rates);
         if (d >= 0) expansion += d; else contraction -= d;
       }
     });
@@ -1403,7 +1411,7 @@ function renewalOutcomeRows(accounts, rates, snapshots, now = new Date()) {
     const inQ = d => { const k = String(d).slice(0, 7); return k >= startKey && k < endKey; };
     let renewed = 0, renewedN = 0, churned = 0, churnedN = 0, slipped = 0;
     accounts.forEach(a => {
-      (a.renewals || []).forEach(r => { if (r.completedOn && inQ(r.completedOn)) { renewed += toUSD(r.arr || 0, a.currency, rates); renewedN++; } });
+      (a.renewals || []).forEach(r => { if (r.completedOn && inQ(r.completedOn)) { renewed += toUSD(r.arr || 0, r.currency || a.currency, rates); renewedN++; } });
       if (a.churn && inQ(a.churn.date)) { churned += toUSD(a.churn.arr || 0, a.churn.currency || a.currency, rates); churnedN++; }
       if (!a.churn && inQ(a.renewalDate) && daysUntil(a.renewalDate) < 0
           && !(a.renewals || []).some(r => r.completedOn && r.completedOn >= a.renewalDate)) slipped++;
