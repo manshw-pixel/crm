@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: read
+  actions: read           # download-artifact@v4 reads the run's artifacts via the API
   pages: write
   id-token: write
 
@@ -30,19 +31,28 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: tests/package-lock.json
+          cache-dependency-path: |
+            package-lock.json
+            tests/package-lock.json
+      - run: npm ci                       # build deps (esbuild, tailwind)
       - run: npm ci
         working-directory: tests
       - run: npx playwright install --with-deps chromium
         working-directory: tests
-      # NEVER pipe this — run.mjs's exit code IS the gate, and a pipe replaces it
-      - id: suite
-        run: node tests/health/run.mjs
-        continue-on-error: true
-      # the suite loads React/Babel/Tailwind from unpkg on every page; a CDN blip is not
-      # a regression. Same retry-once shape as deploy-pages below.
-      - if: steps.suite.outcome == 'failure'
-        run: node tests/health/run.mjs
+      # run.mjs builds dist/ itself before the first case, so the suite can never pass
+      # against a stale artifact. This runs the build separately too, so a build failure
+      # is reported as a build failure rather than as 174 mystery test errors.
+      - run: node build.mjs
+      # NEVER pipe this — run.mjs's exit code IS the gate, and a pipe replaces it.
+      # No retry: the old retry-once existed to absorb unpkg blips, and dist/ now loads
+      # nothing from the network. A second attempt could only mask a flaky test.
+      - run: node tests/health/run.mjs
+      # hand the TESTED bytes to deploy — never rebuild between the gate and publication
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 1
 
   deploy:
     needs: test
@@ -52,11 +62,16 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url || steps.deployment-retry.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v5
       - uses: actions/configure-pages@v5
+      # no checkout: publish exactly what the gate tested, nothing else. This also stops
+      # the public site serving source, vendor/ and tests/, which `path: .` used to.
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: dist
       - id: deployment
         uses: actions/deploy-pages@v4
         continue-on-error: true

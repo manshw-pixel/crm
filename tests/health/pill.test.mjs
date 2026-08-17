@@ -11,8 +11,18 @@ function seedWith(tasks) {
     + ` contacts: [], activities: [], opportunities: [], team: [], settings: [] };`;
 }
 
+// The default due date must stay in the FUTURE, or the "on pace" case silently becomes the
+// "behind pace" case. Hardcoding it made this a time bomb: written against 2026-08-15, it
+// went red on 2026-08-16 when the calendar caught up. Compute it relative to today instead.
+// Built from LOCAL date parts, not toISOString(), which shifts the day for UTC-behind zones.
+const isoInDays = n => {
+  const d = new Date();
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
 const hTask = (id, o) => ({ id, accountId: "t1", healthPlaybook: true, healthBand: "Yellow",
-  healthFor: "2026-07-25", title: "♥ step " + id, due: "2026-08-15", priority: "Medium", status: "Open", ...o });
+  healthFor: "2026-07-25", title: "♥ step " + id, due: isoInDays(30), priority: "Medium", status: "Open", ...o });
 
 async function openAccount(page) {
   await page.click('button[title="Accounts"]');
@@ -41,7 +51,7 @@ test("pill shows done/total for the latest episode", async () => {
   const p = await pill(page);
   assert(p, "pill should render when health tasks exist");
   assert(/♥\s*1\/3/.test(p.text), `expected ♥ 1/3, got "${p && p.text}"`);
-  // 1 done of 3, none past due (all due 2026-08-15 > today) → on-pace rose, not amber
+  // 1 done of 3, none past due (all due 30 days out) → on-pace rose, not amber
   assert(/bg-rose-100/.test(p.cls) && !/bg-amber-100/.test(p.cls), "in-progress on-pace pill should be rose: " + p.cls);
   await browser.close();
 });

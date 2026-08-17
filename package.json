@@ -1,0 +1,10 @@
+{
+  "name": "onevio-crm",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "node build.mjs" },
+  "devDependencies": {
+    "esbuild": "^0.25.0",
+    "tailwindcss": "^3.4.17"
+  }
+}

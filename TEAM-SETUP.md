@@ -30,9 +30,27 @@ In Supabase: **Authentication → Sign In / Providers → Email** — turn **off
 
 ## 5. Publish
 
-1. Push the repo (or just `crm.html`) to GitHub.
-2. Repo **Settings → Pages → Deploy from a branch**, pick your branch, save.
-3. Share the URL: `https://<your-user>.github.io/<repo>/crm.html`
+Publishing is automated. Push to `master` and `.github/workflows/pages.yml` builds the
+app, runs the full test suite, and deploys only if the suite passes.
+
+1. Repo **Settings → Pages → Source**, choose **GitHub Actions** (not "Deploy from a branch").
+2. Push to `master`.
+3. Share the URL: `https://<your-user>.github.io/<repo>/`
+
+### Building locally
+
+`crm.html` is the source you edit; it is **not** what gets served. `node build.mjs`
+compiles its JSX ahead of time and inlines every dependency into `dist/crm.html`, a
+single self-contained file that loads nothing from the network.
+
+```sh
+npm ci          # once — installs esbuild + tailwind
+node build.mjs  # writes dist/crm.html and dist/index.html
+```
+
+Open `dist/crm.html` directly, or serve `dist/` over localhost. Never edit anything in
+`dist/` — it is generated and gitignored. The test suite builds automatically before it
+runs, so `node tests/health/run.mjs` needs no separate build step.
 
 ## 6. First logins
 
