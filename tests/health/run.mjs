@@ -32,6 +32,7 @@ import "./confirm-dialog.test.mjs";
 import "./undo-actions.test.mjs";
 import "./boundary.test.mjs";
 import "./offline.test.mjs";
+import "./currency-history.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the

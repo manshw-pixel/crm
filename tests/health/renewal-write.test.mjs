@@ -56,15 +56,24 @@ test("COMPLETE_RENEWAL stores the renewal entry verbatim, losing no fields", asy
   // The reducer must append action.entry whole. The account's live billing flags reset
   // for the new term, so the entry is the ONLY record of what was true for the term that
   // just ended — a reducer that rebuilt it field-by-field would silently drop history.
+  // The reducer additionally stamps the booking currency (see currency-history.test.mjs),
+  // so "verbatim" means every supplied field survives byte-for-byte -- not that the stored
+  // entry is field-for-field identical. Adding a field keeps the guarantee; rewriting or
+  // dropping one breaks it, and that is what this asserts.
   const r = await page.evaluate(async () => {
     const entry = { id: "e9", completedOn: "2026-08-14", from: "2027-01-01", to: "2028-01-01",
       prevArr: 100000, arr: 120000, by: "Tester", billingCompleted: true, billingCompletedDate: "2026-02-01" };
     window.__store.dispatch({ type: "COMPLETE_RENEWAL", id: "a1", newDate: "2028-01-01", newArr: 120000, entry });
     await new Promise(r => setTimeout(r, 50));
     const stored = window.__store.getState().accounts.find(x => x.id === "a1").renewals[0];
-    return { stored, same: JSON.stringify(stored) === JSON.stringify(entry) };
+    const changed = Object.keys(entry).filter(k => JSON.stringify(stored[k]) !== JSON.stringify(entry[k]));
+    const added = Object.keys(stored).filter(k => !(k in entry));
+    return { stored, changed, added };
   });
-  assert(r.same, `the entry should be stored unchanged, got ${JSON.stringify(r.stored)}`);
+  assert(r.changed.length === 0,
+    `no supplied field may be altered, but these were: ${r.changed.join(", ")} — got ${JSON.stringify(r.stored)}`);
+  assert(r.added.length === 1 && r.added[0] === "currency",
+    `the currency stamp should be the only addition, got: ${r.added.join(", ")}`);
   await browser.close();
 });
 
