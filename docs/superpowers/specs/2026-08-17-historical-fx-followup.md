@@ -38,7 +38,25 @@ never moves) or *comparable in today's money* (current rates — everything rest
 are defensible. Finance teams usually want the first for reporting and the second for
 planning, which may mean showing both.
 
-## 2. Changing currency and ARR in one edit books a bogus delta
+## 2. Changing currency and ARR in one edit books a bogus delta — RESOLVED 2026-08-17
+
+Fixed on branch `fix/redenomination`. Implementation notes below the original write-up.
+
+### What was actually built
+
+`EDIT_ACCOUNT` now detects a `currency` change and writes a single `arrEvents` entry with
+`kind: "redenomination"` and `delta: 0`, carrying `fromCurrency`/`toCurrency` and
+`fromArr`/`toArr`, instead of an expansion/contraction entry. `retentionStats` skips the
+kind explicitly rather than relying on the zero delta. `currency` was added to
+`AUDIT_FIELDS` (it was not audited at all before), and the ARR timeline gained a neutral
+`⇄ redenominated` branch — without it the entry rendered as a blank row.
+
+**The write-up below missed a second case,** found while implementing: if only the
+*currency* changes and the ARR number does not, the old code wrote **no event at all**,
+yet `arrUSD` — and with it `retARR` and the NRR/GRR base — moved by the whole FX factor,
+entirely unexplained. Both cases now produce a redenomination entry.
+
+### Original write-up
 
 `EDIT_ACCOUNT` (`crm.html:395`) writes an `arrEvents` entry whenever `arr` changes,
 computing `delta = to - from`. If the same save also changes `currency`, `from` and `to`
