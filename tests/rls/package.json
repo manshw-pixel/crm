@@ -1,0 +1,9 @@
+{
+  "name": "crm-rls-tests",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.4",
+    "pg": "^8.13.0"
+  }
+}
