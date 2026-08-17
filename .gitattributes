@@ -1,0 +1,4 @@
+# Vendored binaries must never be line-ending converted -- they are inlined as base64
+# into dist/crm.html, where a single mangled byte breaks the font.
+*.woff2 binary
+vendor/*.js -text

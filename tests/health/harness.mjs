@@ -4,7 +4,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
-const CRM = fileURLToPath(new URL("../../crm.html", import.meta.url));
+// The BUILT artifact, not the source. The gate exists to verify what actually ships, so
+// it loads exactly the bytes CI publishes. Run `node build.mjs` first -- CI does, and
+// run.mjs does too. See docs/superpowers/specs/2026-08-17-build-step-design.md
+const CRM = fileURLToPath(new URL("../../dist/crm.html", import.meta.url));
 
 // CI runners have no Edge, so use Playwright's bundled Chromium there and the browser
 // the team actually uses locally. `??` not `||`: an explicitly empty CRM_TEST_CHANNEL
@@ -13,8 +16,10 @@ const CHANNEL = process.env.CRM_TEST_CHANNEL ?? "msedge";
 
 // In-memory Supabase mock: enough surface for load + write-through + realtime stubs,
 // plus the auth/profile gate that Root() requires before it will render App().
-const MOCK = `const CONFIGURED = true;
-const sb = (() => {
+// Installed as window.__sbFactory, which crm.html consults before building a real
+// client. CONFIGURED needs no override -- it already evaluates true from the committed
+// constants.
+const MOCK = `window.__sbFactory = () => {
   const api = t => ({
     select: () => {
       const p = Promise.resolve({ data: window.__seedRows?.[t] || [], error: null });
@@ -52,7 +57,7 @@ const sb = (() => {
     },
     storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
   };
-})();`;
+};`;
 
 // Stateful variant of MOCK. The default mock throws every write away, which is exactly
 // why the persist path (does RESTORE_SNAPSHOT actually write the undo back?) had no
@@ -60,8 +65,7 @@ const sb = (() => {
 // and exposes __dump() so a test can reload the app from what was actually persisted.
 // It models the app's contract with Supabase, NOT Supabase itself -- RLS, schema types
 // and network failures still need a real backend.
-const STATEFUL_MOCK = `const CONFIGURED = true;
-const sb = (() => {
+const STATEFUL_MOCK = `window.__sbFactory = () => {
   window.__db = {};
   for (const [t, rows] of Object.entries(window.__seedRows || {})) {
     window.__db[t] = new Map((rows || []).map(r => [r.id, JSON.parse(JSON.stringify(r))]));
@@ -112,12 +116,14 @@ const sb = (() => {
     },
     storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
   };
-})();`;
+};`;
 
 function buildHtml(seedJs, mock) {
   let html = readFileSync(CRM, "utf8");
-  html = html.replace(/const CONFIGURED = [^\n]*\nconst sb = [^\n]*\n/, mock + "\n");
-  html = html.replace(/<body[^>]*>/, m => `${m}<script>${seedJs}</script>`);
+  // Mock and seed ride in on the same injected script. It sits right after <body>, and
+  // the app bootstraps at the end of <body>, so __sbFactory is installed before crm.html
+  // decides whether to build a real Supabase client.
+  html = html.replace(/<body[^>]*>/, m => `${m}<script>${mock}\n${seedJs}</script>`);
   const dir = mkdtempSync(join(tmpdir(), "crm-health-"));
   const file = join(dir, "crm.html");
   writeFileSync(file, html);
@@ -142,12 +148,10 @@ export async function launchPersistent(seedJs) {
 
 export function buildMockedHtml(seedJs) {
   let html = readFileSync(CRM, "utf8");
-  // Replace the CONFIGURED + Supabase constructor lines with the mock (CONFIGURED forced true).
-  html = html.replace(/const CONFIGURED = [^\n]*\nconst sb = [^\n]*\n/, MOCK + "\n");
-  // Inject the seed just before the app bootstraps. crm.html's <body> tag carries a
-  // class attribute (<body class="...">), so match the opening tag generically rather
-  // than the literal string "<body>".
-  html = html.replace(/<body[^>]*>/, m => `${m}<script>${seedJs}</script>`);
+  // Inject mock + seed just before the app bootstraps. The <body> tag carries a class
+  // attribute (<body class="...">), so match the opening tag generically rather than the
+  // literal string "<body>".
+  html = html.replace(/<body[^>]*>/, m => `${m}<script>${MOCK}\n${seedJs}</script>`);
   const dir = mkdtempSync(join(tmpdir(), "crm-health-"));
   const file = join(dir, "crm.html");
   writeFileSync(file, html);
