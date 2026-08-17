@@ -231,7 +231,7 @@ function seedData() {
 const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 
 /* ------------------------------ audit trail ------------------------------ */
-const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage"];
+const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage", "currency"];
 /* one entry per audited field the patch really changes (numbers normalized) */
 function auditChanges(a, patch, by, source) {
   const out = [];
@@ -392,12 +392,24 @@ function reducer(state, action) {
       const entries = auditChanges(a, action.patch, action.by, action.source);
       let upd = withAudit({ ...a, ...action.patch }, entries);
       const arrCh = entries.find(x => x.field === "arr");
-      // `a` is pre-patch, so a.currency is the one arrCh.from was denominated in. NOTE: if
-      // an edit changes currency AND arr together, the delta straddles two currencies and
-      // is not meaningful whatever we stamp — see the follow-up spec.
-      if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()), currency: a.currency,
+      const curCh = entries.find(x => x.field === "currency");
+      const evSource = action.source === "csv import" ? "import" : "edit";
+      // Changing the billing currency RESTATES the same revenue in another unit — it is not
+      // expansion or contraction, and `to - from` across two currencies is not a number that
+      // means anything (INR 1,000,000 -> USD 12,000 used to book a 988,000 "contraction").
+      // Recorded rather than suppressed, for two reasons: the ARR audit trail exists so that
+      // changes are not invisible, and a currency-only change still moves arrUSD — and with
+      // it retARR and the NRR/GRR base — by the whole FX factor, which previously happened
+      // with no event at all.
+      if (curCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()),
+        kind: "redenomination", delta: 0, currency: curCh.to,
+        fromCurrency: curCh.from, toCurrency: curCh.to,
+        fromArr: arrCh ? arrCh.from : (+a.arr || 0), toArr: arrCh ? arrCh.to : (+a.arr || 0),
+        source: evSource, reason: "Billing currency changed", note: "", by: curCh.by }] };
+      // `a` is pre-patch, so a.currency is the one arrCh.from was denominated in.
+      else if (arrCh) upd = { ...upd, arrEvents: [...(a.arrEvents || []), { id: uid(), date: iso(Date.now()), currency: a.currency,
         delta: arrCh.to - arrCh.from, kind: arrCh.to > arrCh.from ? "expansion" : "contraction",
-        source: action.source === "csv import" ? "import" : "edit", reason: "ARR edited", note: "", by: arrCh.by }] };
+        source: evSource, reason: "ARR edited", note: "", by: arrCh.by }] };
       return upd;
     }) };
     case "COMPLETE_RENEWAL": return { ...state, accounts: state.accounts.map(a => a.id === action.id
@@ -1269,6 +1281,10 @@ function retentionStats(accounts, rates) {
       }
     });
     (a.arrEvents || []).forEach(ev => { // won opportunities + manual ARR adjustments
+      // a currency restatement is not revenue movement. Skipped explicitly rather than
+      // relying on its delta being 0, so the intent is legible and a future non-zero
+      // delta cannot leak into NRR.
+      if (ev.kind === "redenomination") return;
       if (new Date(ev.date).getTime() >= yearAgo) {
         const d = toUSD(ev.delta, ev.currency || a.currency, rates);
         if (d >= 0) expansion += d; else contraction -= d;
@@ -2530,6 +2546,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                   <span className="text-slate-800">{fmtDate(e.date)}</span>
                   <span className="flex-1 text-xs text-slate-700">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
                   <span className={`text-xs font-bold ${e.ev.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
+                  <span className="text-xs text-slate-500">by {e.ev.by}</span>
+                </>}
+                {e.kind === "redenomination" && <>
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">⇄ redenominated</span>
+                  <span className="text-slate-800">{fmtDate(e.date)}</span>
+                  <span className="flex-1 text-xs text-slate-700">{e.ev.reason} — same revenue, restated</span>
+                  <span className="text-xs font-semibold text-slate-600">{fmtMoney(e.ev.fromArr, e.ev.fromCurrency)} → {fmtMoney(e.ev.toArr, e.ev.toCurrency)}</span>
                   <span className="text-xs text-slate-500">by {e.ev.by}</span>
                 </>}
                 {e.kind === "churn" && <>
