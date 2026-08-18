@@ -329,8 +329,17 @@ function diffRow(prev, next) {
 }
 
 /* write-through: mirror a just-reduced action into Supabase */
-function persist(action, next) {
-  const up = (t, item) => sb.from(t).upsert({ id: item.id, data: item, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError(t, error));
+function persist(action, next, prev) {
+  const prevOf = (t, id) => ((prev && prev[t]) || []).find(x => x.id === id);
+  // Write the DIFF, not the blob. Two people editing different fields of one account used
+  // to revert each other with no error raised (D2); merge_row applies only what moved.
+  const up = (t, item) => {
+    const { patch, appends, sets } = diffRow(prevOf(t, item.id), item);
+    const full = { ...patch, ...sets };
+    if (!Object.keys(full).length && !Object.keys(appends).length) return;
+    return sb.rpc("merge_row", { tbl: t, row_id: item.id, patch: full, appends })
+      .then(({ error }) => error && dbError(t, error));
+  };
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
     case "ADD_CONTACT": return up("contacts", action.item);
@@ -390,8 +399,13 @@ function persist(action, next) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS":
-      return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
+      const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
+      return sb.rpc("merge_row",
+        { tbl: "settings", row_id: "1", patch: { ...patch, ...sets }, appends })
+        .then(({ error }) => error && dbError("settings", error));
+    }
   }
 }
 
@@ -3226,7 +3240,7 @@ function App({ user }) {
   const searchRef = useRef();
   const dispatch = useCallback(action => setSt(prev => {
     const next = reducer(prev, action);
-    if (action.type !== "REPLACE") persist(action, next);
+    if (action.type !== "REPLACE") persist(action, next, prev);
     return next;
   }), []);
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });

@@ -47,6 +47,7 @@ const MOCK = `window.__sbFactory = () => {
   const fromImpl = t => (t === "profiles" ? profilesApi() : api(t));
   return {
     from: fromImpl,
+    rpc: async () => ({ error: null }),
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
     auth: {
@@ -77,6 +78,26 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
     return out;
   };
   const rowsOf = t => [...tbl(t).values()];
+  // Mirrors merge_row/append_dedup (supabase-setup.sql) against the in-memory row store, so
+  // a reload sees exactly what the real function would have persisted. Rows are stored as
+  // { id, data, updated_at }; the merge always targets the data column.
+  window.__applyMerge = args => {
+    const { tbl: t, row_id, patch, appends } = args;
+    const existing = tbl(t).get(row_id);
+    const data = { ...((existing && existing.data) || {}), ...(patch || {}) };
+    for (const [k, incoming] of Object.entries(appends || {})) {
+      const base = Array.isArray(data[k]) ? data[k] : [];
+      const acc = base.slice();
+      for (const item of incoming) {
+        const dup = k === "arrEvents" && item && item.id !== undefined
+          ? acc.some(e => e && e.id === item.id)
+          : acc.some(e => JSON.stringify(e) === JSON.stringify(item));
+        if (!dup) acc.push(item);
+      }
+      data[k] = acc;
+    }
+    tbl(t).set(row_id, { id: row_id, data, updated_at: new Date().toISOString() });
+  };
   const api = t => ({
     select: () => {
       const p = Promise.resolve({ data: rowsOf(t), error: null });
@@ -106,6 +127,12 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
   });
   return {
     from: t => (t === "profiles" ? profilesApi() : api(t)),
+    rpc: (fn, args) => {
+      (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
+      // Apply the merge locally so a reload sees it, mirroring merge_row's semantics.
+      window.__applyMerge && window.__applyMerge(args);
+      return Promise.resolve({ error: null });
+    },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
     auth: {
