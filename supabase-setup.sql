@@ -166,7 +166,7 @@ begin
       'insert into public.%1$I (id, data, updated_at)
          values ($1, public.merge_patch(''{}''::jsonb, $2, $3), now())
        on conflict (id) do update
-         set data = public.merge_patch(public.%1$I.data, $2, $3), updated_at = now()', tbl)
+         set data = excluded.data, updated_at = now()', tbl)
       using row_id, patch, appends;
   end if;
 end $$;
