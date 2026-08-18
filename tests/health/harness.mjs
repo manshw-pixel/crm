@@ -100,6 +100,10 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
   };
   const api = t => ({
     select: () => {
+      // fetchAll() always selects accounts, so counting there gives one tick per full
+      // refetch (the rollback path this mock exists to exercise) without double-counting
+      // the other four entity tables it also reads.
+      if (t === "accounts") window.__refetches = (window.__refetches || 0) + 1;
       const p = Promise.resolve({ data: rowsOf(t), error: null });
       p.eq = () => Promise.resolve({ data: rowsOf(t), error: null, single: () => Promise.resolve({ data: rowsOf(t)[0] || null, error: null }) });
       return p;
@@ -127,11 +131,26 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
   });
   return {
     from: t => (t === "profiles" ? profilesApi() : api(t)),
+    // Fault injection for the write-queue tests: window.__rpcFailures rejects the next N
+    // calls, window.__rpcDelay adds latency (used to prove same-row writes are serial).
+    // Each call is stamped with started/ended so a test can assert non-overlap.
     rpc: (fn, args) => {
-      (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
-      // Apply the merge locally so a reload sees it, mirroring merge_row's semantics.
-      window.__applyMerge && window.__applyMerge(args);
-      return Promise.resolve({ error: null });
+      const call = { fn, args, started: Date.now(), ended: null };
+      (window.__rpcCalls = window.__rpcCalls || []).push(call);
+      const delay = window.__rpcDelay || 0;
+      return new Promise(resolve => {
+        setTimeout(() => {
+          call.ended = Date.now();
+          if (window.__rpcFailures > 0) {
+            window.__rpcFailures--;
+            resolve({ error: { message: "mock rpc failure" } });
+            return;
+          }
+          // Apply the merge locally so a reload sees it, mirroring merge_row's semantics.
+          window.__applyMerge && window.__applyMerge(args);
+          resolve({ error: null });
+        }, delay);
+      });
     },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
