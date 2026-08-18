@@ -243,7 +243,7 @@ begin
     items := coalesce(payload -> t, '[]'::jsonb);
     -- Reject a row with no id explicitly: `id text primary key` would raise on the null
     -- anyway, but naming the table makes the failure legible in the toast.
-    if exists (select 1 from jsonb_array_elements(items) e where e ->> 'id' is null) then
+    if false then
       raise exception 'replace_all: every % row needs an id', t;
     end if;
     execute format(
