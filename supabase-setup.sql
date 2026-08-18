@@ -197,11 +197,12 @@ begin
 end $$;
 
 -- ---------- durable writes: atomic bulk replace ----------
--- A function body is ONE transaction, so the deletes and the inserts commit together or not
--- at all. The old client-side version deleted five tables in a loop and then inserted; any
--- failure in between -- a dropped connection, one bad row in an imported file -- left the
--- whole team with an empty database and no backup (D3). The import path was the worst,
--- because it validated only `s.accounts && s.settings` before destroying live data.
+-- This function runs inside the CALLER's single transaction, so the deletes and the inserts
+-- below commit together or roll back together -- there is no window in between. The old
+-- client-side version deleted five tables in a loop and then inserted; any failure in
+-- between -- a dropped connection, one bad row in an imported file -- left the whole team
+-- with an empty database and no backup (D3). The import path was the worst, because it
+-- validated only `s.accounts && s.settings` before destroying live data.
 -- security invoker, as above: the admin gate is accounts_delete / settings_write, and it
 -- must keep applying to the caller.
 create or replace function public.replace_all(payload jsonb)
@@ -216,6 +217,13 @@ begin
   -- settings upsert. The spec calls this operation admin-gated; this makes that true.
   if not public.is_admin() then
     raise exception 'replace_all: admin only';
+  end if;
+
+  -- Defence in depth: a null/omitted payload would otherwise sail through every `coalesce`
+  -- below, emptying all five tables and resetting settings to `{}` -- and still return
+  -- success, since there is nothing for the row-id check to reject.
+  if payload is null then
+    raise exception 'replace_all: no payload';
   end if;
 
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop

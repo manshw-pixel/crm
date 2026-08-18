@@ -26,6 +26,8 @@ test("A FAILING replace_all leaves every original row in place", async () => {
     payload: payload({ contacts: [{ nope: "this row has no id" }] }),
   });
   assert(error, "a malformed payload was accepted — the replace is not validating rows");
+  assert(/every contacts row needs an id/.test(error.message),
+    `expected the row-id validation to reject it, got: ${error.message}`);
   assert(await stillExists("accounts", "r-keep"),
     "THE DATABASE WAS EMPTIED — replace_all is not atomic");
   assert(await stillExists("contacts", "r-keep-c"),

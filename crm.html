@@ -274,6 +274,56 @@ const dbError = (where, error) => {
   if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
 };
 
+/* ------------------------------ write queue ------------------------------
+   persist() used to be fire-and-forget: a failed write showed one toast and stopped, local
+   state kept the change, and the user carried on editing a view the server never received
+   (D1). Operations now go through this queue, which retries with backoff and -- if it
+   finally gives up -- rolls the local state back by REFETCHING. Rollback by refetch rather
+   than by inverting the reducer is deliberate: a refetch is unconditionally correct, while
+   an undo-patch has to be right about what it is undoing, and would be a second chance to
+   corrupt the same data. */
+const BACKOFF_MS = [500, 2000, 8000];
+const writeQueue = (() => {
+  const pending = [];
+  let running = false, status = "saved";
+  const state = () => ({ status, pending: pending.length });
+  const notify = () => window.__onQueueChange && window.__onQueueChange(state());
+  const set = s => { status = s; notify(); };
+
+  async function run() {
+    if (running) return;
+    running = true;
+    // Strictly serial. Two edits to one account MUST NOT be in flight together, or they can
+    // land out of order and the older value wins.
+    while (pending.length) {
+      const op = pending[0];
+      const { error } = await sb.rpc("merge_row",
+        { tbl: op.table, row_id: op.rowId, patch: op.patch, appends: op.appends });
+      if (!error) { pending.shift(); continue; }
+      if (op.attempts < BACKOFF_MS.length) {
+        await new Promise(r => setTimeout(r, BACKOFF_MS[op.attempts++]));
+        continue;
+      }
+      // Given up. Drop everything queued -- the refetch below is about to invalidate all of
+      // it -- and resync from the server.
+      pending.length = 0;
+      running = false;
+      set("error");
+      dbError(op.table, error);
+      if (window.__refetch) window.__refetch();
+      return;
+    }
+    running = false;
+    set("saved");
+  }
+
+  return {
+    enqueue(op) { pending.push({ ...op, attempts: 0 }); set("saving"); run(); },
+    queueState: state,
+    drain: run,
+  };
+})();
+
 async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
@@ -337,8 +387,7 @@ function persist(action, next, prev) {
     const { patch, appends, sets } = diffRow(prevOf(t, item.id), item);
     const full = { ...patch, ...sets };
     if (!Object.keys(full).length && !Object.keys(appends).length) return;
-    return sb.rpc("merge_row", { tbl: t, row_id: item.id, patch: full, appends })
-      .then(({ error }) => error && dbError(t, error));
+    writeQueue.enqueue({ table: t, rowId: item.id, patch: full, appends });
   };
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
@@ -402,9 +451,7 @@ function persist(action, next, prev) {
     case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
     case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
-      return sb.rpc("merge_row",
-        { tbl: "settings", row_id: "1", patch: { ...patch, ...sets }, appends })
-        .then(({ error }) => error && dbError("settings", error));
+      return writeQueue.enqueue({ table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
     }
   }
 }
@@ -415,7 +462,13 @@ function persist(action, next, prev) {
    failure in between emptied the team's database with no backup. */
 async function replaceAllRemote(state) {
   const payload = { settings: state.settings };
-  for (const t of ENTITY_TABLES) payload[t] = state[t] || [];
+  for (const t of ENTITY_TABLES) {
+    // Deliberately NOT `state[t] || []`. The old client threw a TypeError here on a
+    // malformed import, which surfaced as a visible "Import failed" toast; defaulting to
+    // an empty array instead would silently EMPTY that table on an irreversible operation.
+    if (!Array.isArray(state[t])) throw new Error(`${t} is missing from the imported data`);
+    payload[t] = state[t];
+  }
   const { error } = await sb.rpc("replace_all", { payload });
   if (error) throw error;
 }
@@ -3246,6 +3299,10 @@ function App({ user }) {
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
   useEffect(() => { refetch(); }, [refetch]);
+  // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
+  // to the server by calling this rather than trying to invert the reducer (see the write
+  // queue's comment in crm.html for why refetch is the correct rollback).
+  useEffect(() => { window.__refetch = refetch; }, [refetch]);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
     const ch = sb.channel("crm-live").on("postgres_changes", { event: "*", schema: "public" },
@@ -3479,7 +3536,7 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
