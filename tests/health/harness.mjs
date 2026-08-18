@@ -152,7 +152,15 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
         }, delay);
       });
     },
-    channel: () => ({ on() { return this; }, subscribe() { return this; } }),
+    channel: () => {
+      let handler = null;
+      const ch = {
+        on(_event, _filter, cb) { handler = cb; return ch; },
+        subscribe() { return ch; },
+      };
+      window.__fireRealtime = () => { handler && handler(); };
+      return ch;
+    },
     removeChannel: () => {},
     auth: {
       getSession: async () => ({ data: { session: { user: { id: "u1", email: "t@t.io" } } } }),

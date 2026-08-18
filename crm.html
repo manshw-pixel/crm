@@ -3242,6 +3242,17 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     </div>
   );
 }
+function SyncStatus() {
+  const [s, setS] = useState(() => writeQueue.queueState());
+  useEffect(() => { window.__onQueueChange = setS; return () => { window.__onQueueChange = null; }; }, []);
+  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-400">Saved</span>;
+  if (s.status === "saving") return <span data-sync-status="saving" className="text-xs text-slate-500">Saving…</span>;
+  // Deliberately persistent. A toast scrolls away; an unsaved change must not. This is also
+  // the first honest answer to the observability gap -- an error state that STAYS on screen.
+  return <span data-sync-status="error" className="nm-inset px-2 py-1 text-xs font-medium text-rose-700"
+    title="Your last change could not be saved and was rolled back. Check your connection and try again.">
+    Not saved</span>;
+}
 const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 // Catches render/lifecycle errors in the view area only, so a crash costs one screen
 // instead of the session. Does NOT catch errors in event handlers or async callbacks --
@@ -3302,11 +3313,17 @@ function App({ user }) {
   // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
   // to the server by calling this rather than trying to invert the reducer (see the write
   // queue's comment in crm.html for why refetch is the correct rollback).
-  useEffect(() => { window.__refetch = refetch; }, [refetch]);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
+    const fire = () => {
+      // Defer while our own writes are in flight. A refetch mid-queue replaces local state
+      // with a server view that does not contain them yet, so the user's edit visibly
+      // vanishes and then comes back.
+      if (writeQueue.queueState().pending > 0) { timer = setTimeout(fire, 300); return; }
+      refetch();
+    };
     const ch = sb.channel("crm-live").on("postgres_changes", { event: "*", schema: "public" },
-      () => { clearTimeout(timer); timer = setTimeout(refetch, 800); }).subscribe();
+      () => { clearTimeout(timer); timer = setTimeout(fire, 800); }).subscribe();
     return () => { clearTimeout(timer); sb.removeChannel(ch); };
   }, [refetch]);
   useEffect(() => {
@@ -3459,6 +3476,7 @@ function App({ user }) {
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
           ))}
         </div>}
+        <div className="ml-1"><SyncStatus /></div>
         <div className="relative ml-1">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
