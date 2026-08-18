@@ -72,6 +72,18 @@ jobs:
       # brings up real postgres + gotrue + storage; supabase-setup.sql is applied by the
       # suite's own fixtures, so the policies under test are the ones in the repo
       - run: supabase start
+      # Take the keys from the stack that is actually running. The suite used to fall back
+      # to a hardcoded anon key, and this CLI version no longer accepts it: every request
+      # from the "anonymous" client came back PGRST301 "None of the keys was able to decode
+      # the JWT". The anonymous tests all passed against that rejected token, proving
+      # nothing. Never hardcode these.
+      - name: Export the running stack's URL and anon key
+        run: |
+          supabase status -o json > /tmp/sb.json
+          echo "SUPABASE_API_URL=$(jq -r '.API_URL' /tmp/sb.json)" >> "$GITHUB_ENV"
+          echo "SUPABASE_DB_URL=$(jq -r '.DB_URL' /tmp/sb.json)" >> "$GITHUB_ENV"
+          echo "::add-mask::$(jq -r '.ANON_KEY' /tmp/sb.json)"
+          echo "SUPABASE_ANON_KEY=$(jq -r '.ANON_KEY' /tmp/sb.json)" >> "$GITHUB_ENV"
       - run: npm ci
         working-directory: tests/rls
       # NEVER pipe this — run.mjs's exit code IS the gate. No retry: a second attempt

@@ -10,8 +10,11 @@ export const API_URL = process.env.SUPABASE_API_URL || "http://127.0.0.1:54321";
 export const DB_URL = process.env.SUPABASE_DB_URL || "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 export const PASSWORD = "test-password-123";
 
-// The CLI's local anon key is fixed and public — it is not a secret and must not be
-// treated as one. `supabase status -o json` reports it if this ever changes.
+// The CLI's local anon key is public and not a secret — but it is NOT fixed. This literal
+// is a stale key from an older CLI, kept only as a local convenience; newer stacks reject
+// it outright. CI exports SUPABASE_ANON_KEY from `supabase status -o json`, and
+// assertAnonIsAnonymous() below fails the run rather than let a rejected token pass for a
+// working policy. If you run this locally, export the key too.
 export const ANON_KEY = process.env.SUPABASE_ANON_KEY
   || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiZXhwIjoxOTgzODEyOTk2fQ.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
@@ -92,8 +95,33 @@ export async function bootstrap() {
   sessions.admin = admin.client;
   sessions.user = user.client;
   sessions.anon = newClient();
+  await assertAnonIsAnonymous();
   await purgeAttachments();
   return { adminId: admin.id, userId: user.id };
+}
+
+// The five anonymous tests are all of the form "the anon client got nothing back". That
+// shape passes for the RIGHT reason (no policy grants anon anything) and for a WORTHLESS
+// one (the gateway threw the request out before consulting a policy at all).
+//
+// It really happened: the anon key below went stale, every anon request returned PGRST301
+// "None of the keys was able to decode the JWT", and all five tests passed anyway. The
+// falsification sweep caught it — disabling RLS on accounts outright did not turn the
+// anonymous read test red, because that test was never reaching RLS.
+//
+// So prove the anon client is a VALID client that policy denies, not a broken one.
+async function assertAnonIsAnonymous() {
+  const { error } = await sessions.anon.from("accounts").select("id").limit(1);
+  // PGRST301/PGRST302 are "your token is unusable". Anything else — including a clean
+  // empty result, which is what correct policies produce — means the request was actually
+  // evaluated, and that is all this guard cares about.
+  if (error && String(error.code).startsWith("PGRST30")) {
+    throw new Error(
+      `The anonymous client's key was rejected (${error.code}: ${error.message}). `
+      + "Every anonymous test would pass vacuously against a rejected token, so the suite "
+      + "refuses to run. Set SUPABASE_ANON_KEY from `supabase status -o json`."
+    );
+  }
 }
 
 // Storage is NOT reset by resetStack, and cannot be: Postgres rejects
