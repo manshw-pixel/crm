@@ -196,6 +196,49 @@ begin
   return acc;
 end $$;
 
+-- ---------- durable writes: atomic bulk replace ----------
+-- A function body is ONE transaction, so the deletes and the inserts commit together or not
+-- at all. The old client-side version deleted five tables in a loop and then inserted; any
+-- failure in between -- a dropped connection, one bad row in an imported file -- left the
+-- whole team with an empty database and no backup (D3). The import path was the worst,
+-- because it validated only `s.accounts && s.settings` before destroying live data.
+-- security invoker, as above: the admin gate is accounts_delete / settings_write, and it
+-- must keep applying to the caller.
+create or replace function public.replace_all(payload jsonb)
+returns void language plpgsql security invoker set search_path = public as $$
+declare
+  t text;
+  items jsonb;
+begin
+  -- Explicit, not incidental. An RLS-denied DELETE raises nothing and simply affects zero
+  -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
+  -- four child tables, whose delete policy is `using (true)`, failing only later at the
+  -- settings upsert. The spec calls this operation admin-gated; this makes that true.
+  if not public.is_admin() then
+    raise exception 'replace_all: admin only';
+  end if;
+
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    execute format('delete from public.%I', t);
+  end loop;
+
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    items := coalesce(payload -> t, '[]'::jsonb);
+    -- Reject a row with no id explicitly: `id text primary key` would raise on the null
+    -- anyway, but naming the table makes the failure legible in the toast.
+    if exists (select 1 from jsonb_array_elements(items) e where e ->> 'id' is null) then
+      raise exception 'replace_all: every % row needs an id', t;
+    end if;
+    execute format(
+      'insert into public.%I (id, data, updated_at)
+       select e ->> ''id'', e, now() from jsonb_array_elements($1) e', t) using items;
+  end loop;
+
+  insert into settings (id, data, updated_at)
+    values (1, coalesce(payload -> 'settings', '{}'::jsonb), now())
+    on conflict (id) do update set data = excluded.data, updated_at = now();
+end $$;
+
 -- ---------- realtime ----------
 do $$
 declare t text;

@@ -409,18 +409,14 @@ function persist(action, next, prev) {
   }
 }
 
-/* bulk replace (sample data / clear / JSON import) — admin only, RLS enforced */
+/* bulk replace (sample data / clear / JSON import) — admin only, RLS enforced.
+   One RPC, therefore one transaction: the deletes and inserts commit together or not at
+   all. This previously deleted all five tables client-side and only then inserted, so any
+   failure in between emptied the team's database with no backup. */
 async function replaceAllRemote(state) {
-  for (const t of ENTITY_TABLES) {
-    const { error } = await sb.from(t).delete().neq("id", "");
-    if (error) throw error;
-  }
-  const key = { accounts: "accounts", contacts: "contacts", activities: "activities", tasks: "tasks", opportunities: "opportunities" };
-  for (const t of ENTITY_TABLES) {
-    const rows = state[key[t]].map(item => ({ id: item.id, data: item }));
-    if (rows.length) { const { error } = await sb.from(t).insert(rows); if (error) throw error; }
-  }
-  const { error } = await sb.from("settings").upsert({ id: 1, data: state.settings });
+  const payload = { settings: state.settings };
+  for (const t of ENTITY_TABLES) payload[t] = state[t] || [];
+  const { error } = await sb.rpc("replace_all", { payload });
   if (error) throw error;
 }
 function reducer(state, action) {
