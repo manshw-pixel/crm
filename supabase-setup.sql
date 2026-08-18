@@ -184,6 +184,11 @@ declare
   item jsonb;
   acc jsonb := coalesce(base, '[]'::jsonb);
 begin
+  -- A JSON scalar (e.g. a stray null) in `acc` would make jsonb_array_elements(acc) raise
+  -- below and fail this write forever. Treat anything that isn't already an array as empty.
+  if jsonb_typeof(acc) <> 'array' then
+    acc := '[]'::jsonb;
+  end if;
   for item in select * from jsonb_array_elements(coalesce(incoming, '[]'::jsonb)) loop
     if field = 'arrEvents' and item ? 'id' then
       if not exists (select 1 from jsonb_array_elements(acc) e where e ->> 'id' = item ->> 'id') then

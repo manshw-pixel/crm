@@ -67,3 +67,20 @@ test("the status is 'saving' while work is pending and 'saved' once it drains", 
     () => window.__health.writeQueue.queueState().status === "saved", { timeout: 15000 });
   await browser.close();
 });
+
+test("a delete queued behind a slow merge is not resurrected as a partial ghost", async () => {
+  const { page, browser } = await launchPersistent(seed);
+  await page.waitForFunction(() => window.__store);
+  // Hold the merge in flight so the delete is still queued behind it when we dispatch it.
+  await page.evaluate(() => { window.__rpcDelay = 300; });
+  await page.evaluate(() => {
+    window.__store.dispatch({ type: "EDIT_ACCOUNT", id: "q1", patch: { arr: 999 }, by: "T" });
+    window.__store.dispatch({ type: "DELETE_ACCOUNT", id: "q1" });
+  });
+  await page.waitForFunction(
+    () => window.__health.writeQueue.queueState().status === "saved", { timeout: 15000 });
+  const db = await page.evaluate(() => window.__dump());
+  assert(!db.accounts.some(r => r.id === "q1"),
+    `account q1 was resurrected after delete: ${JSON.stringify(db.accounts)}`);
+  await browser.close();
+});
