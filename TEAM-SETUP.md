@@ -97,3 +97,7 @@ To change the send time, edit the cron expression (`'30 3 * * *'` is UTC) and re
 - **Settings** (health-score weights, currency rates, sample/clear/import data) is admin-only, enforced server-side.
 - **Export JSON** (Settings) any time for a backup. **Import JSON** replaces the team's data — admins only, be careful.
 - Deleting an account (admin only) removes it for everyone, including its contacts, activities, tasks and opportunities.
+
+**Re-run `supabase-setup.sql` after pulling this change.** It adds the `error_log` table
+and the `log_error` function. Until you do, the app still works but records nothing, and
+the Settings error panel shows a permissions error.

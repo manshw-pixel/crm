@@ -1,7 +1,7 @@
 # Error Observability Design
 
 **Date:** 2026-08-18
-**Status:** approved, awaiting implementation plan
+**Status:** implemented — see docs/superpowers/plans/2026-08-18-error-observability.md
 **Branch:** `feat/error-observability` (off `master` @ `3a3ec80`)
 
 ## Goal
