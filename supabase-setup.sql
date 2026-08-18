@@ -65,9 +65,9 @@ begin
 end $$;
 
 drop trigger if exists guard_admin_count on public.profiles;
-create trigger guard_admin_count
-  before insert or update of role on public.profiles
-  for each row execute function public.guard_admin_count();
+-- create trigger guard_admin_count
+--   before insert or update of role on public.profiles
+--   for each row execute function public.guard_admin_count();
 
 -- ---------- row-level security ----------
 alter table public.profiles enable row level security;
