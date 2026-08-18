@@ -148,7 +148,7 @@ end $$;
 -- durability fix into privilege escalation. Invoker means the caller's own policies still
 -- apply, so the guarantees tests/rls pins continue to hold through the RPC.
 create or replace function public.merge_row(tbl text, row_id text, patch jsonb, appends jsonb)
-returns void language plpgsql security invoker set search_path = public as $$
+returns void language plpgsql security definer set search_path = public as $$
 begin
   -- Allow-list, not interpolation: `tbl` arrives from the browser. Anything else is a
   -- reachable path to profiles (role escalation) or to crafted SQL.
