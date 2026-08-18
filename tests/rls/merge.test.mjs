@@ -38,6 +38,21 @@ test("a REPLAYED append does not duplicate the entry", async () => {
   assert(evs.length === 1, `the replay duplicated the entry: ${JSON.stringify(evs)}`);
 });
 
+test("arrEvents dedupes by id even when the entry contents differ", async () => {
+  // Pins the id-based branch of append_dedup SPECIFICALLY. The falsification sweep proved
+  // the replay test above does NOT: with the id branch removed, the whole-element-equality
+  // fallback still collapses an IDENTICAL replay, so that test stayed green against a
+  // mutation that deleted the id logic outright. This case is the one that goes red --
+  // same id, different payload, which is what a retry carrying a locally-edited entry
+  // looks like.
+  await seedRow("accounts", "m-dedup-id", { id: "m-dedup-id", arrEvents: [] });
+  await merge("admin", "accounts", "m-dedup-id", {}, { arrEvents: [{ id: "e1", delta: 10 }] });
+  await merge("admin", "accounts", "m-dedup-id", {}, { arrEvents: [{ id: "e1", delta: 999 }] });
+  const evs = (await valueOf("accounts", "m-dedup-id")).arrEvents;
+  assert(evs.length === 1, `expected one entry deduped by id, got ${JSON.stringify(evs)}`);
+  assert(evs[0].delta === 10, `the entry already stored should win; got delta=${evs[0].delta}`);
+});
+
 test("history dedupes by whole-element equality", async () => {
   // history entries are { d, s } with no id (crm.html:488), so identity IS the value.
   await seedRow("accounts", "m-4", { id: "m-4", history: [{ d: "2026-08-01", s: 70 }] });
