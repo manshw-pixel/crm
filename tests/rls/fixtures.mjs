@@ -47,7 +47,6 @@ export async function resetStack() {
       alter default privileges in schema public grant all on functions to postgres, anon, authenticated, service_role;
       alter default privileges in schema public grant all on sequences to postgres, anon, authenticated, service_role;
       delete from auth.users;
-      delete from storage.objects where bucket_id = 'attachments';
     `);
     await client.query(readFileSync(SETUP_SQL, "utf8"));
     // PostgREST caches the schema. Without this the tables we just recreated come back as
@@ -93,7 +92,25 @@ export async function bootstrap() {
   sessions.admin = admin.client;
   sessions.user = user.client;
   sessions.anon = newClient();
+  await purgeAttachments();
   return { adminId: admin.id, userId: user.id };
+}
+
+// Storage is NOT reset by resetStack, and cannot be: Postgres rejects
+// `delete from storage.objects` outright with "Direct deletion from storage tables is not
+// allowed. Use the Storage API instead." — a trigger Supabase installs on the table, which
+// fires for the superuser too. That statement was in resetStack and it aborted the whole
+// reset transaction, so bootstrap threw and not one of the 25 tests ever ran.
+//
+// So the bucket is emptied through the API, which is what that error asks for, and it has
+// to happen AFTER signup because the API needs a session. `drop schema public` never
+// touched storage anyway — the bucket and its objects live in the `storage` schema and
+// survive a reset, which is exactly why this purge is needed for a repeated local run.
+async function purgeAttachments() {
+  const { data, error } = await sessions.admin.storage.from("attachments").list("rls");
+  // A missing bucket or an empty prefix is the normal case on a fresh stack, not a failure.
+  if (error || !data?.length) return;
+  await sessions.admin.storage.from("attachments").remove(data.map(f => `rls/${f.name}`));
 }
 
 let fresh = 0;
