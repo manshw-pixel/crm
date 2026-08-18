@@ -43,7 +43,7 @@ begin
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
-    case when not exists (select 1 from profiles) then 'admin' else 'user' end
+    'user'
   ) on conflict (id) do nothing;
   return new;
 end $$;
