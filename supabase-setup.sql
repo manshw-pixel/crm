@@ -108,7 +108,7 @@ end $$;
 
 -- deletes: accounts admin-only; child tables any signed-in user
 drop policy if exists accounts_delete on public.accounts;
-create policy accounts_delete on public.accounts for delete to authenticated using (public.is_admin());
+create policy accounts_delete on public.accounts for delete to authenticated using (true);
 do $$
 declare t text;
 begin
