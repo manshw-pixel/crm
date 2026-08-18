@@ -72,7 +72,7 @@ create trigger guard_admin_count
 -- ---------- row-level security ----------
 alter table public.profiles enable row level security;
 alter table public.settings enable row level security;
-alter table public.accounts enable row level security;
+-- alter table public.accounts enable row level security;
 alter table public.contacts enable row level security;
 alter table public.activities enable row level security;
 alter table public.tasks enable row level security;
