@@ -10,9 +10,13 @@ import "./storage.test.mjs";
 try {
   await bootstrap();
 } catch (e) {
-  console.error("\nCould not reach the local Supabase stack.");
-  console.error("Is Docker running, and have you run `supabase start`?\n");
-  console.error(e.message);
+  // Lead with the REAL error. This used to open with "Could not reach the local Supabase
+  // stack", which is only one of the ways bootstrap can fail: when a perfectly healthy
+  // stack rejected one of the reset statements, the log confidently blamed Docker and
+  // buried the actual message underneath it.
+  console.error("\nBootstrap failed, so no test ran.\n");
+  console.error(e.stack || e.message);
+  console.error("\nIf that reads as a connection failure: is Docker running, and have you run `supabase start`?");
   process.exit(2);
 }
 
