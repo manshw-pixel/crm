@@ -3062,6 +3062,7 @@ function Settings({ st, dispatch, user, scored }) {
       <PlaybookCard st={st} dispatch={dispatch} />
       <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
       <UsersCard me={user} />
+      {user.role === "admin" && <ErrorLogCard />}
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
@@ -3244,6 +3245,46 @@ function UsersCard({ me }) {
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
       {msg && <div className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
       <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
+    </Card>
+  );
+}
+const LEVEL_STYLE = {
+  crash: "bg-rose-50 text-rose-700",
+  write_failed: "bg-amber-50 text-amber-700",
+  load_failed: "bg-amber-50 text-amber-700",
+  retry: "bg-slate-100 text-slate-600",
+};
+function ErrorLogCard() {
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    sb.from("error_log").select("*").order("last_seen", { ascending: false }).limit(50)
+      .then(({ data, error }) => error ? setErr(error.message) : setRows(data || []));
+  }, []);
+  return (
+    <Card title="Error log">
+      <div data-errorlog>
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+        {!err && !rows.length && <p className="text-xs text-slate-500">No errors recorded. Nothing has failed in the last 30 days.</p>}
+        {rows.map(r => (
+          <div key={r.fingerprint} data-errorlog-row className="nm-inset mb-2 p-2">
+            <div className="flex items-center gap-2">
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${LEVEL_STYLE[r.level] || "bg-slate-100 text-slate-700"}`}>{r.level}</span>
+              <span className="flex-1 truncate text-xs text-slate-700">{r.message}</span>
+              <span className="text-[11px] font-mono text-slate-500">×{r.count}</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+              <span>{new Date(r.last_seen).toLocaleString()}</span>
+              {r.context && r.context.view && <span>· {r.context.view}</span>}
+              {r.context && r.context.table && <span>· {r.context.table}</span>}
+              {r.stack && <button className="ml-auto underline" onClick={() => setOpen(open === r.fingerprint ? null : r.fingerprint)}>
+                {open === r.fingerprint ? "hide" : "stack"}</button>}
+            </div>
+            {open === r.fingerprint && <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10px] text-slate-500">{r.stack}</pre>}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

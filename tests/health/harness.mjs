@@ -44,7 +44,18 @@ const MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
-  const fromImpl = t => (t === "profiles" ? profilesApi() : api(t));
+  const errorLogApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.error_log || [];
+      const p = Promise.resolve({ data: rows, error: null });
+      // The card chains .order(...).limit(...), so each link must return a thenable that
+      // also carries the next link -- the same shape profilesApi() uses for .order().
+      p.order = () => { const q = Promise.resolve({ data: rows, error: null }); q.limit = () => Promise.resolve({ data: rows, error: null }); return q; };
+      p.limit = () => Promise.resolve({ data: rows, error: null });
+      return p;
+    },
+  });
+  const fromImpl = t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t));
   return {
     from: fromImpl,
     rpc: (fn, args) => {
@@ -135,8 +146,17 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
+  const errorLogApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.error_log || [];
+      const p = Promise.resolve({ data: rows, error: null });
+      p.order = () => { const q = Promise.resolve({ data: rows, error: null }); q.limit = () => Promise.resolve({ data: rows, error: null }); return q; };
+      p.limit = () => Promise.resolve({ data: rows, error: null });
+      return p;
+    },
+  });
   return {
-    from: t => (t === "profiles" ? profilesApi() : api(t)),
+    from: t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t)),
     // Fault injection for the write-queue tests: window.__rpcFailures rejects the next N
     // calls, window.__rpcDelay adds latency (used to prove same-row writes are serial).
     // Each call is stamped with started/ended so a test can assert non-overlap.
