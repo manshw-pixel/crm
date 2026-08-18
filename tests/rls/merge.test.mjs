@@ -78,3 +78,24 @@ test("merge_row rejects a table name crafted for SQL injection", async () => {
   assert(!alive || alive.code !== "PGRST205",
     "the accounts table is gone — the identifier was interpolated unsafely");
 });
+
+test("N concurrent appends to one row all survive", async () => {
+  // The regression test for the lost-update race. Test 1 awaits its two merges in
+  // sequence, so it cannot observe the bug this function was rewritten to close: a
+  // read-modify-write merge lets overlapping callers read the same base row, and the
+  // later writer clobbers the earlier one. Firing these together and asserting that ALL
+  // of them survive is what makes that failure visible -- under the old implementation
+  // most of these entries would be lost; under the atomic `on conflict do update` they
+  // all land, every run.
+  await seedRow("accounts", "m-race", { id: "m-race", arrEvents: [] });
+  const N = 20;
+  const results = await Promise.all(
+    Array.from({ length: N }, (_, i) =>
+      merge("admin", "accounts", "m-race", {}, { arrEvents: [{ id: `r${i}`, delta: i }] })));
+  const failed = results.filter(r => r.error);
+  assert(!failed.length, `${failed.length} of ${N} concurrent merges errored: ${failed[0] && failed[0].error.message}`);
+  const evs = (await valueOf("accounts", "m-race")).arrEvents;
+  const ids = evs.map(e => e.id).sort();
+  assert(evs.length === N,
+    `${N - evs.length} of ${N} concurrent appends were LOST — the merge is read-modify-write, not atomic. Got: ${ids.join()}`);
+});
