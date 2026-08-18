@@ -47,7 +47,13 @@ const MOCK = `window.__sbFactory = () => {
   const fromImpl = t => (t === "profiles" ? profilesApi() : api(t));
   return {
     from: fromImpl,
-    rpc: async () => ({ error: null }),
+    rpc: (fn, args) => {
+      (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
+      if (fn === "log_error" && window.__logErrorFails) {
+        return Promise.reject(new Error("mock log_error rejection"));
+      }
+      return Promise.resolve({ error: null });
+    },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
     auth: {
@@ -137,6 +143,9 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
     rpc: (fn, args) => {
       const call = { fn, args, started: Date.now(), ended: null };
       (window.__rpcCalls = window.__rpcCalls || []).push(call);
+      if (fn === "log_error" && window.__logErrorFails) {
+        return Promise.reject(new Error("mock log_error rejection"));
+      }
       const delay = window.__rpcDelay || 0;
       return new Promise(resolve => {
         setTimeout(() => {
