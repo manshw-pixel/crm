@@ -232,7 +232,11 @@ begin
   end if;
 
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
-    execute format('delete from public.%I', t);
+    -- `where true` is not noise: Supabase enables a guard that REJECTS an unqualified
+    -- DELETE outright ('DELETE requires a WHERE clause'), so a bare `delete from t` aborts
+    -- the whole replace. The old client-side loop satisfied this incidentally with
+    -- .neq('id', ''); this states it deliberately.
+    execute format('delete from public.%I where true', t);
   end loop;
 
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
