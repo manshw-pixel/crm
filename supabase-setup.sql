@@ -302,13 +302,25 @@ create policy error_log_select on public.error_log for select to authenticated u
 -- remove. Reporting is the worst place to reintroduce it: it runs when the app is already
 -- unhealthy, and concurrent failures are correlated, not independent -- one flaky network
 -- breaks every open tab at once.
--- security invoker, as with every function above: a definer function would bypass the
--- policies this file defines, including the admin-only select.
+-- SECURITY DEFINER here, unlike every other function in this file, and deliberately.
+-- `insert ... on conflict do update` requires UPDATE and SELECT policies for the caller,
+-- and any UPDATE policy wide enough to let this bump `count` would also let a client
+-- rewrite `message` and zero the count -- destroying the evidence the log exists to keep.
+-- Definer is safe HERE specifically because this function returns void, touches one
+-- hard-coded table, accepts no table name from the caller, reads nothing back, and can
+-- only ever increment `count`. The admin-only select policy still governs every client
+-- read of the table. The auth.uid() check below replaces the insert policy definer bypasses.
 create or replace function public.log_error(
   fingerprint text, level text, message text, stack text,
   context jsonb, app_version text, user_agent text)
-returns void language plpgsql security invoker set search_path = public as $$
+returns void language plpgsql security definer set search_path = public as $$
 begin
+  -- definer bypasses the insert policy that used to deny anon, so the check that policy
+  -- was performing has to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'log_error: sign in required';
+  end if;
+
   insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
   values (fingerprint, level, message, stack, coalesce(context, '{}'::jsonb),
           auth.uid(), app_version, user_agent)
@@ -316,6 +328,7 @@ begin
     count = error_log.count + 1,
     last_seen = now(),
     -- keep the most recent occurrence's detail
+    level = excluded.level,
     message = excluded.message,
     stack = excluded.stack,
     context = excluded.context;
@@ -324,6 +337,8 @@ begin
   -- work is trivial. The WHERE is not optional -- Supabase rejects an unqualified DELETE.
   delete from error_log where last_seen < now() - interval '30 days';
 end $$;
+
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from anon;
 
 -- ---------- realtime ----------
 do $$
