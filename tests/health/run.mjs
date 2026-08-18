@@ -38,6 +38,7 @@ import "./diffrow.test.mjs";
 import "./writequeue.test.mjs";
 import "./syncstatus.test.mjs";
 import "./reporterror.test.mjs";
+import "./capture.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the

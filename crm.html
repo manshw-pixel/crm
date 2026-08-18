@@ -270,6 +270,7 @@ function snapshotFor(state, ids) {
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => {
   console.error(where, error);
+  reportError("write_failed", error, { table: where, code: error && error.code });
   const text = `Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`;
   // alert() is the fallback, not the primary path: this helper can fire before
   // ToastProvider mounts, and losing a failed-save warning entirely would be worse than
@@ -373,6 +374,7 @@ const writeQueue = (() => {
       }
       if (!error) { pending.shift(); continue; }
       if (op.attempts < BACKOFF_MS.length) {
+        reportError("retry", error, { table: op.table, rowId: op.rowId, attempt: op.attempts });
         await new Promise(r => setTimeout(r, BACKOFF_MS[op.attempts++]));
         continue;
       }
@@ -3336,7 +3338,10 @@ const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 class ViewBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, attempt: 0 }; }
   static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("View crashed:", this.props.view, error, info); }
+  componentDidCatch(error, info) {
+    console.error("View crashed:", this.props.view, error, info);
+    reportError("crash", error, { view: this.props.view });
+  }
   render() {
     // Fragment, not a div: the views are laid out by their parent, and injecting a wrapper
     // element would change that layout. The key is still what remounts the subtree on retry.
@@ -3384,12 +3389,26 @@ function App({ user }) {
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
-    .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
+    .catch(e => {
+      console.error(e);
+      reportError("load_failed", e, { where: "fetchAll" });
+      toast({ text: "Could not load shared data: " + e.message, tone: "error" });
+    }), []);
   useEffect(() => { refetch(); }, [refetch]);
   // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
   // to the server by calling this rather than trying to invert the reducer (see the write
   // queue's comment in crm.html for why refetch is the correct rollback).
   useEffect(() => { window.__refetch = refetch; }, [refetch]);
+  useEffect(() => { // errors that never reach a React boundary
+    const onErr = e => reportError("crash", e.error || e.message, { where: "window.onerror" });
+    const onRej = e => reportError("crash", e.reason, { where: "unhandledrejection" });
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    return () => {
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, []);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
     const fire = () => {
