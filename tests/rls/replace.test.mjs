@@ -22,8 +22,15 @@ test("A FAILING replace_all leaves every original row in place", async () => {
   // the SECOND table, so the deletes have already run by the time it blows up.
   await seedRow("accounts", "r-keep", { id: "r-keep", name: "Must survive" });
   await seedRow("contacts", "r-keep-c", { id: "r-keep-c", name: "Must survive too" });
+  // The inserted account carries an id unique to THIS test. Reusing the shared payload's
+  // "r-new" would be self-defeating: the previous test successfully inserts r-new, so it is
+  // legitimately still present here and the final assertion would fail on a working
+  // implementation -- a test failing for a reason that has nothing to do with atomicity.
   const { error } = await sessions.admin.rpc("replace_all", {
-    payload: payload({ contacts: [{ nope: "this row has no id" }] }),
+    payload: payload({
+      accounts: [{ id: "r-notcommitted", name: "Must NOT be inserted" }],
+      contacts: [{ nope: "this row has no id" }],
+    }),
   });
   assert(error, "a malformed payload was accepted — the replace is not validating rows");
   assert(/every contacts row needs an id/.test(error.message),
@@ -32,7 +39,8 @@ test("A FAILING replace_all leaves every original row in place", async () => {
     "THE DATABASE WAS EMPTIED — replace_all is not atomic");
   assert(await stillExists("contacts", "r-keep-c"),
     "THE DATABASE WAS EMPTIED — replace_all is not atomic");
-  assert(!(await stillExists("accounts", "r-new")), "a partial insert was committed");
+  assert(!(await stillExists("accounts", "r-notcommitted")),
+    "a partial insert was committed — the payload's rows landed despite the abort");
 });
 
 test("a plain user cannot replace_all", async () => {
