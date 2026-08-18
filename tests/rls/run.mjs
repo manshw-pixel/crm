@@ -8,6 +8,7 @@ import "./policies.test.mjs";
 import "./merge.test.mjs";
 import "./storage.test.mjs";
 import "./replace.test.mjs";
+import "./errorlog.test.mjs";
 
 try {
   await bootstrap();
