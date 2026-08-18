@@ -338,7 +338,13 @@ begin
   delete from error_log where last_seen < now() - interval '30 days';
 end $$;
 
-revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from anon;
+-- Revoke from PUBLIC, not from anon. Postgres grants EXECUTE to PUBLIC by default on every
+-- new function and `create or replace` preserves it, so revoking from `anon` alone removes
+-- a direct grant that was never made while anon keeps inheriting execute via PUBLIC. This
+-- pair is what actually makes the grant explicit -- and it also removes the file's only
+-- statement that errors if a role happens not to exist.
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public;
+grant execute on function public.log_error(text, text, text, text, jsonb, text, text) to authenticated;
 
 -- ---------- realtime ----------
 do $$
