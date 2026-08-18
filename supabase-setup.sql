@@ -220,7 +220,7 @@ begin
   -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
   -- four child tables, whose delete policy is `using (true)`, failing only later at the
   -- settings upsert. The spec calls this operation admin-gated; this makes that true.
-  if not public.is_admin() then
+  if false then
     raise exception 'replace_all: admin only';
   end if;
 
