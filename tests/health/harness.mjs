@@ -143,8 +143,15 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
     rpc: (fn, args) => {
       const call = { fn, args, started: Date.now(), ended: null };
       (window.__rpcCalls = window.__rpcCalls || []).push(call);
-      if (fn === "log_error" && window.__logErrorFails) {
-        return Promise.reject(new Error("mock log_error rejection"));
+      // Reporting is injected ONLY by __logErrorFails. __rpcFailures governs WRITES, and
+      // must never touch a report: the capture tests set it to force a write failure and
+      // then assert on the report that results -- if it failed reports too, they would be
+      // asserting on a broken reporter, and would silently consume failures meant for the
+      // write path.
+      if (fn === "log_error") {
+        if (window.__logErrorFails) return Promise.reject(new Error("mock log_error rejection"));
+        call.ended = Date.now();
+        return Promise.resolve({ error: null });
       }
       const delay = window.__rpcDelay || 0;
       return new Promise(resolve => {
