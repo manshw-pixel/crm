@@ -118,6 +118,79 @@ begin
   end loop;
 end $$;
 
+-- ---------- durable writes: field-level merge ----------
+-- Replaces the whole-blob upsert, under which two people editing different fields of one
+-- account silently reverted each other with no error raised (D2 in the durability spec).
+--
+-- SECURITY INVOKER IS LOAD-BEARING AND MUST NOT BE CHANGED. This function is a general
+-- "write anything into any row" primitive; as `security definer` it would run as its owner
+-- and bypass every policy above -- settings_write and the admin gate included -- turning a
+-- durability fix into privilege escalation. Invoker means the caller's own policies still
+-- apply, so the guarantees tests/rls pins continue to hold through the RPC.
+create or replace function public.merge_row(tbl text, row_id text, patch jsonb, appends jsonb)
+returns void language plpgsql security invoker set search_path = public as $$
+declare
+  k text;
+  existing jsonb;
+  merged jsonb;
+begin
+  -- Allow-list, not interpolation: `tbl` arrives from the browser. Anything else is a
+  -- reachable path to profiles (role escalation) or to crafted SQL.
+  if tbl not in ('accounts','contacts','activities','tasks','opportunities','settings') then
+    raise exception 'merge_row: table % is not writable through this function', tbl;
+  end if;
+
+  if tbl = 'settings' then
+    select data into existing from settings where id = 1;
+  else
+    execute format('select data from public.%I where id = $1', tbl) into existing using row_id;
+  end if;
+
+  -- `||` is a SHALLOW merge, which is exactly the field-level semantics wanted here: only
+  -- the keys present in `patch` move. diffRow sends nested objects whole for this reason.
+  merged := coalesce(existing, '{}'::jsonb) || coalesce(patch, '{}'::jsonb);
+
+  for k in select jsonb_object_keys(coalesce(appends, '{}'::jsonb)) loop
+    merged := jsonb_set(merged, array[k],
+      public.append_dedup(coalesce(merged -> k, '[]'::jsonb), appends -> k, k));
+  end loop;
+
+  if tbl = 'settings' then
+    insert into settings (id, data, updated_at) values (1, merged, now())
+      on conflict (id) do update set data = excluded.data, updated_at = now();
+  else
+    execute format(
+      'insert into public.%I (id, data, updated_at) values ($1, $2, now())
+       on conflict (id) do update set data = excluded.data, updated_at = now()', tbl)
+      using row_id, merged;
+  end if;
+end $$;
+
+-- Concatenate `incoming` onto `base`, skipping entries already present. Dedupe is what
+-- makes a RETRIED write safe to replay: the queue cannot know whether a timed-out request
+-- landed, so applying it twice must equal applying it once.
+--   arrEvents -> by element id (every entry has one; this is the audit record that matters)
+--   everything else -> by whole-element equality
+-- Accepted trade-off, from the spec: two genuinely distinct `history` snapshots with the
+-- same day and score collapse into one. That is a sparkline point, not an audit record.
+create or replace function public.append_dedup(base jsonb, incoming jsonb, field text)
+returns jsonb language plpgsql immutable security invoker set search_path = public as $$
+declare
+  item jsonb;
+  acc jsonb := coalesce(base, '[]'::jsonb);
+begin
+  for item in select * from jsonb_array_elements(coalesce(incoming, '[]'::jsonb)) loop
+    if field = 'arrEvents' and item ? 'id' then
+      if not exists (select 1 from jsonb_array_elements(acc) e where e ->> 'id' = item ->> 'id') then
+        acc := acc || jsonb_build_array(item);
+      end if;
+    elsif not exists (select 1 from jsonb_array_elements(acc) e where e = item) then
+      acc := acc || jsonb_build_array(item);
+    end if;
+  end loop;
+  return acc;
+end $$;
+
 -- ---------- realtime ----------
 do $$
 declare t text;
