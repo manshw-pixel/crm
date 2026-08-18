@@ -274,6 +274,68 @@ const dbError = (where, error) => {
   if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
 };
 
+/* ------------------------------ write queue ------------------------------
+   persist() used to be fire-and-forget: a failed write showed one toast and stopped, local
+   state kept the change, and the user carried on editing a view the server never received
+   (D1). Operations now go through this queue, which retries with backoff and -- if it
+   finally gives up -- rolls the local state back by REFETCHING. Rollback by refetch rather
+   than by inverting the reducer is deliberate: a refetch is unconditionally correct, while
+   an undo-patch has to be right about what it is undoing, and would be a second chance to
+   corrupt the same data. */
+const BACKOFF_MS = [500, 2000, 8000];
+const writeQueue = (() => {
+  const pending = [];
+  let running = false, status = "saved";
+  const state = () => ({ status, pending: pending.length });
+  const notify = () => window.__onQueueChange && window.__onQueueChange(state());
+  const set = s => { status = s; notify(); };
+
+  async function run() {
+    if (running) return;
+    running = true;
+    // Strictly serial. Two edits to one account MUST NOT be in flight together, or they can
+    // land out of order and the older value wins.
+    while (pending.length) {
+      const op = pending[0];
+      let error;
+      try {
+        ({ error } = op.kind === "delete"
+          ? await sb.from(op.table).delete().eq(op.column, op.value)
+          : await sb.rpc("merge_row",
+              { tbl: op.table, row_id: op.rowId, patch: op.patch, appends: op.appends }));
+      } catch (e) {
+        // supabase-js REJECTS on network/CORS errors rather than resolving { error }. Without
+        // this the rejection escapes run(), `running` stays true forever, and every later
+        // write silently no-ops at "saving" -- worse than the fire-and-forget code this
+        // replaced, which only lost one write.
+        error = { message: e && e.message ? e.message : String(e) };
+      }
+      if (!error) { pending.shift(); continue; }
+      if (op.attempts < BACKOFF_MS.length) {
+        await new Promise(r => setTimeout(r, BACKOFF_MS[op.attempts++]));
+        continue;
+      }
+      // Given up. Drop everything queued -- the refetch below is about to invalidate all of
+      // it -- and resync from the server.
+      pending.length = 0;
+      running = false;
+      set("error");
+      dbError(op.table, error);
+      if (window.__refetch) window.__refetch();
+      return;
+    }
+    running = false;
+    set("saved");
+  }
+
+  return {
+    enqueue(op) { pending.push({ ...op, attempts: 0 }); set("saving"); run().catch(e => console.error("writeQueue.run failed", e)); },
+    enqueueDelete(op) { pending.push({ ...op, kind: "delete", attempts: 0 }); set("saving"); run().catch(e => console.error("writeQueue.run failed", e)); },
+    queueState: state,
+    drain: run,
+  };
+})();
+
 async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
@@ -300,9 +362,48 @@ async function fetchAll() {
   };
 }
 
+/* Compute what actually changed between two versions of one row.
+   This exists so that NO form has to diff: dispatch already holds prev and next, and this
+   is the one place that sees both. It therefore also covers the appends the reducer makes
+   internally -- arrEvents (crm.html:404,410,432) never passes through a form at all, so a
+   form-level diff would have missed the entire audit trail. */
+const sameJSON = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+// INVARIANT: no reducer case may mutate a row in place. diffRow compares prev against next,
+// so an in-place mutation makes prev === next and the write VANISHES SILENTLY -- no error,
+// no failed test. Every reducer case is immutable today; keep it that way.
+function diffRow(prev, next) {
+  if (!prev) return { patch: { ...next }, appends: {}, sets: {} };
+  const patch = {}, appends = {}, sets = {};
+  for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    const a = prev[k], b = next[k];
+    if (sameJSON(a, b)) continue;
+    if (Array.isArray(b)) {
+      const base = Array.isArray(a) ? a : [];
+      // An append is next == prev + trailing items, and NOTHING else. A reorder, a removal
+      // or an in-place edit all break the prefix and fall through to a whole-array set --
+      // misreading any of them as an append would duplicate audit entries.
+      const isAppend = b.length > base.length && base.every((x, i) => sameJSON(x, b[i]));
+      if (isAppend) appends[k] = b.slice(base.length); else sets[k] = b;
+    } else {
+      // undefined would be dropped from the JSON payload entirely, leaving the old value
+      // server-side. A cleared field has to travel as an explicit null.
+      patch[k] = b === undefined ? null : b;
+    }
+  }
+  return { patch, appends, sets };
+}
+
 /* write-through: mirror a just-reduced action into Supabase */
-function persist(action, next) {
-  const up = (t, item) => sb.from(t).upsert({ id: item.id, data: item, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError(t, error));
+function persist(action, next, prev) {
+  const prevOf = (t, id) => ((prev && prev[t]) || []).find(x => x.id === id);
+  // Write the DIFF, not the blob. Two people editing different fields of one account used
+  // to revert each other with no error raised (D2); merge_row applies only what moved.
+  const up = (t, item) => {
+    const { patch, appends, sets } = diffRow(prevOf(t, item.id), item);
+    const full = { ...patch, ...sets };
+    if (!Object.keys(full).length && !Object.keys(appends).length) return;
+    writeQueue.enqueue({ table: t, rowId: item.id, patch: full, appends });
+  };
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
     case "ADD_CONTACT": return up("contacts", action.item);
@@ -329,7 +430,7 @@ function persist(action, next) {
       return action.items.filter(t => kept.has(t.id)).forEach(t => up("tasks", t));
     }
     case "BULK_DELETE_TASKS":
-      return action.ids.forEach(id => sb.from("tasks").delete().eq("id", id).then(({ error }) => error && dbError("tasks", error)));
+      return action.ids.forEach(id => writeQueue.enqueueDelete({ table: "tasks", column: "id", value: id }));
     case "BULK_CHURN": {
       const ids = new Set(action.ids);
       next.accounts.filter(a => ids.has(a.id)).forEach(a => up("accounts", a));
@@ -339,12 +440,12 @@ function persist(action, next) {
       return;
     }
     case "BULK_DELETE_ACTIVITIES":
-      return action.ids.forEach(id => sb.from("activities").delete().eq("id", id).then(({ error }) => error && dbError("activities", error)));
+      return action.ids.forEach(id => writeQueue.enqueueDelete({ table: "activities", column: "id", value: id }));
     case "BULK_DELETE":
       action.ids.forEach(id => {
-        sb.from("accounts").delete().eq("id", id).then(({ error }) => error && dbError("accounts", error));
+        writeQueue.enqueueDelete({ table: "accounts", column: "id", value: id });
         ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
-          sb.from(t).delete().eq("data->>accountId", id).then(({ error }) => error && dbError(t, error)));
+          writeQueue.enqueueDelete({ table: t, column: "data->>accountId", value: id }));
       });
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
@@ -356,29 +457,34 @@ function persist(action, next) {
     }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); return o && up("opportunities", o); }
     case "DELETE_ACCOUNT":
-      sb.from("accounts").delete().eq("id", action.id).then(({ error }) => error && dbError("accounts", error));
+      writeQueue.enqueueDelete({ table: "accounts", column: "id", value: action.id });
       ["contacts", "activities", "tasks", "opportunities"].forEach(t =>
-        sb.from(t).delete().eq("data->>accountId", action.id).then(({ error }) => error && dbError(t, error)));
+        writeQueue.enqueueDelete({ table: t, column: "data->>accountId", value: action.id }));
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS": case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS":
-      return sb.from("settings").upsert({ id: 1, data: next.settings, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("settings", error));
+    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
+      const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
+      return writeQueue.enqueue({ table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
+    }
   }
 }
 
-/* bulk replace (sample data / clear / JSON import) — admin only, RLS enforced */
+/* bulk replace (sample data / clear / JSON import) — admin only, RLS enforced.
+   One RPC, therefore one transaction: the deletes and inserts commit together or not at
+   all. This previously deleted all five tables client-side and only then inserted, so any
+   failure in between emptied the team's database with no backup. */
 async function replaceAllRemote(state) {
+  const payload = { settings: state.settings };
   for (const t of ENTITY_TABLES) {
-    const { error } = await sb.from(t).delete().neq("id", "");
-    if (error) throw error;
+    // Deliberately NOT `state[t] || []`. The old client threw a TypeError here on a
+    // malformed import, which surfaced as a visible "Import failed" toast; defaulting to
+    // an empty array instead would silently EMPTY that table on an irreversible operation.
+    if (!Array.isArray(state[t])) throw new Error(`${t} is missing from the imported data`);
+    payload[t] = state[t];
   }
-  const key = { accounts: "accounts", contacts: "contacts", activities: "activities", tasks: "tasks", opportunities: "opportunities" };
-  for (const t of ENTITY_TABLES) {
-    const rows = state[key[t]].map(item => ({ id: item.id, data: item }));
-    if (rows.length) { const { error } = await sb.from(t).insert(rows); if (error) throw error; }
-  }
-  const { error } = await sb.from("settings").upsert({ id: 1, data: state.settings });
+  const { error } = await sb.rpc("replace_all", { payload });
   if (error) throw error;
 }
 function reducer(state, action) {
@@ -3151,6 +3257,17 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     </div>
   );
 }
+function SyncStatus() {
+  const [s, setS] = useState(() => writeQueue.queueState());
+  useEffect(() => { window.__onQueueChange = setS; return () => { window.__onQueueChange = null; }; }, []);
+  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-400">Saved</span>;
+  if (s.status === "saving") return <span data-sync-status="saving" className="text-xs text-slate-500">Saving…</span>;
+  // Deliberately persistent. A toast scrolls away; an unsaved change must not. This is also
+  // the first honest answer to the observability gap -- an error state that STAYS on screen.
+  return <span data-sync-status="error" className="nm-inset px-2 py-1 text-xs font-medium text-rose-700"
+    title="Your last change could not be saved and was rolled back. Check your connection and try again.">
+    Not saved</span>;
+}
 const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 // Catches render/lifecycle errors in the view area only, so a crash costs one screen
 // instead of the session. Does NOT catch errors in event handlers or async callbacks --
@@ -3198,7 +3315,7 @@ function App({ user }) {
   const searchRef = useRef();
   const dispatch = useCallback(action => setSt(prev => {
     const next = reducer(prev, action);
-    if (action.type !== "REPLACE") persist(action, next);
+    if (action.type !== "REPLACE") persist(action, next, prev);
     return next;
   }), []);
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });
@@ -3208,10 +3325,21 @@ function App({ user }) {
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
   useEffect(() => { refetch(); }, [refetch]);
+  // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
+  // to the server by calling this rather than trying to invert the reducer (see the write
+  // queue's comment in crm.html for why refetch is the correct rollback).
+  useEffect(() => { window.__refetch = refetch; }, [refetch]);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
+    const fire = () => {
+      // Defer while our own writes are in flight. A refetch mid-queue replaces local state
+      // with a server view that does not contain them yet, so the user's edit visibly
+      // vanishes and then comes back.
+      if (writeQueue.queueState().pending > 0) { timer = setTimeout(fire, 300); return; }
+      refetch();
+    };
     const ch = sb.channel("crm-live").on("postgres_changes", { event: "*", schema: "public" },
-      () => { clearTimeout(timer); timer = setTimeout(refetch, 800); }).subscribe();
+      () => { clearTimeout(timer); timer = setTimeout(fire, 800); }).subscribe();
     return () => { clearTimeout(timer); sb.removeChannel(ch); };
   }, [refetch]);
   useEffect(() => {
@@ -3364,6 +3492,7 @@ function App({ user }) {
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
           ))}
         </div>}
+        <div className="ml-1"><SyncStatus /></div>
         <div className="relative ml-1">
           <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
@@ -3441,7 +3570,7 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>

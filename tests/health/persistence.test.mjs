@@ -198,3 +198,34 @@ test("SMOKE: undoing a single-account delete survives a reload", async () => {
   assert(after.tasks === 1, `its task should be restored too, got ${after.tasks}`);
   await browser.close();
 });
+
+test("an account edit writes only the changed field, not the whole blob", async () => {
+  const { page, browser } = await launchPersistent(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+  await page.evaluate(() => { window.__rpcCalls = []; });
+  await page.evaluate(() => window.__store.dispatch(
+    { type: "EDIT_ACCOUNT", id: "p1", patch: { arr: 4242 }, by: "Test User" }));
+  await page.waitForFunction(() => (window.__rpcCalls || []).length > 0);
+  const call = await page.evaluate(() => window.__rpcCalls[0]);
+  assert(call.fn === "merge_row", `expected a merge_row rpc, got ${call.fn}`);
+  assert(call.args.tbl === "accounts" && call.args.row_id === "p1",
+    `wrong target: ${JSON.stringify(call.args)}`);
+  assert(call.args.patch.arr === 4242, `the ARR change is missing: ${JSON.stringify(call.args.patch)}`);
+  assert(call.args.patch.name === undefined,
+    "the whole blob was sent — unchanged fields must not travel, or concurrent editors keep clobbering");
+  await browser.close();
+});
+
+test("the audit entry the reducer appends travels as an append, not a whole array", async () => {
+  const { page, browser } = await launchPersistent(seed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+  await page.evaluate(() => { window.__rpcCalls = []; });
+  await page.evaluate(() => window.__store.dispatch(
+    { type: "EDIT_ACCOUNT", id: "p1", patch: { arr: 777 }, by: "Test User" }));
+  await page.waitForFunction(() => (window.__rpcCalls || []).length > 0);
+  const args = await page.evaluate(() => window.__rpcCalls[0].args);
+  assert(args.appends && args.appends.audit, `no audit append was sent: ${JSON.stringify(args.appends)}`);
+  assert(args.appends.audit.length === 1,
+    `expected exactly the new audit entry, got ${args.appends.audit.length}`);
+  await browser.close();
+});
