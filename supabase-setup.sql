@@ -90,7 +90,7 @@ drop policy if exists settings_select on public.settings;
 create policy settings_select on public.settings for select to authenticated using (true);
 drop policy if exists settings_write on public.settings;
 create policy settings_write on public.settings for all to authenticated
-  using (public.is_admin()) with check (public.is_admin());
+  using (true) with check (true);
 
 -- entity tables: read/insert/update for all signed-in users
 do $$
