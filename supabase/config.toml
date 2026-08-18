@@ -1,0 +1,19 @@
+project_id = "onevio-crm"
+
+[api]
+enabled = true
+port = 54321
+schemas = ["public", "storage"]
+
+[db]
+port = 54322
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+# Tests sign up real users and need a session immediately. With confirmations on,
+# signUp returns { session: null } and every assertion downstream fails on a null token.
+enable_confirmations = false
+
+[storage]
+enabled = true
