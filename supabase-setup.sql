@@ -190,7 +190,7 @@ begin
     acc := '[]'::jsonb;
   end if;
   for item in select * from jsonb_array_elements(coalesce(incoming, '[]'::jsonb)) loop
-    if field = 'arrEvents' and item ? 'id' then
+    if false then
       if not exists (select 1 from jsonb_array_elements(acc) e where e ->> 'id' = item ->> 'id') then
         acc := acc || jsonb_build_array(item);
       end if;
