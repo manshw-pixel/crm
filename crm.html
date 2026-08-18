@@ -300,6 +300,34 @@ async function fetchAll() {
   };
 }
 
+/* Compute what actually changed between two versions of one row.
+   This exists so that NO form has to diff: dispatch already holds prev and next, and this
+   is the one place that sees both. It therefore also covers the appends the reducer makes
+   internally -- arrEvents (crm.html:404,410,432) never passes through a form at all, so a
+   form-level diff would have missed the entire audit trail. */
+const sameJSON = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+function diffRow(prev, next) {
+  if (!prev) return { patch: { ...next }, appends: {}, sets: {} };
+  const patch = {}, appends = {}, sets = {};
+  for (const k of new Set([...Object.keys(prev), ...Object.keys(next)])) {
+    const a = prev[k], b = next[k];
+    if (sameJSON(a, b)) continue;
+    if (Array.isArray(b)) {
+      const base = Array.isArray(a) ? a : [];
+      // An append is next == prev + trailing items, and NOTHING else. A reorder, a removal
+      // or an in-place edit all break the prefix and fall through to a whole-array set --
+      // misreading any of them as an append would duplicate audit entries.
+      const isAppend = b.length > base.length && base.every((x, i) => sameJSON(x, b[i]));
+      if (isAppend) appends[k] = b.slice(base.length); else sets[k] = b;
+    } else {
+      // undefined would be dropped from the JSON payload entirely, leaving the old value
+      // server-side. A cleared field has to travel as an explicit null.
+      patch[k] = b === undefined ? null : b;
+    }
+  }
+  return { patch, appends, sets };
+}
+
 /* write-through: mirror a just-reduced action into Supabase */
 function persist(action, next) {
   const up = (t, item) => sb.from(t).upsert({ id: item.id, data: item, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError(t, error));
@@ -3441,7 +3469,7 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
