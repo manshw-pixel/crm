@@ -297,8 +297,17 @@ const writeQueue = (() => {
     // land out of order and the older value wins.
     while (pending.length) {
       const op = pending[0];
-      const { error } = await sb.rpc("merge_row",
-        { tbl: op.table, row_id: op.rowId, patch: op.patch, appends: op.appends });
+      let error;
+      try {
+        ({ error } = await sb.rpc("merge_row",
+          { tbl: op.table, row_id: op.rowId, patch: op.patch, appends: op.appends }));
+      } catch (e) {
+        // supabase-js REJECTS on network/CORS errors rather than resolving { error }. Without
+        // this the rejection escapes run(), `running` stays true forever, and every later
+        // write silently no-ops at "saving" -- worse than the fire-and-forget code this
+        // replaced, which only lost one write.
+        error = { message: e && e.message ? e.message : String(e) };
+      }
       if (!error) { pending.shift(); continue; }
       if (op.attempts < BACKOFF_MS.length) {
         await new Promise(r => setTimeout(r, BACKOFF_MS[op.attempts++]));
@@ -318,7 +327,7 @@ const writeQueue = (() => {
   }
 
   return {
-    enqueue(op) { pending.push({ ...op, attempts: 0 }); set("saving"); run(); },
+    enqueue(op) { pending.push({ ...op, attempts: 0 }); set("saving"); run().catch(e => console.error("writeQueue.run failed", e)); },
     queueState: state,
     drain: run,
   };
@@ -3313,6 +3322,7 @@ function App({ user }) {
   // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
   // to the server by calling this rather than trying to invert the reducer (see the write
   // queue's comment in crm.html for why refetch is the correct rollback).
+  useEffect(() => { window.__refetch = refetch; }, [refetch]);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
     const fire = () => {
