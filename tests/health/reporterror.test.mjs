@@ -92,12 +92,33 @@ test("reportError does NOT enqueue onto the write queue", async () => {
   await boot();
   // The queue's own failure is one of the things reportError reports. Routing reports
   // through the queue would mean a failing queue reports its failure by enqueuing another
-  // operation onto the failing queue.
-  const pendingAfter = await page.evaluate(async () => {
+  // operation onto the failing queue. Assert on shape, not just pending===0 -- the mock
+  // drains fast enough that pending would read 0 even if the report HAD been enqueued.
+  await page.evaluate(() => { window.__rpcCalls = []; });
+  const calls = await page.evaluate(async () => {
     window.__health.reportError("write_failed", new Error("z"), { table: "accounts" });
     await new Promise(r => setTimeout(r, 100));
-    return window.__health.writeQueue.queueState().pending;
+    return (window.__rpcCalls || []).map(c => c.fn);
   });
-  assert(pendingAfter === 0, `the report was enqueued (pending=${pendingAfter})`);
+  assert(!calls.includes("merge_row"), `the report went through the write queue: ${JSON.stringify(calls)}`);
+  assert(calls.includes("log_error"), `no log_error call was recorded: ${JSON.stringify(calls)}`);
+});
+
+test("a rejected report produces no unhandled rejection", async () => {
+  await boot();
+  // The async path is the one that matters: reportError's try/catch only covers the
+  // SYNCHRONOUS call, so without `p.then(()=>{},()=>{})` the rejection escapes as an
+  // unhandled rejection -- which the global handler wired in a later task would then
+  // report, making the reporter report its own failure in a loop.
+  await page.evaluate(async () => {
+    window.__unhandled = 0;
+    window.addEventListener("unhandledrejection", () => { window.__unhandled++; });
+    window.__logErrorFails = true;
+    window.__health.reportError("crash", new Error("async boom"), {});
+    await new Promise(r => setTimeout(r, 300));
+    window.__logErrorFails = false;
+  });
+  const n = await page.evaluate(() => window.__unhandled);
+  assert(n === 0, `the rejected report escaped as ${n} unhandled rejection(s)`);
   if (browser) await browser.close();
 });
