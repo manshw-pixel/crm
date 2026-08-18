@@ -67,6 +67,8 @@ test("merge_row does NOT let a plain user write settings", async () => {
 test("merge_row cannot be pointed at an arbitrary table", async () => {
   const { error } = await merge("user", "profiles", "x", { role: "admin" });
   assert(error, "merge_row accepted a table outside the allow-list — role escalation is reachable");
+  assert(/not writable through this function/.test(error.message),
+    `expected the allow-list guard to reject it, got: ${error.message}`);
 });
 
 test("merge_row rejects a table name crafted for SQL injection", async () => {

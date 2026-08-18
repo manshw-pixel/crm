@@ -122,6 +122,26 @@ end $$;
 -- Replaces the whole-blob upsert, under which two people editing different fields of one
 -- account silently reverted each other with no error raised (D2 in the durability spec).
 --
+-- The merge must be computed INSIDE the upsert statement, not read-modify-written around
+-- it: two overlapping calls under READ COMMITTED would otherwise both read the same base
+-- row and the second would write its stale result over the first -- reintroducing, in a
+-- few-millisecond window, exactly the lost update this function exists to prevent.
+create or replace function public.merge_patch(base jsonb, patch jsonb, appends jsonb)
+returns jsonb language plpgsql immutable security invoker set search_path = public as $$
+declare
+  k text;
+  merged jsonb;
+begin
+  -- `||` is a SHALLOW merge, which is exactly the field-level semantics wanted here: only
+  -- the keys present in `patch` move. diffRow sends nested objects whole for this reason.
+  merged := coalesce(base, '{}'::jsonb) || coalesce(patch, '{}'::jsonb);
+  for k in select jsonb_object_keys(coalesce(appends, '{}'::jsonb)) loop
+    merged := jsonb_set(merged, array[k],
+      public.append_dedup(coalesce(merged -> k, '[]'::jsonb), appends -> k, k));
+  end loop;
+  return merged;
+end $$;
+
 -- SECURITY INVOKER IS LOAD-BEARING AND MUST NOT BE CHANGED. This function is a general
 -- "write anything into any row" primitive; as `security definer` it would run as its owner
 -- and bypass every policy above -- settings_write and the admin gate included -- turning a
@@ -129,10 +149,6 @@ end $$;
 -- apply, so the guarantees tests/rls pins continue to hold through the RPC.
 create or replace function public.merge_row(tbl text, row_id text, patch jsonb, appends jsonb)
 returns void language plpgsql security invoker set search_path = public as $$
-declare
-  k text;
-  existing jsonb;
-  merged jsonb;
 begin
   -- Allow-list, not interpolation: `tbl` arrives from the browser. Anything else is a
   -- reachable path to profiles (role escalation) or to crafted SQL.
@@ -141,28 +157,17 @@ begin
   end if;
 
   if tbl = 'settings' then
-    select data into existing from settings where id = 1;
-  else
-    execute format('select data from public.%I where id = $1', tbl) into existing using row_id;
-  end if;
-
-  -- `||` is a SHALLOW merge, which is exactly the field-level semantics wanted here: only
-  -- the keys present in `patch` move. diffRow sends nested objects whole for this reason.
-  merged := coalesce(existing, '{}'::jsonb) || coalesce(patch, '{}'::jsonb);
-
-  for k in select jsonb_object_keys(coalesce(appends, '{}'::jsonb)) loop
-    merged := jsonb_set(merged, array[k],
-      public.append_dedup(coalesce(merged -> k, '[]'::jsonb), appends -> k, k));
-  end loop;
-
-  if tbl = 'settings' then
-    insert into settings (id, data, updated_at) values (1, merged, now())
-      on conflict (id) do update set data = excluded.data, updated_at = now();
+    insert into settings (id, data, updated_at)
+      values (1, public.merge_patch('{}'::jsonb, patch, appends), now())
+      on conflict (id) do update
+        set data = public.merge_patch(settings.data, patch, appends), updated_at = now();
   else
     execute format(
-      'insert into public.%I (id, data, updated_at) values ($1, $2, now())
-       on conflict (id) do update set data = excluded.data, updated_at = now()', tbl)
-      using row_id, merged;
+      'insert into public.%1$I (id, data, updated_at)
+         values ($1, public.merge_patch(''{}''::jsonb, $2, $3), now())
+       on conflict (id) do update
+         set data = public.merge_patch(public.%1$I.data, $2, $3), updated_at = now()', tbl)
+      using row_id, patch, appends;
   end if;
 end $$;
 
