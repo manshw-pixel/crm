@@ -123,8 +123,15 @@ test("accountRetention gives a churned account 0% GRR", async () => {
 });
 
 test("accountRetention shows no movement for a non-USD account whose local ARR never changed", async () => {
-  const a = scored({ id: "eur", name: "Euro Co", arr: 100000, currency: "EUR", startDate: "2024-01-01" });
+  // INR deliberately, NOT EUR: RATES only defines INR and PHP, and an unlisted currency
+  // resolves to 0 -- so an EUR account would satisfy `delta === 0` as 0 minus 0, passing
+  // whether or not FX is handled correctly. INR has a real rate, so both sides convert to
+  // a real non-zero figure and the assertion can actually fail.
+  const a = scored({ id: "inr", name: "Rupee Co", arr: 1000000, currency: "INR",
+    arrUSD: 1000000 * 0.012, startDate: "2024-01-01" });
   const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.currentARR === 12000, `INR should convert to 12000 USD, got ${r.currentARR}`);
+  assert(r.baselineARR === 12000, `baseline should convert identically, got ${r.baselineARR}`);
   assert(r.delta === 0, `FX drift must not create movement: delta was ${r.delta}`);
 });
 

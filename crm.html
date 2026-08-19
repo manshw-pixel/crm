@@ -2421,7 +2421,17 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
       (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
-    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
+    // Computed once per row, BEFORE the sort. The comparator below runs O(n log n) times;
+    // calling accountRetention there would replay every account's ledger thousands of
+    // times on a large book. Keeping it out of render matters too -- the list is
+    // windowed, so render re-runs on every scroll.
+    r = r.map(a => ({ ...a, _ret: accountRetention(a, (settings && settings.rates) || {}) }));
+    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate)
+      : sort.k === "arr" ? a.arrUSD
+      : sort.k === "nrr" ? (a._ret.nrr ?? -1)
+      : sort.k === "grr" ? (a._ret.grr ?? -1)
+      : sort.k === "movement" ? (a._ret.pct ?? -Infinity)
+      : a[sort.k];
     const sorted = [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
     // group: each top-level row followed by its (filter-surviving) subs; subs whose
     // parent is filtered out appear at their own sorted position
@@ -2435,7 +2445,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, settings]);
   // a selection must never outlive the rows that produced it
   useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue]);
   // teammates' edits arrive via a ~800ms realtime refetch and can change the visible
@@ -2464,9 +2474,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   // virtualization and not pagination.
   const win = useWindowedRows(rows);
   const visibleRows = win.windowed ? rows.slice(win.start, win.end) : rows;
-  const colCount = qbrDue ? 12 : 11;
+  // +3 for NRR, GRR and movement. Drives the empty-state row AND the windowing spacer
+  // rows -- if this is wrong the table misaligns, but only above the 100-row windowing
+  // threshold, so the virtualization tests are what catch it.
+  const colCount = qbrDue ? 15 : 14;
   const Th = ({ k, children, className = "" }) => (
-    <th aria-sort={sort.k === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+    <th data-sort-key={k} aria-sort={sort.k === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
         className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
       {children}{sort.k === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
@@ -2563,7 +2576,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                 checked={allVisibleSelected} onChange={toggleAll} />
             </th>
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="nrr">NRR</Th><Th k="grr">GRR</Th><Th k="movement">vs {rows[0]?._ret?.baselineKey || "Dec"}</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={colCount} className="px-2 py-8 text-center text-sm text-slate-500">
@@ -2593,6 +2606,17 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   <td className="px-2 text-slate-700">{a.industry}</td>
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
+                  <td className="px-2 text-xs" data-nrr>{a._ret.nrr === null ? "—" : `${Math.round(a._ret.nrr * 100)}%`}</td>
+                  <td className="px-2 text-xs" data-grr>{a._ret.grr === null ? "—" : `${Math.round(a._ret.grr * 100)}%`}</td>
+                  <td className="px-2 text-xs" data-movement>
+                    {a._ret.isNew
+                      ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">new</span>
+                      : a._ret.delta === 0
+                        ? <span className="text-slate-400">─ flat</span>
+                        : <span className={a._ret.delta > 0 ? "text-emerald-600" : "text-rose-600"}>
+                            {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
+                          </span>}
+                  </td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
                   {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                     return qd === null ? <span className="text-xs text-slate-500">—</span>
@@ -2686,6 +2710,39 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
         {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
       </div>
+      {/* Retention: how this account has moved since the prior-year close. The arithmetic
+          lives in accountRetention so this and the list column cannot disagree. */}
+      {(() => {
+        const r = accountRetention(a, (st.settings && st.settings.rates) || {});
+        return (
+          <div data-retention-block className="nm-sm p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Retention since {r.baselineKey}
+            </div>
+            {r.isNew ? (
+              <p className="text-sm text-slate-500">
+                This account started after the {r.baselineKey} close, so there is no prior-year
+                figure to compare against. New accounts are excluded from NRR and GRR.
+              </p>
+            ) : (
+              <div className="grid max-w-md grid-cols-2 gap-y-1 text-sm">
+                <span className="text-slate-500">{r.baselineKey} close</span>
+                <span data-baseline-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.baselineARR)}</span>
+                <span className="text-slate-500">Today</span>
+                <span data-current-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.currentARR)}</span>
+                <span className="text-slate-500">Change</span>
+                <span data-change className={`text-right font-semibold ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
+                  {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
+                </span>
+                <span className="text-slate-500">Retention since {r.baselineKey}</span>
+                <span data-ratio className="text-right font-semibold text-slate-700">
+                  {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Status row: renewal / stage / billing / QBR badges */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${d < 60 ? "text-amber-600" : "text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d}d · {a.contractStatus}</span>
