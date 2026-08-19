@@ -2414,6 +2414,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState(null);
   const csms = ["All", ...new Set(scored.map(a => a.csm))];
+  // Retention is a property of the ACCOUNT, not of the current sort or filter. Computing
+  // it inside the rows memo made every sort replay all 2000 ledgers -- measured at 476ms
+  // against a <300ms budget, undoing the windowing from #34. Keyed on scored+rates, it is
+  // computed once and reused across every sort and filter change.
+  const retById = useMemo(() => {
+    const rates = (settings && settings.rates) || {};
+    const m = new Map();
+    scored.forEach(a => m.set(a.id, accountRetention(a, rates)));
+    return m;
+  }, [scored, settings]);
   const rows = useMemo(() => {
     let r = scored.filter(a => (showChurned || !a.churn) && (!onlyChurned || a.churn) &&
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
@@ -2421,11 +2431,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
       (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
-    // Computed once per row, BEFORE the sort. The comparator below runs O(n log n) times;
-    // calling accountRetention there would replay every account's ledger thousands of
-    // times on a large book. Keeping it out of render matters too -- the list is
-    // windowed, so render re-runs on every scroll.
-    r = r.map(a => ({ ...a, _ret: accountRetention(a, (settings && settings.rates) || {}) }));
+    r = r.map(a => ({ ...a, _ret: retById.get(a.id) }));
     const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate)
       : sort.k === "arr" ? a.arrUSD
       : sort.k === "nrr" ? (a._ret.nrr ?? -1)
@@ -2445,7 +2451,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, settings]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, retById]);
   // a selection must never outlive the rows that produced it
   useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue]);
   // teammates' edits arrive via a ~800ms realtime refetch and can change the visible
