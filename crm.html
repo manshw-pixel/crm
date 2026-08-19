@@ -1470,6 +1470,49 @@ function retentionStats(accounts, rates) {
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
 }
 
+/* ------------------------- point-in-time ARR ------------------------- */
+// The last 31 December that has actually finished. December itself counts as complete
+// on the 31st. Rolling by design: this reads Dec'25 through 2026 and Dec'26 from 2027,
+// so the comparison never silently decays into an irrelevant baseline.
+function lastCompletedDecember(now = iso(Date.now())) {
+  const [y, m, d] = String(now).slice(0, 10).split("-").map(Number);
+  const year = (m === 12 && d === 31) ? y : y - 1;
+  return `${year}-12-31`;
+}
+
+// An account's ARR (USD) as at `isoDate`, reconstructed by undoing every movement dated
+// after it. There is no stored per-account history -- snapshots are aggregate-only -- so
+// this replays the ledger rather than reading a value.
+//
+// Both sides convert at TODAY's rates, deliberately: the delta should show revenue
+// movement, not FX drift. An EUR account whose local ARR never moved must read as flat.
+function arrAsOf(account, isoDate, rates) {
+  const cut = String(isoDate).slice(0, 10);
+  const after = when => String(when || "").slice(0, 10) > cut;
+  // Already churned AT the baseline: it carried no ARR then, so the baseline is zero.
+  // Falling through to account.arr here would read the pre-churn figure -- CHURN_ACCOUNT
+  // leaves `arr` untouched and writes no arrEvent -- and report a churn that happened
+  // BEFORE the baseline as movement since it.
+  if (account.churn && !after(account.churn.date)) return 0;
+  // Churned after the baseline: the account still held its pre-churn ARR back then.
+  let arr = account.churn
+    ? toUSD(account.churn.arr, account.churn.currency || account.currency, rates)
+    : toUSD(account.arr, account.currency, rates);
+
+  (account.renewals || []).forEach(r => {
+    if (!after(r.completedOn)) return;
+    arr -= toUSD(r.arr - r.prevArr, r.currency || account.currency, rates);
+  });
+  (account.arrEvents || []).forEach(ev => {
+    // A currency restatement is not revenue movement. Skipped explicitly rather than
+    // relying on its delta being 0, matching retentionStats.
+    if (ev.kind === "redenomination") return;
+    if (!after(ev.date)) return;
+    arr -= toUSD(ev.delta, ev.currency || account.currency, rates);
+  });
+  return Math.round(arr);
+}
+
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
 const quarterKey = d => { // ISO strings parsed textually (timezone-safe); Dates read in local time
@@ -3787,7 +3830,8 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
+  lastCompletedDecember, arrAsOf };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
