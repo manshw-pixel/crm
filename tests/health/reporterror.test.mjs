@@ -18,10 +18,10 @@ test("reportError sends one log_error with the level and message", async () => {
   });
   await page.waitForFunction(() => (window.__rpcCalls || []).some(c => c.fn === "log_error"));
   const [args] = await logCalls();
-  assert(args.level === "crash", `level was ${args.level}`);
-  assert(/kaboom/.test(args.message), `message was ${args.message}`);
-  assert(args.context.view === "Accounts", `context was ${JSON.stringify(args.context)}`);
-  assert(typeof args.fingerprint === "string" && args.fingerprint.length > 0,
+  assert(args.p_level === "crash", `level was ${args.p_level}`);
+  assert(/kaboom/.test(args.p_message), `message was ${args.p_message}`);
+  assert(args.p_context.view === "Accounts", `context was ${JSON.stringify(args.p_context)}`);
+  assert(typeof args.p_fingerprint === "string" && args.p_fingerprint.length > 0,
     "no fingerprint was sent");
 });
 

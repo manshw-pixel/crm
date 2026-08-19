@@ -20,11 +20,11 @@ test("a permanently failing write reports write_failed", async () => {
   // 0.5+2+8s backoff chain), so waiting for the first report resolves on the retry and
   // asserts against a log that cannot yet contain what it is looking for.
   await page.waitForFunction(
-    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.level === "write_failed"),
+    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.p_level === "write_failed"),
     { timeout: 30000 });
   const calls = await logCalls(page);
-  assert(calls.some(a => a.level === "write_failed"),
-    `expected a write_failed report, got ${JSON.stringify(calls.map(c => c.level))}`);
+  assert(calls.some(a => a.p_level === "write_failed"),
+    `expected a write_failed report, got ${JSON.stringify(calls.map(c => c.p_level))}`);
   await browser.close();
 });
 
@@ -37,8 +37,8 @@ test("a transient failure that later succeeds reports retry", async () => {
   await page.waitForFunction(
     () => window.__health.writeQueue.queueState().status === "saved", { timeout: 15000 });
   const calls = await logCalls(page);
-  assert(calls.some(a => a.level === "retry"),
-    `expected a retry report, got ${JSON.stringify(calls.map(c => c.level))}`);
+  assert(calls.some(a => a.p_level === "retry"),
+    `expected a retry report, got ${JSON.stringify(calls.map(c => c.p_level))}`);
   await browser.close();
 });
 
@@ -51,11 +51,11 @@ test("an uncaught error is reported as a crash", async () => {
     setTimeout(() => { throw new Error("uncaught boom"); }, 0);
   });
   await page.waitForFunction(
-    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.level === "crash"),
+    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.p_level === "crash"),
     { timeout: 10000 });
   const calls = await logCalls(page);
-  assert(calls.some(a => /uncaught boom/.test(a.message)),
-    `the thrown message was not reported: ${JSON.stringify(calls.map(c => c.message))}`);
+  assert(calls.some(a => /uncaught boom/.test(a.p_message)),
+    `the thrown message was not reported: ${JSON.stringify(calls.map(c => c.p_message))}`);
   await browser.close();
 });
 
@@ -65,11 +65,11 @@ test("an unhandled promise rejection is reported as a crash", async () => {
   await page.evaluate(() => { window.__rpcCalls = []; });
   await page.evaluate(() => { Promise.reject(new Error("rejected boom")); });
   await page.waitForFunction(
-    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.level === "crash"),
+    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.p_level === "crash"),
     { timeout: 10000 });
   const calls = await logCalls(page);
-  assert(calls.some(a => /rejected boom/.test(a.message)),
-    `the rejection was not reported: ${JSON.stringify(calls.map(c => c.message))}`);
+  assert(calls.some(a => /rejected boom/.test(a.p_message)),
+    `the rejection was not reported: ${JSON.stringify(calls.map(c => c.p_message))}`);
   await browser.close();
 });
 
@@ -84,10 +84,10 @@ test("no report carries row data in its context", async () => {
   // Wait for write_failed specifically so this has definitely seen the dbError context, not
   // just the earlier retry context (same reasoning as the write_failed test above).
   await page.waitForFunction(
-    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.level === "write_failed"),
+    () => (window.__rpcCalls || []).some(c => c.fn === "log_error" && c.args.p_level === "write_failed"),
     { timeout: 30000 });
   const calls = await logCalls(page);
-  const blob = JSON.stringify(calls.map(c => c.context));
+  const blob = JSON.stringify(calls.map(c => c.p_context));
   assert(!/987654/.test(blob), `the failed patch's VALUES leaked into context: ${blob}`);
   assert(!/Capture Co/.test(blob), `an account name leaked into context: ${blob}`);
   await browser.close();

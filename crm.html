@@ -318,12 +318,14 @@ function reportError(level, error, context) {
     try {
       // Deliberately NOT writeQueue.enqueue: the queue's failure is one of the things
       // reported here, and a failing queue must not report by using the failing queue.
+      // p_ prefixes: every argument name collides with a column of error_log, and an
+      // unprefixed parameter makes the function's own insert ambiguous at runtime.
       const p = sb.rpc("log_error", {
-        fingerprint, level, message,
-        stack: (error && error.stack) ? String(error.stack).slice(0, 4000) : null,
-        context: context || {},
-        app_version: APP_VERSION,
-        user_agent: navigator.userAgent,
+        p_fingerprint: fingerprint, p_level: level, p_message: message,
+        p_stack: (error && error.stack) ? String(error.stack).slice(0, 4000) : null,
+        p_context: context || {},
+        p_app_version: APP_VERSION,
+        p_user_agent: navigator.userAgent,
       });
       // Swallow both shapes: supabase-js REJECTS on network/CORS and RESOLVES { error }
       // otherwise. There is nowhere better to send a failure to report a failure.

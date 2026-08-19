@@ -3,10 +3,12 @@
 import { test, assert } from "../health/framework.mjs";
 import { sessions } from "./fixtures.mjs";
 
+// p_ prefixes: every argument name collides with a column of error_log, and an unprefixed
+// parameter makes the function's own insert ambiguous at runtime.
 const report = (who, fingerprint, extra = {}) =>
   sessions[who].rpc("log_error", {
-    fingerprint, level: "crash", message: "boom", stack: "at x()",
-    context: { view: "Accounts" }, app_version: "test", user_agent: "node",
+    p_fingerprint: fingerprint, p_level: "crash", p_message: "boom", p_stack: "at x()",
+    p_context: { view: "Accounts" }, p_app_version: "test", p_user_agent: "node",
     ...extra,
   });
 

@@ -310,9 +310,18 @@ create policy error_log_select on public.error_log for select to authenticated u
 -- hard-coded table, accepts no table name from the caller, reads nothing back, and can
 -- only ever increment `count`. The admin-only select policy still governs every client
 -- read of the table. The auth.uid() check below replaces the insert policy definer bypasses.
+-- `create or replace` CANNOT rename an input parameter ("cannot change name of input
+-- parameter"), so an existing log_error must be dropped before the create below. Harmless
+-- on a fresh database, required on one that already has the earlier version.
+drop function if exists public.log_error(text, text, text, text, jsonb, text, text);
+
+-- Parameters are prefixed p_ because every one of them shares a name with a column of
+-- error_log. Unprefixed, plpgsql cannot tell the parameter from the column and the whole
+-- statement fails at RUNTIME with 'column reference "fingerprint" is ambiguous' -- which no
+-- amount of reading caught; only executing it did.
 create or replace function public.log_error(
-  fingerprint text, level text, message text, stack text,
-  context jsonb, app_version text, user_agent text)
+  p_fingerprint text, p_level text, p_message text, p_stack text,
+  p_context jsonb, p_app_version text, p_user_agent text)
 returns void language plpgsql security definer set search_path = public as $$
 begin
   -- definer bypasses the insert policy that used to deny anon, so the check that policy
@@ -322,8 +331,8 @@ begin
   end if;
 
   insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
-  values (fingerprint, level, message, stack, coalesce(context, '{}'::jsonb),
-          auth.uid(), app_version, user_agent)
+  values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
+          auth.uid(), p_app_version, p_user_agent)
   on conflict (fingerprint) do update set
     count = error_log.count + 1,
     last_seen = now(),
