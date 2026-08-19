@@ -29,6 +29,8 @@ const seq = names => names.map(n => +n.match(/(\d{4})/)[1]);
 
 async function openList(page) {
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length > 0);
+  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.waitForSelector("[data-select-all]", { timeout: 20000 });
   await page.waitForSelector("tr[data-account-row]", { timeout: 20000 });
 }
 async function scrollTo(page, top) {

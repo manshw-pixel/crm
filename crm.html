@@ -2231,6 +2231,82 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   );
 }
 
+/* ------------------------------ list windowing ------------------------------ */
+// At or below this many rows the list renders exactly as it always has -- no spacers, no
+// measurement, no scroll listener. Windowing only earns its keep on long lists, and the
+// health suite seeds small ones, so small lists keep taking the original path.
+const WINDOW_MIN_ROWS = 100;
+// Rows rendered beyond each edge of the viewport, so a fast scroll does not show a gap
+// before React commits the next slice.
+const WINDOW_OVERSCAN = 10;
+// Slice rendered on the very first paint, before a real row exists to measure. Big
+// enough to fill a tall viewport, small enough that 2000 rows never hit the DOM.
+const WINDOW_FIRST_PAINT = 60;
+
+// Pure arithmetic: which slice of `total` rows intersects the viewport, and how much
+// blank space stands in for the rows above and below it. No DOM, no React -- readable
+// (and checkable) on its own.
+function windowRange(total, rowHeight, scrollTop, viewportH, overscan) {
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - overscan);
+  const end = Math.min(total, start + Math.ceil(viewportH / rowHeight) + overscan * 2);
+  return { start, end, padTop: start * rowHeight, padBottom: Math.max(0, (total - end) * rowHeight) };
+}
+
+// Owns the DOM plumbing windowRange deliberately does not: where we are scrolled, how
+// tall the viewport is, and -- the part that is easy to get wrong -- how tall one row
+// ACTUALLY is. Row height is measured from a rendered row and re-measured on resize; it
+// is 28px at a 1440px viewport and near 50px at 1100px, so any hardcoded constant would
+// misplace every row the first time someone resizes the window.
+function useWindowedRows(items, overscan = WINDOW_OVERSCAN) {
+  const scrollRef = useRef(null);
+  const rowRef = useRef(null);
+  const [metrics, setMetrics] = useState({ scrollTop: 0, viewportH: 0 });
+  const [rowHeight, setRowHeight] = useState(0);
+  const total = items.length;
+  const windowed = total > WINDOW_MIN_ROWS;
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!windowed || !el) return;
+    const read = () => setMetrics(m => (m.scrollTop === el.scrollTop && m.viewportH === el.clientHeight
+      ? m : { scrollTop: el.scrollTop, viewportH: el.clientHeight }));
+    read();
+    el.addEventListener("scroll", read, { passive: true });
+    let ro = null;
+    if (typeof ResizeObserver !== "undefined") { ro = new ResizeObserver(read); ro.observe(el); }
+    window.addEventListener("resize", read);
+    return () => {
+      el.removeEventListener("scroll", read);
+      window.removeEventListener("resize", read);
+      if (ro) ro.disconnect();
+    };
+  }, [windowed]);
+
+  // Measured, never assumed. Re-runs on mount, on resize, and whenever the row set
+  // changes shape (a new column appears with the QBR filter, for instance).
+  useEffect(() => {
+    if (!windowed) return;
+    const measure = () => {
+      const el = rowRef.current;
+      if (!el) return;
+      const h = el.getBoundingClientRect().height;
+      // Only commit a real change, or measure -> setState -> measure would never settle.
+      if (h > 0) setRowHeight(prev => (Math.abs(prev - h) > 0.5 ? h : prev));
+    };
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [windowed, total, metrics.viewportH]);
+
+  if (!windowed) return { scrollRef, rowRef, windowed: false, start: 0, end: total, padTop: 0, padBottom: 0 };
+  // First paint: nothing has been measured yet, so render a small head slice rather than
+  // the whole list. The measure effect fires immediately afterwards.
+  if (!(rowHeight > 0) || !(metrics.viewportH > 0)) {
+    return { scrollRef, rowRef, windowed: true, start: 0, end: Math.min(total, WINDOW_FIRST_PAINT), padTop: 0, padBottom: 0 };
+  }
+  return { scrollRef, rowRef, windowed: true, ...windowRange(total, rowHeight, metrics.scrollTop, metrics.viewportH, overscan) };
+}
+
 function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings }) {
   const [adding, setAdding] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -2312,6 +2388,14 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     return m;
   }, [scored]);
   const subNo = useMemo(() => subNumbers(scored), [scored]);
+  // Windowing acts ONLY on the render slice. `rows` stays the full filtered, sorted,
+  // parent/sub-grouped list, and everything that reasons about the list -- the count in
+  // the title, Export CSV, allVisibleSelected, toggleAll -- keeps reading `rows`.
+  // Select-all must mean "all filtered rows", which is the whole reason this is
+  // virtualization and not pagination.
+  const win = useWindowedRows(rows);
+  const visibleRows = win.windowed ? rows.slice(win.start, win.end) : rows;
+  const colCount = qbrDue ? 12 : 11;
   const Th = ({ k, children, className = "" }) => (
     <th aria-sort={sort.k === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
         className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
@@ -2402,7 +2486,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       {bulkAction && <BulkDialog kind={bulkAction} ids={[...selected]} accounts={allAccounts}
         team={team} user={user} dispatch={dispatch}
         onClose={() => { setBulkAction(null); setSelected(new Set()); }} />}
-      <div className="max-h-[65vh] overflow-auto">
+      <div ref={win.scrollRef} data-account-scroll className="max-h-[65vh] overflow-auto">
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <th className="w-8 px-2 py-1.5">
@@ -2413,19 +2497,27 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
             <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
-            {rows.length === 0 && <tr><td colSpan={qbrDue ? 12 : 11} className="px-2 py-8 text-center text-sm text-slate-500">
+            {rows.length === 0 && <tr><td colSpan={colCount} className="px-2 py-8 text-center text-sm text-slate-500">
               {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
             </td></tr>}
-            {rows.map(a => {
+            {/* Spacers stand in for the rows that are not rendered, so the scrollbar and
+                every row's position match the FULL list. aria-hidden: they carry no
+                content, and a screen reader should not meet two empty rows. */}
+            {win.padTop > 0 && <tr data-row-spacer="top" aria-hidden="true" style={{ height: win.padTop }}>
+              <td colSpan={colCount} style={{ height: win.padTop, padding: 0, border: 0 }} /></tr>}
+            {visibleRows.map((a, i) => {
               const d = daysUntil(a.renewalDate);
               return (
-                <tr key={a.id} className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
+                <tr key={a.id} data-account-row ref={i === 0 ? win.rowRef : null} className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
                     <input type="checkbox" data-select={a.id} aria-label={`Select ${a.name}`}
                       checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
                   </td>
                   <td className="px-2 py-1.5 text-xs text-slate-500">{subNo.get(a.id) || a.accountNo || "—"}</td>
-                  <td className="px-2 py-1.5 font-medium">{a._sub && <span className="mr-1 text-slate-400">↳</span>}{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
+                  {/* nowrap on the NAME cell only: it is the one cell long enough to wrap
+                      at a narrow viewport, and a wrapped row is a taller row, which would
+                      break the single measured row height windowing depends on. */}
+                  <td className="max-w-[20rem] truncate px-2 py-1.5 font-medium">{a._sub && <span className="mr-1 text-slate-400">↳</span>}{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
                   <td className="px-2">{a.tier}</td>
                   <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}
                     {subArr.has(a.id) && <span className="ml-1 text-xs font-semibold text-indigo-600" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>}</td>
@@ -2441,6 +2533,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                 </tr>
               );
             })}
+            {win.padBottom > 0 && <tr data-row-spacer="bottom" aria-hidden="true" style={{ height: win.padBottom }}>
+              <td colSpan={colCount} style={{ height: win.padBottom, padding: 0, border: 0 }} /></tr>}
           </tbody>
         </table>
       </div>
