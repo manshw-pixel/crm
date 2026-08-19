@@ -1470,6 +1470,75 @@ function retentionStats(accounts, rates) {
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
 }
 
+/* ------------------------- point-in-time ARR ------------------------- */
+// The last 31 December that has actually finished. December itself counts as complete
+// on the 31st. Rolling by design: this reads Dec'25 through 2026 and Dec'26 from 2027,
+// so the comparison never silently decays into an irrelevant baseline.
+function lastCompletedDecember(now = iso(Date.now())) {
+  const [y, m, d] = String(now).slice(0, 10).split("-").map(Number);
+  const year = (m === 12 && d === 31) ? y : y - 1;
+  return `${year}-12-31`;
+}
+
+// An account's ARR (USD) as at `isoDate`, reconstructed by undoing every movement dated
+// after it. There is no stored per-account history -- snapshots are aggregate-only -- so
+// this replays the ledger rather than reading a value.
+//
+// Both sides convert at TODAY's rates, deliberately: the delta should show revenue
+// movement, not FX drift. An EUR account whose local ARR never moved must read as flat.
+function arrAsOf(account, isoDate, rates) {
+  const cut = String(isoDate).slice(0, 10);
+  const after = when => String(when || "").slice(0, 10) > cut;
+  // Already churned AT the baseline: it carried no ARR then, so the baseline is zero.
+  // Falling through to account.arr here would read the pre-churn figure -- CHURN_ACCOUNT
+  // leaves `arr` untouched and writes no arrEvent -- and report a churn that happened
+  // BEFORE the baseline as movement since it.
+  if (account.churn && !after(account.churn.date)) return 0;
+  // Churned after the baseline: the account still held its pre-churn ARR back then.
+  let arr = account.churn
+    ? toUSD(account.churn.arr, account.churn.currency || account.currency, rates)
+    : toUSD(account.arr, account.currency, rates);
+
+  (account.renewals || []).forEach(r => {
+    if (!after(r.completedOn)) return;
+    arr -= toUSD(r.arr - r.prevArr, r.currency || account.currency, rates);
+  });
+  (account.arrEvents || []).forEach(ev => {
+    // A currency restatement is not revenue movement. Skipped explicitly rather than
+    // relying on its delta being 0, matching retentionStats.
+    if (ev.kind === "redenomination") return;
+    if (!after(ev.date)) return;
+    arr -= toUSD(ev.delta, ev.currency || account.currency, rates);
+  });
+  return Math.round(arr);
+}
+
+// Per-account retention. NRR and GRR are delegated to retentionStats with a
+// single-account array, so there is exactly ONE retention formula in this codebase and
+// the account column agrees with the Analytics headline by construction rather than by
+// coincidence. A test ties the two together; if it ever fails, this delegation broke.
+//
+// An account that started after the baseline has no prior close, so a percentage would be
+// meaningless: it is flagged `isNew` and left out of the maths. New logos belong to new
+// business, not to retention.
+function accountRetention(account, rates, now = iso(Date.now())) {
+  const baselineDate = lastCompletedDecember(now);
+  const baselineKey = `Dec'${baselineDate.slice(2, 4)}`;
+  const isNew = String(account.startDate || "").slice(0, 10) > baselineDate;
+  // A churned account carries no ARR today -- `arr` still holds its pre-churn value,
+  // since CHURN_ACCOUNT leaves that field alone.
+  const currentARR = Math.round(toUSD(account.churn ? 0 : account.arr, account.currency, rates));
+  if (isNew) {
+    return { nrr: null, grr: null, baselineARR: null, currentARR, delta: null, pct: null, isNew: true, baselineKey };
+  }
+  const baselineARR = arrAsOf(account, baselineDate, rates);
+  const { nrr, grr } = retentionStats([account], rates);
+  const delta = currentARR - baselineARR;
+  return { nrr, grr, baselineARR, currentARR, delta,
+    pct: baselineARR > 0 ? (delta / baselineARR) * 100 : null,
+    isNew: false, baselineKey };
+}
+
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
 const quarterKey = d => { // ISO strings parsed textually (timezone-safe); Dates read in local time
@@ -2345,6 +2414,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState(null);
   const csms = ["All", ...new Set(scored.map(a => a.csm))];
+  // Retention is a property of the ACCOUNT, not of the current sort or filter. Computing
+  // it inside the rows memo made every sort replay all 2000 ledgers -- measured at 476ms
+  // against a <300ms budget, undoing the windowing from #34. Keyed on scored+rates, it is
+  // computed once and reused across every sort and filter change.
+  const retById = useMemo(() => {
+    const rates = (settings && settings.rates) || {};
+    const m = new Map();
+    scored.forEach(a => m.set(a.id, accountRetention(a, rates)));
+    return m;
+  }, [scored, settings]);
   const rows = useMemo(() => {
     let r = scored.filter(a => (showChurned || !a.churn) && (!onlyChurned || a.churn) &&
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
@@ -2352,7 +2431,13 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
       (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
-    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate) : sort.k === "arr" ? a.arrUSD : a[sort.k];
+    r = r.map(a => ({ ...a, _ret: retById.get(a.id) }));
+    const get = a => sort.k === "renewalDate" ? daysUntil(a.renewalDate)
+      : sort.k === "arr" ? a.arrUSD
+      : sort.k === "nrr" ? (a._ret.nrr ?? -1)
+      : sort.k === "grr" ? (a._ret.grr ?? -1)
+      : sort.k === "movement" ? (a._ret.pct ?? -Infinity)
+      : a[sort.k];
     const sorted = [...r].sort((a, b) => (get(a) > get(b) ? 1 : get(a) < get(b) ? -1 : 0) * sort.dir);
     // group: each top-level row followed by its (filter-surviving) subs; subs whose
     // parent is filtered out appear at their own sorted position
@@ -2366,7 +2451,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, retById]);
   // a selection must never outlive the rows that produced it
   useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue]);
   // teammates' edits arrive via a ~800ms realtime refetch and can change the visible
@@ -2395,9 +2480,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   // virtualization and not pagination.
   const win = useWindowedRows(rows);
   const visibleRows = win.windowed ? rows.slice(win.start, win.end) : rows;
-  const colCount = qbrDue ? 12 : 11;
+  // +3 for NRR, GRR and movement. Drives the empty-state row AND the windowing spacer
+  // rows -- if this is wrong the table misaligns, but only above the 100-row windowing
+  // threshold, so the virtualization tests are what catch it.
+  const colCount = qbrDue ? 15 : 14;
   const Th = ({ k, children, className = "" }) => (
-    <th aria-sort={sort.k === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+    <th data-sort-key={k} aria-sort={sort.k === k ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
         className={`cursor-pointer select-none px-2 py-1.5 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500 hover:text-slate-800 ${className}`}
         onClick={() => setSort(s => ({ k, dir: s.k === k ? -s.dir : 1 }))}>
       {children}{sort.k === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
@@ -2494,7 +2582,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                 checked={allVisibleSelected} onChange={toggleAll} />
             </th>
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
-            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
+            <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="nrr">NRR</Th><Th k="grr">GRR</Th><Th k="movement">vs {rows[0]?._ret?.baselineKey || "Dec"}</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={colCount} className="px-2 py-8 text-center text-sm text-slate-500">
@@ -2524,6 +2612,17 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   <td className="px-2 text-slate-700">{a.industry}</td>
                   <td className="px-2">{a.csm}</td>
                   <td className="px-2"><HealthChip score={a.score} /></td>
+                  <td className="px-2 text-xs" data-nrr>{a._ret.nrr === null ? "—" : `${Math.round(a._ret.nrr * 100)}%`}</td>
+                  <td className="px-2 text-xs" data-grr>{a._ret.grr === null ? "—" : `${Math.round(a._ret.grr * 100)}%`}</td>
+                  <td className="px-2 text-xs" data-movement>
+                    {a._ret.isNew
+                      ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">new</span>
+                      : a._ret.delta === 0
+                        ? <span className="text-slate-400">─ flat</span>
+                        : <span className={a._ret.delta > 0 ? "text-emerald-600" : "text-rose-600"}>
+                            {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
+                          </span>}
+                  </td>
                   <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
                   {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                     return qd === null ? <span className="text-xs text-slate-500">—</span>
@@ -2617,6 +2716,39 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
         {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
       </div>
+      {/* Retention: how this account has moved since the prior-year close. The arithmetic
+          lives in accountRetention so this and the list column cannot disagree. */}
+      {(() => {
+        const r = accountRetention(a, (st.settings && st.settings.rates) || {});
+        return (
+          <div data-retention-block className="nm-sm p-3">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+              Retention since {r.baselineKey}
+            </div>
+            {r.isNew ? (
+              <p className="text-sm text-slate-500">
+                This account started after the {r.baselineKey} close, so there is no prior-year
+                figure to compare against. New accounts are excluded from NRR and GRR.
+              </p>
+            ) : (
+              <div className="grid max-w-md grid-cols-2 gap-y-1 text-sm">
+                <span className="text-slate-500">{r.baselineKey} close</span>
+                <span data-baseline-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.baselineARR)}</span>
+                <span className="text-slate-500">Today</span>
+                <span data-current-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.currentARR)}</span>
+                <span className="text-slate-500">Change</span>
+                <span data-change className={`text-right font-semibold ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
+                  {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
+                </span>
+                <span className="text-slate-500">Retention since {r.baselineKey}</span>
+                <span data-ratio className="text-right font-semibold text-slate-700">
+                  {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
+                </span>
+              </div>
+            )}
+          </div>
+        );
+      })()}
       {/* Status row: renewal / stage / billing / QBR badges */}
       <div className="flex flex-wrap items-center gap-2">
         <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${d < 60 ? "text-amber-600" : "text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d}d · {a.contractStatus}</span>
@@ -3787,7 +3919,8 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
+  lastCompletedDecember, arrAsOf, accountRetention };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
