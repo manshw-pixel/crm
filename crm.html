@@ -1513,6 +1513,32 @@ function arrAsOf(account, isoDate, rates) {
   return Math.round(arr);
 }
 
+// Per-account retention. NRR and GRR are delegated to retentionStats with a
+// single-account array, so there is exactly ONE retention formula in this codebase and
+// the account column agrees with the Analytics headline by construction rather than by
+// coincidence. A test ties the two together; if it ever fails, this delegation broke.
+//
+// An account that started after the baseline has no prior close, so a percentage would be
+// meaningless: it is flagged `isNew` and left out of the maths. New logos belong to new
+// business, not to retention.
+function accountRetention(account, rates, now = iso(Date.now())) {
+  const baselineDate = lastCompletedDecember(now);
+  const baselineKey = `Dec'${baselineDate.slice(2, 4)}`;
+  const isNew = String(account.startDate || "").slice(0, 10) > baselineDate;
+  // A churned account carries no ARR today -- `arr` still holds its pre-churn value,
+  // since CHURN_ACCOUNT leaves that field alone.
+  const currentARR = Math.round(toUSD(account.churn ? 0 : account.arr, account.currency, rates));
+  if (isNew) {
+    return { nrr: null, grr: null, baselineARR: null, currentARR, delta: null, pct: null, isNew: true, baselineKey };
+  }
+  const baselineARR = arrAsOf(account, baselineDate, rates);
+  const { nrr, grr } = retentionStats([account], rates);
+  const delta = currentARR - baselineARR;
+  return { nrr, grr, baselineARR, currentARR, delta,
+    pct: baselineARR > 0 ? (delta / baselineARR) * 100 : null,
+    isNew: false, baselineKey };
+}
+
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
 const quarterKey = d => { // ISO strings parsed textually (timezone-safe); Dates read in local time
@@ -3831,7 +3857,7 @@ function Root() {
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
-  lastCompletedDecember, arrAsOf };
+  lastCompletedDecember, arrAsOf, accountRetention };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>

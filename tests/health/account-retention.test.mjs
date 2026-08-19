@@ -80,3 +80,71 @@ test("arrAsOf returns zero for an account already churned at the baseline", asyn
   const v = await call("arrAsOf", [a, DEC, RATES]);
   assert(v === 0, `an account churned before the baseline must have a zero baseline, got ${v}`);
 });
+
+const NOW = "2026-08-19";
+
+test("accountRetention reports growth against the prior-year close", async () => {
+  const a = scored({ id: "grew", name: "Grew Co", arr: 120000,
+    startDate: "2024-01-01",
+    arrEvents: [{ id: "e1", date: "2026-03-01", delta: 20000, kind: "expansion", source: "adjustment" }] });
+  const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.isNew === false, "an account started in 2024 is not new");
+  assert(r.baselineARR === 100000, `baseline should be 100000, got ${r.baselineARR}`);
+  assert(r.currentARR === 120000, `current should be 120000, got ${r.currentARR}`);
+  assert(r.delta === 20000, `delta should be 20000, got ${r.delta}`);
+  assert(Math.abs(r.pct - 20) < 0.05, `pct should be 20, got ${r.pct}`);
+  assert(r.baselineKey === "Dec'25", `baselineKey should be Dec'25, got ${r.baselineKey}`);
+});
+
+test("accountRetention reports contraction with GRR below 100%", async () => {
+  const a = scored({ id: "shrank", name: "Shrank Co", arr: 80000,
+    startDate: "2024-01-01",
+    arrEvents: [{ id: "e1", date: rel(-100), delta: -20000, kind: "contraction", source: "adjustment" }] });
+  const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.delta < 0, `delta should be negative, got ${r.delta}`);
+  assert(r.grr !== null && r.grr < 1, `GRR should be below 1, got ${r.grr}`);
+});
+
+test("accountRetention marks an account started after the baseline as new, with null metrics", async () => {
+  const a = scored({ id: "fresh", name: "Fresh Co", arr: 60000, startDate: "2026-03-01" });
+  const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.isNew === true, "an account started in 2026 is new relative to Dec'25");
+  assert(r.nrr === null && r.grr === null, `metrics must be null for a new account, got ${r.nrr}/${r.grr}`);
+  assert(r.delta === null && r.pct === null, `delta/pct must be null for a new account`);
+});
+
+test("accountRetention gives a churned account 0% GRR", async () => {
+  const a = scored({ id: "lost", name: "Lost Co", arr: 50000, arrUSD: 0,
+    startDate: "2023-01-01",
+    churn: { date: rel(-60), arr: 50000, reason: "Price" } });
+  const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.grr === 0, `a churned account's GRR should be 0, got ${r.grr}`);
+  assert(r.currentARR === 0, `a churned account holds no ARR today, got ${r.currentARR}`);
+});
+
+test("accountRetention shows no movement for a non-USD account whose local ARR never changed", async () => {
+  const a = scored({ id: "eur", name: "Euro Co", arr: 100000, currency: "EUR", startDate: "2024-01-01" });
+  const r = await call("accountRetention", [a, RATES, NOW]);
+  assert(r.delta === 0, `FX drift must not create movement: delta was ${r.delta}`);
+});
+
+test("accountRetention agrees with retentionStats for a single account", async () => {
+  // The tie-out that matters: there must be exactly one retention formula.
+  const a = scored({ id: "tie", name: "Tie Co", arr: 120000, startDate: "2024-01-01",
+    renewals: [{ id: "r1", completedOn: rel(-180), prevArr: 100000, arr: 120000, by: "Priya" }] });
+  const { page, browser } = await launch(bookSeed([a]));
+  await page.waitForFunction(() => window.__health);
+  const [mine, theirs] = await page.evaluate(([acct, rates, now]) => [
+    window.__health.accountRetention(acct, rates, now),
+    window.__health.retentionStats([acct], rates),
+  ], [a, RATES, NOW]);
+  await browser.close();
+  assert(mine.nrr === theirs.nrr, `NRR disagrees: ${mine.nrr} vs ${theirs.nrr}`);
+  assert(mine.grr === theirs.grr, `GRR disagrees: ${mine.grr} vs ${theirs.grr}`);
+});
+
+test("accountRetention does not throw on an account with no fields set", async () => {
+  const r = await call("accountRetention", [{ id: "bare", arr: 0, arrUSD: 0, currency: "USD" }, RATES, NOW]);
+  assert(r && typeof r === "object", "should return an object rather than throwing");
+  assert(!Number.isNaN(r.baselineARR), `baselineARR must not be NaN, got ${r.baselineARR}`);
+});
