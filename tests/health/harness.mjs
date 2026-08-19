@@ -44,10 +44,27 @@ const MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
-  const fromImpl = t => (t === "profiles" ? profilesApi() : api(t));
+  const errorLogApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.error_log || [];
+      const p = Promise.resolve({ data: rows, error: null });
+      // The card chains .order(...).limit(...), so each link must return a thenable that
+      // also carries the next link -- the same shape profilesApi() uses for .order().
+      p.order = () => { const q = Promise.resolve({ data: rows, error: null }); q.limit = () => Promise.resolve({ data: rows, error: null }); return q; };
+      p.limit = () => Promise.resolve({ data: rows, error: null });
+      return p;
+    },
+  });
+  const fromImpl = t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t));
   return {
     from: fromImpl,
-    rpc: async () => ({ error: null }),
+    rpc: (fn, args) => {
+      (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
+      if (fn === "log_error" && window.__logErrorFails) {
+        return Promise.reject(new Error("mock log_error rejection"));
+      }
+      return Promise.resolve({ error: null });
+    },
     channel: () => ({ on() { return this; }, subscribe() { return this; } }),
     removeChannel: () => {},
     auth: {
@@ -129,14 +146,33 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
+  const errorLogApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.error_log || [];
+      const p = Promise.resolve({ data: rows, error: null });
+      p.order = () => { const q = Promise.resolve({ data: rows, error: null }); q.limit = () => Promise.resolve({ data: rows, error: null }); return q; };
+      p.limit = () => Promise.resolve({ data: rows, error: null });
+      return p;
+    },
+  });
   return {
-    from: t => (t === "profiles" ? profilesApi() : api(t)),
+    from: t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t)),
     // Fault injection for the write-queue tests: window.__rpcFailures rejects the next N
     // calls, window.__rpcDelay adds latency (used to prove same-row writes are serial).
     // Each call is stamped with started/ended so a test can assert non-overlap.
     rpc: (fn, args) => {
       const call = { fn, args, started: Date.now(), ended: null };
       (window.__rpcCalls = window.__rpcCalls || []).push(call);
+      // Reporting is injected ONLY by __logErrorFails. __rpcFailures governs WRITES, and
+      // must never touch a report: the capture tests set it to force a write failure and
+      // then assert on the report that results -- if it failed reports too, they would be
+      // asserting on a broken reporter, and would silently consume failures meant for the
+      // write path.
+      if (fn === "log_error") {
+        if (window.__logErrorFails) return Promise.reject(new Error("mock log_error rejection"));
+        call.ended = Date.now();
+        return Promise.resolve({ error: null });
+      }
       const delay = window.__rpcDelay || 0;
       return new Promise(resolve => {
         setTimeout(() => {

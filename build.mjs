@@ -18,7 +18,19 @@ const read = f => readFileSync(p(f), "utf8");
 // ---------------------------------------------------------------------------
 // 1. Extract the JSX source out of the <script type="text/babel"> block.
 // ---------------------------------------------------------------------------
-const html = read("crm.html");
+let html = read("crm.html");
+
+// Stamp the build so an error report says which build produced it. Targeted string
+// replace on a known literal rather than a head rewrite -- an earlier build regenerated
+// <head> from a template and silently ate every edit made to it.
+const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], { cwd: ROOT }).toString().trim();
+const stamped = html.replace('const APP_VERSION = "dev";', `const APP_VERSION = "${sha}";`);
+if (stamped === html) {
+  // A silent no-op here would stamp every error report "dev" forever, with nothing to
+  // notice it. The literal is load-bearing; if it drifts, the build must stop.
+  throw new Error('build: APP_VERSION literal not found in crm.html — the version stamp would silently ship as "dev"');
+}
+html = stamped;
 
 const SCRIPT_RE = /<script type="text\/babel"[^>]*>([\s\S]*?)<\/script>/;
 const scriptMatch = html.match(SCRIPT_RE);

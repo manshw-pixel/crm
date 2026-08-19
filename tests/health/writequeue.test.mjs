@@ -14,8 +14,11 @@ test("a transient failure is retried and then succeeds", async () => {
     { type: "EDIT_ACCOUNT", id: "q1", patch: { arr: 200 }, by: "T" }));
   await page.waitForFunction(
     () => window.__health.writeQueue.queueState().status === "saved", { timeout: 15000 });
-  const n = await page.evaluate(() => window.__rpcCalls.length);
-  assert(n === 2, `expected one failure plus one retry, got ${n} calls`);
+  // __rpcCalls now also carries the retry's log_error report (see the capture-tests task),
+  // so count merge_row calls only, not every RPC.
+  const n = await page.evaluate(() =>
+    (window.__rpcCalls || []).filter(c => c.fn === "merge_row").length);
+  assert(n === 2, `expected one failed write plus one retry, got ${n} merge_row calls`);
   await browser.close();
 });
 

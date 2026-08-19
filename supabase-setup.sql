@@ -256,6 +256,105 @@ begin
     on conflict (id) do update set data = excluded.data, updated_at = now();
 end $$;
 
+-- ---------- error log ----------
+-- The app had no error reporting at all: ViewBoundary console.errored into a console
+-- nobody watches, dbError raised a toast that scrolls away, and the write queue's give-up
+-- path told only the user whose save had just failed.
+create table if not exists public.error_log (
+  -- The fingerprint IS the identity: the same bug collapses to one row whether it fires
+  -- once or ten thousand times, so "is this getting worse?" is answered by reading `count`
+  -- rather than by counting rows.
+  fingerprint text primary key,
+  level       text not null check (level in ('crash','write_failed','load_failed','retry')),
+  message     text not null,
+  stack       text,
+  -- Context only: the view, table, action and error code. NEVER row data -- this app's
+  -- subject matter is customer revenue, and copying it into a second table with different
+  -- access rules would be a privacy regression dressed up as an improvement.
+  context     jsonb not null default '{}'::jsonb,
+  user_id     uuid,
+  app_version text,
+  user_agent  text,
+  count       int not null default 1,
+  first_seen  timestamptz not null default now(),
+  last_seen   timestamptz not null default now()
+);
+
+alter table public.error_log enable row level security;
+
+-- insert: ANY authenticated user. Errors happen to non-admins, and a user who cannot
+-- report is a user you never hear about. This is deliberately the most permissive policy
+-- in the file: a signed-in user can write rows an admin reads. Accepted knowingly --
+-- restricting it would blind the log to exactly the people worth hearing from, and
+-- fingerprint collapsing turns a flood into one row with a high count rather than many rows.
+drop policy if exists error_log_insert on public.error_log;
+create policy error_log_insert on public.error_log for insert to authenticated with check (true);
+
+-- select: admins only. Error messages quote application data.
+drop policy if exists error_log_select on public.error_log;
+create policy error_log_select on public.error_log for select to authenticated using (public.is_admin());
+
+-- NO update and NO delete policy, deliberately. log_error owns every mutation, so nobody
+-- can edit or delete a record -- including its count -- to erase their own errors.
+
+-- Records one occurrence. The count is incremented INSIDE the statement rather than by a
+-- client read-then-write, which would be the same lost update merge_row was rewritten to
+-- remove. Reporting is the worst place to reintroduce it: it runs when the app is already
+-- unhealthy, and concurrent failures are correlated, not independent -- one flaky network
+-- breaks every open tab at once.
+-- SECURITY DEFINER here, unlike every other function in this file, and deliberately.
+-- `insert ... on conflict do update` requires UPDATE and SELECT policies for the caller,
+-- and any UPDATE policy wide enough to let this bump `count` would also let a client
+-- rewrite `message` and zero the count -- destroying the evidence the log exists to keep.
+-- Definer is safe HERE specifically because this function returns void, touches one
+-- hard-coded table, accepts no table name from the caller, reads nothing back, and can
+-- only ever increment `count`. The admin-only select policy still governs every client
+-- read of the table. The auth.uid() check below replaces the insert policy definer bypasses.
+-- `create or replace` CANNOT rename an input parameter ("cannot change name of input
+-- parameter"), so an existing log_error must be dropped before the create below. Harmless
+-- on a fresh database, required on one that already has the earlier version.
+drop function if exists public.log_error(text, text, text, text, jsonb, text, text);
+
+-- Parameters are prefixed p_ because every one of them shares a name with a column of
+-- error_log. Unprefixed, plpgsql cannot tell the parameter from the column and the whole
+-- statement fails at RUNTIME with 'column reference "fingerprint" is ambiguous' -- which no
+-- amount of reading caught; only executing it did.
+create or replace function public.log_error(
+  p_fingerprint text, p_level text, p_message text, p_stack text,
+  p_context jsonb, p_app_version text, p_user_agent text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  -- definer bypasses the insert policy that used to deny anon, so the check that policy
+  -- was performing has to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'log_error: sign in required';
+  end if;
+
+  insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
+  values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
+          auth.uid(), p_app_version, p_user_agent)
+  on conflict (fingerprint) do update set
+    count = error_log.count + 1,
+    last_seen = now(),
+    -- keep the most recent occurrence's detail
+    level = excluded.level,
+    message = excluded.message,
+    stack = excluded.stack,
+    context = excluded.context;
+
+  -- Retention, run here rather than on a schedule: this project has no scheduler, and the
+  -- work is trivial. The WHERE is not optional -- Supabase rejects an unqualified DELETE.
+  delete from error_log where last_seen < now() - interval '30 days';
+end $$;
+
+-- Revoke from PUBLIC, not from anon. Postgres grants EXECUTE to PUBLIC by default on every
+-- new function and `create or replace` preserves it, so revoking from `anon` alone removes
+-- a direct grant that was never made while anon keeps inheriting execute via PUBLIC. This
+-- pair is what actually makes the grant explicit -- and it also removes the file's only
+-- statement that errors if a role happens not to exist.
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public;
+grant execute on function public.log_error(text, text, text, text, jsonb, text, text) to authenticated;
+
 -- ---------- realtime ----------
 do $$
 declare t text;

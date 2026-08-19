@@ -59,6 +59,9 @@ const { useState, useEffect, useReducer, useMemo, useRef, useCallback, useContex
  * 2. Run supabase-setup.sql in its SQL Editor
  * 3. Paste Project Settings -> API -> "Project URL" and "anon public" key here.
  * The anon key is safe to publish; access is enforced by database rules. */
+// build.mjs replaces this exact literal with the short commit SHA. Kept as a plain literal
+// rather than a placeholder token so the source stays runnable un-built.
+const APP_VERSION = "dev";
 const SUPABASE_URL = "https://avrtiyfoxlvxwqdkrznd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2cnRpeWZveGx2eHdxZGtyem5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTA1NjUsImV4cCI6MjA5ODcyNjU2NX0.D0rhXOgtn4Prfx_2opJHLhmsuCCEI3jTICw7DjfYX2Y";
 /* =========================================================================== */
@@ -267,12 +270,73 @@ function snapshotFor(state, ids) {
 const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => {
   console.error(where, error);
+  reportError("write_failed", error, { table: where, code: error && error.code });
   const text = `Save failed (${where}): ${error.message}\nYour last change may not be shared — reload to resync.`;
   // alert() is the fallback, not the primary path: this helper can fire before
   // ToastProvider mounts, and losing a failed-save warning entirely would be worse than
   // an unstyled dialog. Deliberately kept — see the UX robustness spec.
   if (window.__toast) window.__toast({ text, tone: "error" }); else alert(text);
 };
+
+/* ------------------------------ error reporting ------------------------------
+   Everything below runs when the app is ALREADY broken, so every branch here is written
+   to fail quietly rather than to be clever. */
+
+// Collapse volatile substrings so the same bug fingerprints identically across
+// occurrences: ids, uuids, numbers and quoted values differ per instance and would
+// otherwise produce a new row every time, defeating the whole point of the count.
+const fingerprintOf = (level, message, where) => {
+  const norm = String(message || "")
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27}/gi, "<uuid>")
+    .replace(/\d+/g, "<n>")
+    .replace(/'[^']*'/g, "'<v>'")
+    .slice(0, 200);
+  return `${level}|${where || "-"}|${norm}`;
+};
+
+const REPORT_THROTTLE_MS = 10000;
+const reportedAt = new Map();
+let reporting = false;
+
+function reportError(level, error, context) {
+  try {
+    // Re-entrancy guard: an error raised INSIDE reporting must not report itself.
+    if (reporting) return;
+    const message = String((error && error.message) || error || "unknown");
+    const where = (context && (context.view || context.table)) || null;
+    const fingerprint = fingerprintOf(level, message, where);
+
+    // Postgres dedupes by fingerprint anyway; this stops a tight failure loop emitting a
+    // request per occurrence to get there. `retry` is a captured level and a flaky
+    // connection produces those in bursts.
+    const now = Date.now();
+    const last = reportedAt.get(fingerprint);
+    if (last && now - last < REPORT_THROTTLE_MS) return;
+    reportedAt.set(fingerprint, now);
+
+    reporting = true;
+    try {
+      // Deliberately NOT writeQueue.enqueue: the queue's failure is one of the things
+      // reported here, and a failing queue must not report by using the failing queue.
+      // p_ prefixes: every argument name collides with a column of error_log, and an
+      // unprefixed parameter makes the function's own insert ambiguous at runtime.
+      const p = sb.rpc("log_error", {
+        p_fingerprint: fingerprint, p_level: level, p_message: message,
+        p_stack: (error && error.stack) ? String(error.stack).slice(0, 4000) : null,
+        p_context: context || {},
+        p_app_version: APP_VERSION,
+        p_user_agent: navigator.userAgent,
+      });
+      // Swallow both shapes: supabase-js REJECTS on network/CORS and RESOLVES { error }
+      // otherwise. There is nowhere better to send a failure to report a failure.
+      if (p && p.then) p.then(() => {}, () => {});
+    } finally {
+      reporting = false;
+    }
+  } catch (e) {
+    // Never let reporting convert a handled error into an unhandled one.
+  }
+}
 
 /* ------------------------------ write queue ------------------------------
    persist() used to be fire-and-forget: a failed write showed one toast and stopped, local
@@ -312,6 +376,7 @@ const writeQueue = (() => {
       }
       if (!error) { pending.shift(); continue; }
       if (op.attempts < BACKOFF_MS.length) {
+        reportError("retry", error, { table: op.table, rowId: op.rowId, attempt: op.attempts });
         await new Promise(r => setTimeout(r, BACKOFF_MS[op.attempts++]));
         continue;
       }
@@ -2999,6 +3064,7 @@ function Settings({ st, dispatch, user, scored }) {
       <PlaybookCard st={st} dispatch={dispatch} />
       <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
       <UsersCard me={user} />
+      {user.role === "admin" && <ErrorLogCard />}
       <Card title="Data">
         <div className="flex flex-wrap gap-2">
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
@@ -3184,6 +3250,46 @@ function UsersCard({ me }) {
     </Card>
   );
 }
+const LEVEL_STYLE = {
+  crash: "bg-rose-50 text-rose-700",
+  write_failed: "bg-amber-50 text-amber-700",
+  load_failed: "bg-amber-50 text-amber-700",
+  retry: "bg-slate-100 text-slate-600",
+};
+function ErrorLogCard() {
+  const [rows, setRows] = useState([]);
+  const [err, setErr] = useState("");
+  const [open, setOpen] = useState(null);
+  useEffect(() => {
+    sb.from("error_log").select("*").order("last_seen", { ascending: false }).limit(50)
+      .then(({ data, error }) => error ? setErr(error.message) : setRows(data || []));
+  }, []);
+  return (
+    <Card title="Error log">
+      <div data-errorlog>
+        {err && <p className="text-xs text-rose-600">{err}</p>}
+        {!err && !rows.length && <p className="text-xs text-slate-500">No errors recorded. Nothing has failed in the last 30 days.</p>}
+        {rows.map(r => (
+          <div key={r.fingerprint} data-errorlog-row className="nm-inset mb-2 p-2">
+            <div className="flex items-center gap-2">
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-semibold ${LEVEL_STYLE[r.level] || "bg-slate-100 text-slate-700"}`}>{r.level}</span>
+              <span className="flex-1 truncate text-xs text-slate-700">{r.message}</span>
+              <span className="text-[11px] font-mono text-slate-500">×{r.count}</span>
+            </div>
+            <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
+              <span>{new Date(r.last_seen).toLocaleString()}</span>
+              {r.context && r.context.view && <span>· {r.context.view}</span>}
+              {r.context && r.context.table && <span>· {r.context.table}</span>}
+              {r.stack && <button className="ml-auto underline" onClick={() => setOpen(open === r.fingerprint ? null : r.fingerprint)}>
+                {open === r.fingerprint ? "hide" : "stack"}</button>}
+            </div>
+            {open === r.fingerprint && <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all font-mono text-[10px] text-slate-500">{r.stack}</pre>}
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
 /* --------------------------------- App --------------------------------- */
 const NavIcon = ({ children }) => (
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0">{children}</svg>
@@ -3275,7 +3381,10 @@ const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
 class ViewBoundary extends React.Component {
   constructor(props) { super(props); this.state = { error: null, attempt: 0 }; }
   static getDerivedStateFromError(error) { return { error }; }
-  componentDidCatch(error, info) { console.error("View crashed:", this.props.view, error, info); }
+  componentDidCatch(error, info) {
+    console.error("View crashed:", this.props.view, error, info);
+    reportError("crash", error, { view: this.props.view });
+  }
   render() {
     // Fragment, not a div: the views are laid out by their parent, and injecting a wrapper
     // element would change that layout. The key is still what remounts the subtree on retry.
@@ -3323,12 +3432,26 @@ function App({ user }) {
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
     .then(s => { setSt(s); setLoaded(true); })
-    .catch(e => { console.error(e); toast({ text: "Could not load shared data: " + e.message, tone: "error" }); }), []);
+    .catch(e => {
+      console.error(e);
+      reportError("load_failed", e, { where: "fetchAll" });
+      toast({ text: "Could not load shared data: " + e.message, tone: "error" });
+    }), []);
   useEffect(() => { refetch(); }, [refetch]);
   // Read by writeQueue for rollback: when a write permanently fails, it resyncs local state
   // to the server by calling this rather than trying to invert the reducer (see the write
   // queue's comment in crm.html for why refetch is the correct rollback).
   useEffect(() => { window.__refetch = refetch; }, [refetch]);
+  useEffect(() => { // errors that never reach a React boundary
+    const onErr = e => reportError("crash", e.error || e.message, { where: "window.onerror" });
+    const onRej = e => reportError("crash", e.reason, { where: "unhandledrejection" });
+    window.addEventListener("error", onErr);
+    window.addEventListener("unhandledrejection", onRej);
+    return () => {
+      window.removeEventListener("error", onErr);
+      window.removeEventListener("unhandledrejection", onRej);
+    };
+  }, []);
   useEffect(() => { // live updates from teammates: debounce, then refetch everything (data is small)
     let timer = null;
     const fire = () => {
@@ -3570,7 +3693,7 @@ function Root() {
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV,
-  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue };
+  retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
