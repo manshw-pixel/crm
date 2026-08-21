@@ -408,11 +408,22 @@ test("settle_alert_sends gives up on a stale row with no request_id at all", asy
 
 test("settle_alert_sends leaves a recent unanswered send alone", async () => {
   await ensureHttpResponseTable();
+  // Control row: has a matching net._http_response and MUST settle to 'sent' in this same
+  // call. Without it, "still queued" below would pass identically against a settle function
+  // that does nothing at all -- this row proves the mechanism actually ran.
+  await sql(`insert into email_log (kind, recipient, row_count, request_id)
+             values ('renewals', 'control-settles@test.local', 1, 900010)`);
+  await sql(`insert into net._http_response (id, status_code, content, created)
+             values (900010, 201, '{"messageId":"control"}', now())
+             on conflict (id) do update set status_code = 201`);
+  // Row under test: fresh, unanswered, must be left alone.
   await sql(`insert into email_log (kind, recipient, row_count, request_id)
              values ('renewals', 'fresh@test.local', 1, 900004)`);
   await sql(`select settle_alert_sends()`);
-  const [row] = await sql(`select * from email_log where request_id = 900004`);
-  assert(row.status === "queued", `a send from seconds ago was prematurely settled to ${row.status}`);
+  const [settled] = await sql(`select * from email_log where request_id = 900010`);
+  assert(settled.status === "sent", `the control row did not settle: ${settled.status}`);
+  const [fresh] = await sql(`select * from email_log where request_id = 900004`);
+  assert(fresh.status === "queued", `a send from seconds ago was prematurely settled to ${fresh.status}`);
 });
 
 test("settle_alert_sends routes a failed send into error_log for an admin to see", async () => {
