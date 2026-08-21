@@ -226,6 +226,23 @@ begin
   return net.http_post(url := p_url, headers := p_headers, body := p_body);
 end $$;
 
+-- ---------- escaping ----------
+-- Free-text fields (account names, task titles, CSM names) come straight from user-entered
+-- CRM data and are spliced into digest HTML below. Escape order matters: & must go first,
+-- or the entities produced by escaping < > " would themselves get re-escaped (< -> &lt;
+-- would become &amp;lt;).
+create or replace function public.html_escape(p_text text)
+returns text
+language sql immutable as $$
+  select replace(replace(replace(replace(coalesce(p_text, ''),
+    '&', '&amp;'),
+    '<', '&lt;'),
+    '>', '&gt;'),
+    '"', '&quot;');
+$$;
+
+revoke execute on function public.html_escape(text) from public;
+
 create or replace function public.send_alerts(p_kind text)
 returns text language plpgsql security definer set search_path = public as $$
 declare
@@ -256,7 +273,7 @@ begin
 
   -- Unmatched CSM names, rendered into the admin digest so the failure is visible to a
   -- human rather than only to whoever thinks to read a table.
-  select string_agg(format('<li>%s — %s account(s)</li>', csm, accounts), '')
+  select string_agg(format('<li>%s — %s account(s)</li>', html_escape(csm), accounts), '')
     into unrouted from unrouted_csms();
 
   for r in select * from alert_recipients() loop
@@ -265,7 +282,7 @@ begin
         '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;color:%s"><b>%s day(s)</b></td></tr>',
-        account_name, to_char(renewal_date, 'DD Mon YYYY'),
+        html_escape(account_name), to_char(renewal_date, 'DD Mon YYYY'),
         case when days_left <= 7 then '#e11d48' else '#d97706' end, days_left), '')
         into n_rows, rows_html
         from alert_renewals(r.person, r.admin);
@@ -276,7 +293,7 @@ begin
         '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;color:#e11d48"><b>%s day(s)</b></td></tr>',
-        account_name, title, days_overdue), '')
+        html_escape(account_name), html_escape(title), days_overdue), '')
         into n_rows, rows_html
         from alert_overdue_tasks(r.person, r.admin);
       subject := format('[OneVio] %s overdue task(s)', n_rows);
@@ -290,9 +307,9 @@ begin
         '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td></tr>',
-        account_name, to_char(next_qbr, 'DD Mon YYYY'),
-        case when section = 'due' then 'due to be scheduled'
-             else 'may have happened without being logged' end), '')
+        html_escape(account_name), to_char(next_qbr, 'DD Mon YYYY'),
+        html_escape(case when section = 'due' then 'due to be scheduled'
+             else 'may have happened without being logged' end)), '')
         into n_rows, rows_html
         from alert_qbr_nudge(r.person, r.admin);
       subject := format('[OneVio] %s account(s) need a review scheduled or logged', n_rows);
@@ -442,3 +459,4 @@ revoke execute on function public.alert_post(text, jsonb, jsonb) from public, an
 revoke execute on function public.send_alerts(text) from public, anon, authenticated;
 revoke execute on function public.settle_alert_sends() from public, anon, authenticated;
 revoke execute on function public.log_error_system(text, text, text, jsonb) from public, anon, authenticated;
+revoke execute on function public.html_escape(text) from public, anon, authenticated;

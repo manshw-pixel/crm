@@ -367,6 +367,48 @@ test("send_alerts will not double-send the same kind to the same person today", 
     `expected exactly 1 email_log row for admin@test.local after two runs, got ${loggedAfterSecond.length}`);
 });
 
+// Regression test for Task 3 (Finding 3, MEDIUM): free-text account names and task titles
+// were spliced unescaped into digest HTML. An account/task named with HTML markup could
+// inject a link or break the table structure in every recipient's inbox. Both directions
+// are asserted: the escaped entities ARE present, and the raw markup is NOT -- a
+// contains-only check would pass even if the raw markup were ALSO present alongside an
+// escaped copy, and an absence-only check would pass vacuously if the account never made
+// it into the digest at all (wrong CSM, wrong status, task not actually overdue, etc). So
+// this test also asserts the account's ESCAPED name is present, which cannot happen unless
+// the row was actually found and rendered.
+test("send_alerts escapes HTML in account names and task titles", async () => {
+  await stubSend();
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+
+  const evilName = 'Acme & Sons <Ltd> </table><a href="https://evil.example">x</a>';
+  const evilTitle = 'Approve </table><a href="https://evil.example">click me</a> & go';
+  await seedAccount("t-evil", { name: evilName, csm: "Admin User", contractStatus: "Active" });
+  const past = new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10);
+  await seedTask("t-evil-1", { accountId: "t-evil", title: evilTitle, due: past, status: "Open" });
+
+  await sql(`select send_alerts('overdue_tasks')`);
+
+  const sentToAdmin = await sentTo("admin@test.local");
+  assert(sentToAdmin.length === 1, `expected 1 outbound post to admin@test.local, got ${sentToAdmin.length}`);
+  const body = JSON.stringify(sentToAdmin[0].body);
+
+  // Positive: the escaped form of the injected name is actually present, proving the
+  // account row was found and rendered (not silently absent).
+  assert(body.includes("Acme &amp; Sons &lt;Ltd&gt;"),
+    `expected the escaped account name in the email body, got: ${body}`);
+  assert(body.includes("&lt;a href=&quot;https://evil.example&quot;&gt;click me&lt;/a&gt;"),
+    `expected the escaped task title anchor text in the email body, got: ${body}`);
+
+  // Negative: the raw markup must not survive anywhere in the body.
+  assert(!body.includes("<a href"), `raw <a href markup leaked into the email body: ${body}`);
+  assert(!body.includes("</table><a"), `raw </table><a markup leaked into the email body: ${body}`);
+
+  await sql(`delete from email_log where recipient = 'admin@test.local'`);
+  await sql(`delete from test_sent`);
+});
+
 test("send_alerts refuses to run when the API key is still the placeholder", async () => {
   await stubSend();
   await sql(`delete from test_sent`);
