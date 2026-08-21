@@ -2,7 +2,7 @@
 // directly with a superuser connection rather than through PostgREST -- execute is
 // revoked from `authenticated`, which is the point.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql } from "./fixtures.mjs";
+import { sessions, sql, seedAccount } from "./fixtures.mjs";
 
 test("record_health writes one row per account", async () => {
   const { error } = await sessions.admin.rpc("record_health", {
@@ -61,4 +61,29 @@ test("email_log refuses a second send of the same kind to the same person today"
      values ('dupe', 'd@test.local', 1, current_date - 1) returning id`
   );
   assert(rows.length === 1, "a different day for the same kind/recipient was wrongly rejected");
+});
+
+test("alert_recipients resolves each profile to an email address", async () => {
+  const rows = await sql(`select * from alert_recipients() order by email`);
+  assert(rows.length >= 2, `expected the two bootstrap users, got ${rows.length}`);
+  const admin = rows.find(r => r.email === "admin@test.local");
+  assert(!!admin, "admin@test.local was not resolved");
+  assert(admin.person === "Admin User", `expected name "Admin User", got "${admin.person}"`);
+  assert(admin.admin === true, "the admin was not flagged as an admin");
+});
+
+test("unrouted_csms reports a csm value that matches no profile", async () => {
+  await seedAccount("u-1", { name: "Orphan Co", csm: "Nobody At All", contractStatus: "Active" });
+  await seedAccount("u-2", { name: "Also Orphan", csm: "Nobody At All", contractStatus: "Active" });
+  const rows = await sql(`select * from unrouted_csms()`);
+  const hit = rows.find(r => r.csm === "Nobody At All");
+  assert(!!hit, "an unmatched csm was silently dropped instead of reported");
+  assert(Number(hit.accounts) === 2, `expected 2 orphaned accounts, got ${hit.accounts}`);
+});
+
+test("unrouted_csms ignores accounts whose csm DOES match a profile", async () => {
+  await seedAccount("u-3", { name: "Owned Co", csm: "Admin User", contractStatus: "Active" });
+  const rows = await sql(`select * from unrouted_csms()`);
+  assert(!rows.find(r => r.csm === "Admin User"),
+    "a correctly-owned account was reported as unrouted");
 });

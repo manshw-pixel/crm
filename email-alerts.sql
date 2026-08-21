@@ -76,3 +76,36 @@ create policy email_log_select on public.email_log
   for select to authenticated using (public.is_admin());
 
 -- NO insert/update/delete policy: the dispatcher (security definer) owns every write.
+
+-- ---------- recipients ----------
+-- profiles has no email column; addresses live in auth.users, which the browser cannot
+-- read. Definer rights are what make this join possible at all.
+create or replace function public.alert_recipients()
+returns table(profile_id uuid, person text, email text, admin boolean)
+language sql security definer set search_path = public, auth as $$
+  select p.id, p.name, u.email::text, (p.role = 'admin')
+  from profiles p
+  join auth.users u on u.id = p.id
+  where u.email is not null;
+$$;
+
+-- Accounts whose `csm` matches no profile name, or is blank. account.csm is FREE TEXT
+-- matched by string equality against profiles.name, so a rename or a typo silently
+-- produces a book that emails nobody. Returning them makes that visible: the dispatcher
+-- puts them in the admin digest and fingerprints them into error_log.
+create or replace function public.unrouted_csms()
+returns table(csm text, accounts int)
+language sql security definer set search_path = public as $$
+  select coalesce(nullif(trim(a.data->>'csm'), ''), '(unassigned)') as csm,
+         count(*)::int
+  from accounts a
+  where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    and not exists (
+      select 1 from profiles p
+      where p.name = trim(a.data->>'csm')
+    )
+  group by 1;
+$$;
+
+revoke execute on function public.alert_recipients() from public;
+revoke execute on function public.unrouted_csms()   from public;
