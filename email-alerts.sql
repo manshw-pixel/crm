@@ -238,8 +238,16 @@ declare
   unrouted   text;
 begin
   select * into cfg from alert_config where id = 1;
-  if cfg is null or cfg.api_key like 'PASTE%' then
+  -- Both placeholders are refused by the same guard: a revoked/never-pasted key and an
+  -- unverified sender are two of the three failure modes this task exists to expose (the
+  -- third, a blown quota, only shows up at send time and lands in email_log). A real key
+  -- paired with the still-default 'you@example.com' sender would otherwise sail past this
+  -- check and fail silently at Brevo.
+  if cfg is null or cfg.api_key like 'PASTE%' or cfg.from_email = 'you@example.com' then
     return 'alert_config not set — edit email-alerts.sql and run it again';
+  end if;
+  if p_kind not in ('renewals', 'overdue_tasks', 'qbr_nudge') then
+    return format('unknown alert kind: %s', p_kind);
   end if;
   if not (p_kind = any(cfg.enabled_kinds)) then
     return format('%s is disabled in alert_config.enabled_kinds', p_kind);
@@ -287,10 +295,10 @@ begin
         into n_rows, rows_html
         from alert_qbr_nudge(r.person, r.admin);
       subject := format('[OneVio] %s account(s) need a review scheduled or logged', n_rows);
-
-    else
-      return format('unknown alert kind: %s', p_kind);
     end if;
+    -- No `else` here: p_kind was already validated against the three known kinds above,
+    -- before the recipient loop, so an unknown kind never reaches this point regardless
+    -- of whether there are zero or many recipients.
 
     -- A digest with nothing in it is not sent. This is what keeps a daily email from
     -- becoming something people filter to a folder.

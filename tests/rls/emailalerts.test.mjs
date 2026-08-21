@@ -242,7 +242,7 @@ const stubSend = () => sql(`
 // Mutates shared state: deletes email_log and test_sent, and seeds account "s-1".
 test("send_alerts mails each CSM their own book and logs the send", async () => {
   await stubSend();
-  await sql(`update alert_config set api_key = 'test-key' where id = 1`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'admin@test.local' where id = 1`);
   await sql(`delete from email_log`);
   await sql(`delete from test_sent`);
   await seedAccount("s-1", { name: "Send Co", csm: "Admin User", contractStatus: "Active",
@@ -292,17 +292,53 @@ test("send_alerts will not double-send the same kind to the same person today", 
   await sql(`delete from test_sent`);
   await seedAccount("s-2", { name: "Once Co", csm: "Admin User", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
-  await sql(`select send_alerts('renewals')`);
-  await sql(`select send_alerts('renewals')`);
+  const [{ send_alerts: first }] = await sql(`select send_alerts('renewals')`);
+  assert(/1 recipient/.test(first), `expected run 1 to actually mail someone, got: ${first}`);
+  const [{ send_alerts: second }] = await sql(`select send_alerts('renewals')`);
   const sent = await sql(`select * from test_sent`);
   // Proves the mechanism sent at least once (so a dispatcher that never sends can't pass
   // this test), and that the second identical run did not add a second post.
   assert(sent.length === 1, `expected exactly 1 outbound post across both runs, got ${sent.length}`);
+  // Proves run 2 was silent BECAUSE the idempotency guard fired, not because some
+  // unrelated reason (e.g. a builder returning zero rows) skipped it identically.
+  const logged = await sql(`select * from email_log where kind = 'renewals'`);
+  assert(logged.length === 1, `expected exactly 1 email_log row after two runs, got ${logged.length}`);
 });
 
 test("send_alerts refuses to run when the API key is still the placeholder", async () => {
+  await stubSend();
+  await sql(`delete from test_sent`);
   await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
   const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
   assert(/not set/i.test(result), `expected a "not set" refusal, got: ${result}`);
-  await sql(`update alert_config set api_key = 'test-key' where id = 1`);
+  // A refusal string alone proves nothing if the guard were moved after the send -- confirm
+  // no email actually went out.
+  const sent = await sql(`select * from test_sent`);
+  assert(sent.length === 0, `the placeholder guard returned a refusal but still sent ${sent.length} email(s)`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'admin@test.local' where id = 1`);
+});
+
+test("send_alerts refuses to run when the sender is still the placeholder", async () => {
+  await stubSend();
+  await sql(`delete from test_sent`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'you@example.com' where id = 1`);
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+  assert(/not set/i.test(result), `expected a "not set" refusal, got: ${result}`);
+  const sent = await sql(`select * from test_sent`);
+  assert(sent.length === 0, `the sender-placeholder guard returned a refusal but still sent ${sent.length} email(s)`);
+  await sql(`update alert_config set from_email = 'admin@test.local' where id = 1`);
+});
+
+test("send_alerts skips a kind disabled in alert_config.enabled_kinds", async () => {
+  await stubSend();
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await seedAccount("s-disabled", { name: "Disabled Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
+  await sql(`update alert_config set enabled_kinds = array['overdue_tasks','qbr_nudge'] where id = 1`);
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+  assert(/disabled/i.test(result), `expected a "disabled" refusal, got: ${result}`);
+  const sent = await sql(`select * from test_sent`);
+  assert(sent.length === 0, `a disabled kind still sent ${sent.length} email(s)`);
+  await sql(`update alert_config set enabled_kinds = array['renewals','overdue_tasks','qbr_nudge'] where id = 1`);
 });
