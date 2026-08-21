@@ -5,7 +5,17 @@
 import { test, assert } from "../health/framework.mjs";
 import { sessions, sql, seedAccount, seedTask, seedActivity } from "./fixtures.mjs";
 
+// record_health() is defined in supabase-setup.sql, not email-alerts.sql, but its tests live
+// here with the alert suite: the snapshots exist only to feed the health-drop alert, and
+// these tests need the same real-Postgres fixtures the rest of this file uses.
+//
+// Every accountId below is seeded first. record_health() now drops rows whose accountId
+// matches no account, so a test that skipped the seed would insert nothing and its
+// assertions would report a validation rule as a broken function.
+
 test("record_health writes one row per account", async () => {
+  await seedAccount("h1", { name: "Health One" });
+  await seedAccount("h2", { name: "Health Two" });
   const { error } = await sessions.admin.rpc("record_health", {
     p_scores: [{ accountId: "h1", score: 72 }, { accountId: "h2", score: 44 }],
   });
@@ -17,6 +27,7 @@ test("record_health writes one row per account", async () => {
 });
 
 test("record_health upserts rather than duplicating within a day", async () => {
+  await seedAccount("h3", { name: "Health Three" });
   await sessions.admin.rpc("record_health", { p_scores: [{ accountId: "h3", score: 50 }] });
   await sessions.admin.rpc("record_health", { p_scores: [{ accountId: "h3", score: 61 }] });
   const { data } = await sessions.admin
@@ -25,15 +36,80 @@ test("record_health upserts rather than duplicating within a day", async () => {
   assert(data[0].score === 61, `expected the later score 61, got ${data[0].score}`);
 });
 
-test("an anonymous client cannot record health", async () => {
+test("record_health drops an unknown accountId and keeps the valid one", async () => {
+  await seedAccount("h-valid", { name: "Real Account" });
+  await sql(`delete from health_snapshots where account_id in ('h-valid', 'no-such-account')`);
+
+  // ONE call carrying both entries. The valid half is the control: without it, a
+  // record_health() that inserted nothing at all -- or one deleted outright -- would sail
+  // through the "unknown id wrote nothing" assertion.
+  const { data: n, error } = await sessions.admin.rpc("record_health", {
+    p_scores: [{ accountId: "no-such-account", score: 11 },
+               { accountId: "h-valid", score: 88 }],
+  });
+  assert(!error, `record_health failed: ${error && error.message}`);
+
+  const bogus = await sessions.admin
+    .from("health_snapshots").select("*").eq("account_id", "no-such-account");
+  assert((bogus.data || []).length === 0,
+    "a snapshot was stored for an accountId that matches no account");
+
+  const good = await sessions.admin
+    .from("health_snapshots").select("*").eq("account_id", "h-valid");
+  assert((good.data || []).length === 1,
+    `control failed: the VALID accountId stored ${(good.data || []).length} row(s), expected 1`);
+  assert(good.data[0].score === 88,
+    `control failed: expected score 88, got ${good.data[0].score}`);
+
+  // The return value is the app's own signal of how many rows landed, so it must agree.
+  assert(n === 1, `record_health returned ${n}, expected 1 (the bogus entry must not count)`);
+});
+
+// Finding 8: the previous version of this test asserted only that SOME error came back. It
+// passed for the wrong reason -- anon still held EXECUTE (Supabase's default privileges
+// grant it explicitly, and `revoke ... from public` does not remove that), so the call
+// reached the body and was stopped by the in-body `raise 'record_health: sign in required'`,
+// which surfaces as P0001. Asserting the DENIED_CODES set is what separates "the grant is
+// gone" from "the grant is intact and a runtime check caught it".
+//
+// DENIED_CODES and sessions.user are declared further down this module; both are resolved by
+// the time any test BODY runs, since the framework registers tests first and executes after
+// the module has fully evaluated.
+test("record_health still exists for the owner but is closed to an anonymous client", async () => {
+  // Deletion detector: PGRST202 also comes back for a function that is simply gone, so pin
+  // that the owner still has an executable record_health before reading anything into it.
+  const [priv] = await sql(
+    `select has_function_privilege('postgres', $1::text, 'execute') as ok`,
+    ["public.record_health(jsonb)"]);
+  assert(priv && priv.ok === true,
+    "deletion detector failed: public.record_health(jsonb) is not an existing, owner-executable function");
+
   const { error } = await sessions.anon.rpc("record_health", {
     p_scores: [{ accountId: "h4", score: 10 }],
   });
   assert(!!error, "an anonymous client was allowed to write health snapshots");
-  // Prove the row genuinely does not exist -- otherwise the assertion above proves nothing.
+  assert(DENIED_CODES.includes(error.code),
+    `expected one of ${DENIED_CODES.join("/")} -- the grant itself must be gone -- but got ` +
+    `${error.code}: ${error.message}. P0001 means anon reached the function body.`);
+
+  // And prove nothing landed, so a denial that somehow arrived after the insert would fail.
   const { data } = await sessions.admin
     .from("health_snapshots").select("*").eq("account_id", "h4");
   assert((data || []).length === 0, "the anonymous write landed anyway");
+});
+
+// The counterpart: revoking anon must not cost the app its access. crm.html:3733 calls
+// record_health() as an ordinary signed-in user, so a "tighten it further" edit that also
+// revoked `authenticated` would break the feature silently. This test goes red on that.
+test("a signed-in plain user can still record health", async () => {
+  await seedAccount("h-user", { name: "User Written" });
+  const { error } = await sessions.user.rpc("record_health", {
+    p_scores: [{ accountId: "h-user", score: 63 }],
+  });
+  assert(!error, `a signed-in user's record_health() was rejected: ${error && error.message}`);
+  const { data } = await sessions.admin
+    .from("health_snapshots").select("*").eq("account_id", "h-user");
+  assert((data || []).length === 1, "the signed-in user's snapshot was not written");
 });
 
 test("email_log is admin-readable and closed to plain users", async () => {

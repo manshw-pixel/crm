@@ -41,9 +41,23 @@ test("an admin can read the error log", async () => {
   assert((data || []).length === 1, "the admin saw no rows");
 });
 
+// Same distinction as the record_health anon test in emailalerts.test.mjs: log_error() has
+// an in-body `raise 'log_error: sign in required'` (P0001), so a truthy-error check passes
+// whether the EXECUTE grant is gone or merely the runtime check fired. Only these codes mean
+// anon never reached the function:
+//   42501    insufficient_privilege -- PostgREST reached it and was refused.
+//   PGRST202 absent from anon's per-role schema cache, which is what a revoked grant causes.
+const DENIED_CODES = ["42501", "PGRST202"];
+
 test("an anonymous client can neither report nor read", async () => {
   const { error: insErr } = await report("anon", "fp-anon-1");
   assert(insErr, "an anonymous client was allowed to report an error");
+  assert(DENIED_CODES.includes(insErr.code),
+    `expected one of ${DENIED_CODES.join("/")} -- the grant itself must be gone -- but got ` +
+    `${insErr.code}: ${insErr.message}. P0001 means anon reached the function body.`);
+  // "a plain user can report an error" above is the control that keeps this from passing
+  // because log_error() is closed to everyone or missing entirely.
+  assert((await rowsAsAdmin("fp-anon-1")).length === 0, "the anonymous report landed anyway");
   const { data } = await sessions.anon.from("error_log").select("*").limit(1);
   assert((data || []).length === 0, "an anonymous client could read the error log");
 });

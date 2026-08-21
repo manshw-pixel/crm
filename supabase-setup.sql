@@ -350,12 +350,20 @@ begin
   delete from error_log where last_seen < now() - interval '30 days';
 end $$;
 
--- Revoke from PUBLIC, not from anon. Postgres grants EXECUTE to PUBLIC by default on every
--- new function and `create or replace` preserves it, so revoking from `anon` alone removes
--- a direct grant that was never made while anon keeps inheriting execute via PUBLIC. This
--- pair is what actually makes the grant explicit -- and it also removes the file's only
--- statement that errors if a role happens not to exist.
-revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public;
+-- Revoke from PUBLIC **and** from anon -- both are needed, and neither substitutes for the
+-- other. PUBLIC: Postgres grants EXECUTE to PUBLIC by default on every new function and
+-- `create or replace` preserves it, so anon would keep inheriting execute through PUBLIC.
+-- anon: on Supabase, functions created in schema `public` by `postgres` ALSO pick up an
+-- explicit grant to anon and authenticated from the project's default privileges, which
+-- `revoke ... from public` does not touch. Revoking only PUBLIC leaves that direct grant
+-- standing and anon still reaches the body.
+--
+-- An earlier comment here warned that naming `anon` breaks an install where the role does
+-- not exist. That concern is real for portable SQL, but not for this file: it targets
+-- Supabase, where anon and authenticated are created by the platform before any user SQL
+-- runs, and the RLS harness re-establishes both roles and those default privileges
+-- (tests/rls/fixtures.mjs) before applying this file.
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public, anon;
 grant execute on function public.log_error(text, text, text, text, jsonb, text, text) to authenticated;
 
 -- ---------- realtime ----------
@@ -392,8 +400,16 @@ drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
   for select to authenticated using (true);
 
--- NO insert/update/delete policy, deliberately: record_health() owns every mutation, so a
--- user cannot forge or erase a baseline and thereby suppress a future drop alert.
+-- NO insert/update/delete policy, deliberately: every mutation funnels through
+-- record_health(), which validates the shape of `score` and checks that `accountId` names a
+-- real account before it inserts. RLS keeps direct writes out, so those two checks cannot be
+-- bypassed.
+--
+-- Scope this honestly -- it is NOT an authorization boundary. Any authenticated user of this
+-- internal CRM can already edit accounts directly, and record_health() is open to every
+-- authenticated user, so a signed-in user CAN overwrite today's score for an account they
+-- can see. What the funnel actually buys is integrity: no malformed scores, and no snapshot
+-- rows for accounts that do not exist.
 
 create or replace function public.record_health(p_scores jsonb)
 returns int language plpgsql security definer set search_path = public as $$
@@ -411,16 +427,23 @@ begin
   from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) e
   where e->>'accountId' is not null
     and e->>'score' ~ '^-?[0-9]+(\.[0-9]+)?$'
+    -- An unknown accountId is DROPPED, not raised on: the app sends one batch for every
+    -- account on screen, and an account deleted between render and write must not cost the
+    -- rest of the batch its snapshot. Without this, health_snapshots can be stuffed with
+    -- rows referencing accounts that never existed.
+    and exists (select 1 from accounts a where a.id = e->>'accountId')
   on conflict (account_id, day) do update set score = excluded.score;
 
   get diagnostics n = row_count;
   return n;
 end $$;
 
--- Revoke from PUBLIC, not from anon, for the same reason as log_error above: PUBLIC is
--- the grant that actually needs revoking, and `anon` is a role that may not exist on
--- every install -- naming it here is the "helpful" edit that breaks a fresh database.
-revoke execute on function public.record_health(jsonb) from public;
+-- Revoke from PUBLIC **and** anon, for the same reason as log_error above: PUBLIC carries
+-- Postgres's default EXECUTE, and Supabase's default privileges add a separate explicit
+-- grant to anon that revoking PUBLIC leaves standing. Without the second role named here,
+-- an anonymous caller still reaches the body and is stopped only by the `sign in required`
+-- raise inside it -- a check, not a grant.
+revoke execute on function public.record_health(jsonb) from public, anon;
 grant execute on function public.record_health(jsonb) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
