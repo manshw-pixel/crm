@@ -99,10 +99,16 @@ nothing to report.
    `email-alerts-schedule.sql` — this second script is what actually installs pg_cron and
    starts the scheduled sending; running only the first file creates the tables and
    functions but nothing will ever fire on its own. The last line of the second script
-   fires a test immediately and its result text says what happened.
+   fires a real send immediately, not a synthetic self-test: it mails every CSM who
+   currently has a renewal due within 30 days (and mails admins the unowned accounts too),
+   so its result text reaches real colleagues' inboxes.
 
-This **replaces** `renewal-alerts.sql`, which mailed the whole team one shared digest. The
-schedule script unschedules that job for you; the old file is kept only for reference.
+This **replaces** `renewal-alerts.sql`, which mailed the whole team one shared digest.
+**Do not run `renewal-alerts.sql` again** — the schedule script unschedules its old job for
+you once, but re-running the old file recreates that job, and you'll get two renewal
+emails a day: one team-wide from the old job, one per-CSM from the new one. The old file is
+kept only for reference; if you ran it by mistake, undo it with
+`select cron.unschedule('crm-renewal-alerts');`
 
 **Checking whether mail is actually going out.** Settings → the error panel shows a
 `email-send-failed` entry if any send failed in the last day. Admins can also read the
