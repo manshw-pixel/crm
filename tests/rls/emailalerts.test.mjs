@@ -46,9 +46,19 @@ test("email_log is admin-readable and closed to plain users", async () => {
 
 test("email_log refuses a second send of the same kind to the same person today", async () => {
   await sql(`insert into email_log (kind, recipient, row_count) values ('dupe', 'd@test.local', 1)`);
-  let threw = false;
+  let err = null;
   try {
     await sql(`insert into email_log (kind, recipient, row_count) values ('dupe', 'd@test.local', 1)`);
-  } catch (e) { threw = true; }
-  assert(threw, "the uniqueness constraint did not prevent a duplicate send");
+  } catch (e) { err = e; }
+  assert(err, "the second insert was accepted — the uniqueness constraint did not fire");
+  assert(err.code === "23505",
+    `expected unique_violation 23505, got ${err.code}: ${err.message}`);
+
+  // Same kind and recipient but a different day must be allowed through — proves the
+  // constraint is scoped to (kind, recipient, day) and not blanket-rejecting every insert.
+  const rows = await sql(
+    `insert into email_log (kind, recipient, row_count, day)
+     values ('dupe', 'd@test.local', 1, current_date - 1) returning id`
+  );
+  assert(rows.length === 1, "a different day for the same kind/recipient was wrongly rejected");
 });
