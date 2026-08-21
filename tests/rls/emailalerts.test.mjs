@@ -496,46 +496,120 @@ test("log_error_system collapses repeat calls into one row via fingerprint", asy
 // to GitHub Pages, so an open alert_recipients() -- SECURITY DEFINER over auth.users --
 // would leak every user's email address to the internet.
 //
-// Each assertion checks error.code === '42501' (insufficient_privilege) SPECIFICALLY, not
-// merely that an error came back. send_alerts() returns a plain string on the no-config
-// path and log_error_system() succeeds silently, so a truthy-error check would pass for
-// entirely the wrong reason -- or not fail at all.
+// EACH TEST BELOW IS A PAIR, and both halves are load-bearing:
+//
+//   POSITIVE CONTROL (owner half) -- catches the function being DELETED or renamed. A bare
+//   "the unprivileged caller was refused" assertion passes just as happily against a
+//   function that no longer exists, which is the vacuity trap this branch keeps falling
+//   into. has_function_privilege() raises undefined_function if the signature is gone, so
+//   sql() rejects and the test fails; where the function is safe to invoke we also actually
+//   run it, so a function that exists but no longer works fails too.
+//
+//   NEGATIVE HALF (unprivileged) -- catches the revoke being REMOVED, or a `grant execute`
+//   creeping back. Without the revoke the RPC succeeds and `assert(error, ...)` fails.
+//
+// The accepted codes are a SPECIFIC SET, never truthiness and never a message substring:
+//   42501    insufficient_privilege -- PostgREST reached the function and was refused.
+//   PGRST202 the function is absent from THIS ROLE's schema cache, which PostgREST builds
+//            per role: a function with execute revoked can simply not appear in it.
+// Both mean "unreachable by this role", which is what the finding requires. Widening to
+// this set is only safe because the positive control independently proves the function is
+// still present and working -- PGRST202 alone would also come back for a deleted function.
+//
+// A truthy-error check would be worthless here for a further reason: send_alerts() returns
+// a plain string on the no-config path and log_error_system() succeeds silently, so "some
+// error happened" would pass for entirely the wrong reason -- or not fail at all.
+const DENIED_CODES = ["42501", "PGRST202"];
+
+// [rpc name, rpc args, signature for has_function_privilege, owner-invocation probe or null]
+//
+// alert_post has no probe: its body calls net.http_post and pg_net is deliberately absent
+// from this test database, so invoking it would fail for a reason unrelated to grants. The
+// has_function_privilege() check still fails if the function is deleted, which is the
+// regression the control exists to catch.
 const CLOSED_FUNCTIONS = [
-  ["alert_recipients", {}],
-  ["unrouted_csms", {}],
-  ["alert_renewals", { p_csm: "Ana", p_include_unowned: false }],
-  ["alert_overdue_tasks", { p_csm: "Ana", p_include_unowned: false }],
-  ["alert_qbr_nudge", { p_csm: "Ana", p_include_unowned: false }],
-  ["alert_post", { p_url: "http://127.0.0.1:1/none", p_headers: {}, p_body: {} }],
-  ["send_alerts", { p_kind: "renewals" }],
-  ["settle_alert_sends", {}],
+  ["alert_recipients", {}, "public.alert_recipients()",
+    "select * from alert_recipients()"],
+  ["unrouted_csms", {}, "public.unrouted_csms()",
+    "select * from unrouted_csms()"],
+  ["alert_renewals", { p_csm: "Ana", p_include_unowned: false },
+    "public.alert_renewals(text, boolean)",
+    "select * from alert_renewals('Ana', false)"],
+  ["alert_overdue_tasks", { p_csm: "Ana", p_include_unowned: false },
+    "public.alert_overdue_tasks(text, boolean)",
+    "select * from alert_overdue_tasks('Ana', false)"],
+  ["alert_qbr_nudge", { p_csm: "Ana", p_include_unowned: false },
+    "public.alert_qbr_nudge(text, boolean)",
+    "select * from alert_qbr_nudge('Ana', false)"],
+  ["alert_post", { p_url: "http://127.0.0.1:1/none", p_headers: {}, p_body: {} },
+    "public.alert_post(text, jsonb, jsonb)", null],
+  ["send_alerts", { p_kind: "renewals" }, "public.send_alerts(text)",
+    "select send_alerts('renewals')"],
+  ["settle_alert_sends", {}, "public.settle_alert_sends()",
+    "select settle_alert_sends()"],
   ["log_error_system", {
     p_fingerprint: "rls-grant-probe", p_level: "write_failed",
     p_message: "should never be written", p_context: {},
-  }],
+  }, "public.log_error_system(text, text, text, jsonb)",
+    "select log_error_system('rls-owner-probe', 'write_failed', 'owner control', '{}'::jsonb)"],
 ];
 
-for (const [fn, args] of CLOSED_FUNCTIONS) {
-  test(`an anonymous client cannot execute ${fn}()`, async () => {
+// The owner half, shared by both role tests. sql() connects as `postgres`, the function
+// owner -- the privileged caller the harness already provides. It throws (failing the test)
+// if the function has been deleted, and the assertion fails if the owner's own execute
+// grant was revoked too, which would break the pg_cron jobs and is not what this fix does.
+async function assertStillLiveForOwner(signature, probe) {
+  const [priv] = await sql(
+    `select has_function_privilege('postgres', $1, 'execute') as ok`, [signature]);
+  assert(priv && priv.ok === true,
+    `positive control failed: the owner cannot execute ${signature} -- has the fix over-revoked?`);
+  if (probe) await sql(probe);
+}
+
+for (const [fn, args, signature, probe] of CLOSED_FUNCTIONS) {
+  test(`${fn}() still runs for the owner but is closed to an anonymous client`, async () => {
+    await assertStillLiveForOwner(signature, probe);
     const { data, error } = await sessions.anon.rpc(fn, args);
     assert(error, `anon executed ${fn}() successfully and got: ${JSON.stringify(data)}`);
-    assert(error.code === "42501",
-      `expected 42501 (insufficient_privilege) from ${fn}(), got ${error.code}: ${error.message}`);
+    assert(DENIED_CODES.includes(error.code),
+      `expected one of ${DENIED_CODES.join("/")} from ${fn}(), got ${error.code}: ${error.message}`);
   });
 
-  test(`a signed-in plain user cannot execute ${fn}()`, async () => {
+  test(`${fn}() still runs for the owner but is closed to a signed-in plain user`, async () => {
+    await assertStillLiveForOwner(signature, probe);
     const { data, error } = await sessions.user.rpc(fn, args);
-    assert(error, `an authenticated user executed ${fn}() successfully and got: ${JSON.stringify(data)}`);
-    assert(error.code === "42501",
-      `expected 42501 (insufficient_privilege) from ${fn}(), got ${error.code}: ${error.message}`);
+    assert(error, `an authenticated user executed ${fn}() and got: ${JSON.stringify(data)}`);
+    assert(DENIED_CODES.includes(error.code),
+      `expected one of ${DENIED_CODES.join("/")} from ${fn}(), got ${error.code}: ${error.message}`);
   });
 }
 
-// A revoked function must not have run. log_error_system() is the one in the list above
-// with an observable side effect, so it is the one that can prove the denial happened
-// BEFORE the body executed rather than after.
-test("the denied log_error_system calls wrote no error_log row", async () => {
-  const rows = await sql(`select * from error_log where fingerprint = 'rls-grant-probe'`);
-  assert(rows.length === 0,
-    `a revoked log_error_system() still wrote ${rows.length} row(s)`);
+// A refused call must not have RUN. log_error_system() is the one function in the table
+// above with an observable write, so it is the one that can show the denial landed before
+// the body executed rather than after. Self-contained: it clears the fingerprint, seeds its
+// own row and makes its own denied calls, so it does not depend on the loop tests above
+// having run first or on the order the framework registers tests in.
+test("a refused log_error_system() call writes no error_log row", async () => {
+  await sql(`delete from error_log where fingerprint = 'rls-denied-write'`);
+  const denied = {
+    p_fingerprint: "rls-denied-write", p_level: "write_failed",
+    p_message: "should never be written", p_context: {},
+  };
+  // Positive control: the identical call from the owner DOES write, so "unchanged below"
+  // means the calls were refused rather than that log_error_system() is inert or misnamed.
+  await sql(`select log_error_system('rls-denied-write', 'write_failed', 'owner control', '{}'::jsonb)`);
+  const seeded = await sql(`select * from error_log where fingerprint = 'rls-denied-write'`);
+  assert(seeded.length === 1,
+    `positive control failed: an owner call wrote ${seeded.length} row(s), expected 1`);
+  const before = seeded[0].count;
+
+  await sessions.anon.rpc("log_error_system", denied);
+  await sessions.user.rpc("log_error_system", denied);
+
+  const after = await sql(`select * from error_log where fingerprint = 'rls-denied-write'`);
+  assert(after.length === 1, `expected only the owner's row, got ${after.length}`);
+  assert(after[0].count === before,
+    `a refused log_error_system() still ran: count went ${before} -> ${after[0].count}`);
+  assert(after[0].message === "owner control",
+    `a refused log_error_system() overwrote the message with: ${after[0].message}`);
 });
