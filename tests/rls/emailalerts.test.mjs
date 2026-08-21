@@ -94,3 +94,38 @@ test("unrouted_csms reports unmatched csms and ignores matched ones", async () =
   assert(!rows.find(r => r.csm === "Admin User"),
     "an account whose csm matches a real profile was wrongly reported as unrouted");
 });
+
+test("alert_renewals returns only this CSM's accounts renewing within 30 days", async () => {
+  await seedAccount("r-1", { name: "Soon Co",  csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
+  await seedAccount("r-2", { name: "Later Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 90 * 864e5).toISOString().slice(0, 10) });
+  await seedAccount("r-3", { name: "Theirs",   csm: "Plain User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
+
+  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  const ids = rows.map(r => r.account_id);
+  assert(ids.includes("r-1"), "the renewal due in 5 days was missing");
+  assert(!ids.includes("r-2"), "a renewal 90 days out was included");
+  assert(!ids.includes("r-3"), "another CSM's account leaked into this book");
+  assert(rows.find(r => r.account_id === "r-1").days_left === 5,
+    "days_left was not computed correctly");
+});
+
+test("alert_renewals excludes churned accounts", async () => {
+  await seedAccount("r-4", { name: "Gone Co", csm: "Admin User", contractStatus: "Churned",
+                             renewalDate: new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10) });
+  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  assert(!rows.map(r => r.account_id).includes("r-4"), "a churned account was included");
+  // The window itself still works -- otherwise the assertion above passes vacuously.
+  assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
+});
+
+test("alert_renewals adds unowned accounts only when asked", async () => {
+  await seedAccount("r-5", { name: "Nobody's", csm: "", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10) });
+  const without = await sql(`select * from alert_renewals('Admin User', false)`);
+  const with_   = await sql(`select * from alert_renewals('Admin User', true)`);
+  assert(!without.map(r => r.account_id).includes("r-5"), "an unowned account leaked in by default");
+  assert(with_.map(r => r.account_id).includes("r-5"), "an unowned account was not picked up for admins");
+});

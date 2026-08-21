@@ -109,3 +109,27 @@ $$;
 
 revoke execute on function public.alert_recipients() from public;
 revoke execute on function public.unrouted_csms()   from public;
+
+-- ---------- builders ----------
+-- Builders are PURE: they return rows, write nothing and call nothing over the network.
+-- That is what lets the suite prove the logic without sending a single email.
+
+create or replace function public.alert_renewals(
+  p_csm text, p_include_unowned boolean default false)
+returns table(account_id text, account_name text, renewal_date date, days_left int)
+language sql security definer set search_path = public as $$
+  select a.id,
+         a.data->>'name',
+         (a.data->>'renewalDate')::date,
+         ((a.data->>'renewalDate')::date - current_date)::int
+  from accounts a
+  where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    and nullif(a.data->>'renewalDate', '') is not null
+    and (a.data->>'renewalDate')::date between current_date and current_date + 30
+    and ( trim(a.data->>'csm') = p_csm
+          or (p_include_unowned and not exists (
+                select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+  order by 3 asc;
+$$;
+
+revoke execute on function public.alert_renewals(text, boolean) from public;
