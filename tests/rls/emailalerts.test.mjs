@@ -498,12 +498,17 @@ test("log_error_system collapses repeat calls into one row via fingerprint", asy
 //
 // EACH TEST BELOW IS A PAIR, and both halves are load-bearing:
 //
-//   POSITIVE CONTROL (owner half) -- catches the function being DELETED or renamed. A bare
-//   "the unprivileged caller was refused" assertion passes just as happily against a
-//   function that no longer exists, which is the vacuity trap this branch keeps falling
-//   into. has_function_privilege() raises undefined_function if the signature is gone, so
-//   sql() rejects and the test fails; where the function is safe to invoke we also actually
-//   run it, so a function that exists but no longer works fails too.
+//   POSITIVE CONTROL (owner half) -- a DELETION DETECTOR, and nothing more. A bare "the
+//   unprivileged caller was refused" assertion passes just as happily against a function
+//   that no longer exists, which is the vacuity trap this branch keeps falling into.
+//   has_function_privilege() raises undefined_function when the signature is gone, so
+//   sql() rejects and the test fails.
+//
+//   It does NOT detect over-revoking, and must not be read as protecting the pg_cron jobs:
+//   sql() connects as `postgres`, which is superuser locally, and a privilege check always
+//   answers true for a superuser. Even for a non-superuser owner the answer would still be
+//   true, because an owner keeps an implicit grant that `revoke ... from public, anon,
+//   authenticated` never touches. Nothing here would notice an over-revoke.
 //
 //   NEGATIVE HALF (unprivileged) -- catches the revoke being REMOVED, or a `grant execute`
 //   creeping back. Without the revoke the RPC succeeds and `assert(error, ...)` fails.
@@ -513,70 +518,122 @@ test("log_error_system collapses repeat calls into one row via fingerprint", asy
 //   PGRST202 the function is absent from THIS ROLE's schema cache, which PostgREST builds
 //            per role: a function with execute revoked can simply not appear in it.
 // Both mean "unreachable by this role", which is what the finding requires. Widening to
-// this set is only safe because the positive control independently proves the function is
-// still present and working -- PGRST202 alone would also come back for a deleted function.
+// this set is only safe because the deletion detector above independently proves the
+// function is still there -- PGRST202 alone also comes back for a deleted function.
 //
 // A truthy-error check would be worthless here for a further reason: send_alerts() returns
 // a plain string on the no-config path and log_error_system() succeeds silently, so "some
 // error happened" would pass for entirely the wrong reason -- or not fail at all.
 const DENIED_CODES = ["42501", "PGRST202"];
 
-// [rpc name, rpc args, signature for has_function_privilege, owner-invocation probe or null]
-//
-// alert_post has no probe: its body calls net.http_post and pg_net is deliberately absent
-// from this test database, so invoking it would fail for a reason unrelated to grants. The
-// has_function_privilege() check still fails if the function is deleted, which is the
-// regression the control exists to catch.
+// Owner-side probes. Most can only prove EXISTENCE: the builders return zero rows against
+// an unseeded database and settle_alert_sends() returns void, so there is no cheap, stable
+// output worth asserting on and inventing one would only make it brittle. Two probes can
+// assert something real, and do. Each probe is responsible for the state it needs, so the
+// tests below do not depend on what earlier tests in this file happened to leave behind.
+const OWNER_PROBES = {
+  // Existence only -- a zero-row result is a perfectly normal answer here.
+  alert_recipients: () => sql(`select * from alert_recipients()`),
+  unrouted_csms: () => sql(`select * from unrouted_csms()`),
+  alert_renewals: () => sql(`select * from alert_renewals('Ana', false)`),
+  alert_overdue_tasks: () => sql(`select * from alert_overdue_tasks('Ana', false)`),
+  alert_qbr_nudge: () => sql(`select * from alert_qbr_nudge('Ana', false)`),
+
+  // Existence only, but it needs net._http_response, which does not exist until
+  // ensureHttpResponseTable() has run (pg_net is deliberately absent from this test DB).
+  // Calling that helper here rather than relying on the settle tests above having already
+  // run is what keeps this probe independent of test registration order.
+  settle_alert_sends: async () => {
+    await ensureHttpResponseTable();
+    await sql(`select settle_alert_sends()`);
+  },
+
+  // Asserts on the RETURN VALUE, and establishes the config it needs rather than inheriting
+  // whatever the dispatcher tests left in alert_config. Driving the placeholder-key guard
+  // deliberately means the body runs and returns its refusal string without reaching the
+  // send path -- so this probe writes no email_log or test_sent rows, unlike a probe that
+  // lets a real send through. The config is restored to the value the dispatcher tests
+  // leave, so running this in the middle of the file would be harmless too.
+  send_alerts: async () => {
+    await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+    try {
+      const [row] = await sql(`select send_alerts('renewals') as out`);
+      assert(row && /not set/i.test(row.out),
+        `positive control failed: send_alerts() returned ${JSON.stringify(row && row.out)}, expected a "not set" refusal`);
+    } finally {
+      await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+    }
+  },
+
+  // Asserts on the SIDE EFFECT: the row must actually appear, so a log_error_system() gutted
+  // to a no-op fails its own control. Cleans up after itself -- the fingerprint is scoped to
+  // this probe and left behind would pollute error_log for anything that counts rows.
+  log_error_system: async () => {
+    await sql(`delete from error_log where fingerprint = 'rls-owner-probe'`);
+    await sql(`select log_error_system('rls-owner-probe', 'write_failed', 'owner control', '{}'::jsonb)`);
+    const rows = await sql(`select * from error_log where fingerprint = 'rls-owner-probe'`);
+    assert(rows.length === 1,
+      `positive control failed: an owner log_error_system() wrote ${rows.length} row(s), expected 1`);
+    await sql(`delete from error_log where fingerprint = 'rls-owner-probe'`);
+  },
+
+  // alert_post has NO probe: its body calls net.http_post and pg_net is deliberately absent
+  // from this test database, so invoking it would fail for a reason unrelated to grants.
+  //
+  // Its deletion detector is also weaker than it looks, and the reason is worth recording.
+  // By the time this loop runs, stubSend() above has replaced alert_post wholesale, so the
+  // has_function_privilege() check probes the STUB -- delete the shipped alert_post from
+  // email-alerts.sql and this control still passes. Coverage survives anyway, via the
+  // unprivileged half: `create or replace` RETAINS the existing ACL, which is the only
+  // reason the stub does not re-open the function in the normal case. Were the shipped
+  // function gone, stubSend() would be a fresh CREATE, it would inherit the anon /
+  // authenticated grant from fixtures.mjs's default privileges, and the anon and plain-user
+  // halves would go red.
+  alert_post: null,
+};
+
+// [rpc name, rpc args, signature for has_function_privilege]
 const CLOSED_FUNCTIONS = [
-  ["alert_recipients", {}, "public.alert_recipients()",
-    "select * from alert_recipients()"],
-  ["unrouted_csms", {}, "public.unrouted_csms()",
-    "select * from unrouted_csms()"],
+  ["alert_recipients", {}, "public.alert_recipients()"],
+  ["unrouted_csms", {}, "public.unrouted_csms()"],
   ["alert_renewals", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_renewals(text, boolean)",
-    "select * from alert_renewals('Ana', false)"],
+    "public.alert_renewals(text, boolean)"],
   ["alert_overdue_tasks", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_overdue_tasks(text, boolean)",
-    "select * from alert_overdue_tasks('Ana', false)"],
+    "public.alert_overdue_tasks(text, boolean)"],
   ["alert_qbr_nudge", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_qbr_nudge(text, boolean)",
-    "select * from alert_qbr_nudge('Ana', false)"],
+    "public.alert_qbr_nudge(text, boolean)"],
   ["alert_post", { p_url: "http://127.0.0.1:1/none", p_headers: {}, p_body: {} },
-    "public.alert_post(text, jsonb, jsonb)", null],
-  ["send_alerts", { p_kind: "renewals" }, "public.send_alerts(text)",
-    "select send_alerts('renewals')"],
-  ["settle_alert_sends", {}, "public.settle_alert_sends()",
-    "select settle_alert_sends()"],
+    "public.alert_post(text, jsonb, jsonb)"],
+  ["send_alerts", { p_kind: "renewals" }, "public.send_alerts(text)"],
+  ["settle_alert_sends", {}, "public.settle_alert_sends()"],
   ["log_error_system", {
     p_fingerprint: "rls-grant-probe", p_level: "write_failed",
     p_message: "should never be written", p_context: {},
-  }, "public.log_error_system(text, text, text, jsonb)",
-    "select log_error_system('rls-owner-probe', 'write_failed', 'owner control', '{}'::jsonb)"],
+  }, "public.log_error_system(text, text, text, jsonb)"],
 ];
 
-// The owner half, shared by both role tests. sql() connects as `postgres`, the function
-// owner -- the privileged caller the harness already provides. It throws (failing the test)
-// if the function has been deleted, and the assertion fails if the owner's own execute
-// grant was revoked too, which would break the pg_cron jobs and is not what this fix does.
-async function assertStillLiveForOwner(signature, probe) {
+// The deletion detector, shared by both role tests. The $1::text cast is deliberate: an
+// unknown-typed literal leaves the has_function_privilege() overload ambiguous.
+async function assertNotDeleted(fn, signature) {
   const [priv] = await sql(
-    `select has_function_privilege('postgres', $1, 'execute') as ok`, [signature]);
+    `select has_function_privilege('postgres', $1::text, 'execute') as ok`, [signature]);
   assert(priv && priv.ok === true,
-    `positive control failed: the owner cannot execute ${signature} -- has the fix over-revoked?`);
-  if (probe) await sql(probe);
+    `deletion detector failed: ${signature} did not answer as an existing, owner-executable function`);
+  const probe = OWNER_PROBES[fn];
+  if (probe) await probe();
 }
 
-for (const [fn, args, signature, probe] of CLOSED_FUNCTIONS) {
-  test(`${fn}() still runs for the owner but is closed to an anonymous client`, async () => {
-    await assertStillLiveForOwner(signature, probe);
+for (const [fn, args, signature] of CLOSED_FUNCTIONS) {
+  test(`${fn}() still exists for the owner but is closed to an anonymous client`, async () => {
+    await assertNotDeleted(fn, signature);
     const { data, error } = await sessions.anon.rpc(fn, args);
     assert(error, `anon executed ${fn}() successfully and got: ${JSON.stringify(data)}`);
     assert(DENIED_CODES.includes(error.code),
       `expected one of ${DENIED_CODES.join("/")} from ${fn}(), got ${error.code}: ${error.message}`);
   });
 
-  test(`${fn}() still runs for the owner but is closed to a signed-in plain user`, async () => {
-    await assertStillLiveForOwner(signature, probe);
+  test(`${fn}() still exists for the owner but is closed to a signed-in plain user`, async () => {
+    await assertNotDeleted(fn, signature);
     const { data, error } = await sessions.user.rpc(fn, args);
     assert(error, `an authenticated user executed ${fn}() and got: ${JSON.stringify(data)}`);
     assert(DENIED_CODES.includes(error.code),
