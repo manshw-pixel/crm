@@ -192,9 +192,34 @@ test("alert_qbr_nudge does NOT flag a past QBR that was logged within 14 days of
 });
 
 test("alert_qbr_nudge ignores accounts with qbrFrequency None", async () => {
+  // Positive half first, so the negative assertion below cannot pass vacuously against
+  // an empty result set.
+  await seedAccount("q-6", { name: "Real Cadence", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
   await seedAccount("q-5", { name: "No QBRs", csm: "Admin User", contractStatus: "Active",
                              qbrFrequency: "None", nextQbrDate: "" });
   const rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
-  assert(!rows.map(r => r.account_id).includes("q-5"),
-    "an account with no QBR cadence was nudged");
+  const ids = rows.map(r => r.account_id);
+  assert(ids.includes("q-6"), "an account with a real QBR cadence in the window was missing");
+  assert(!ids.includes("q-5"), "an account with no QBR cadence was nudged");
+});
+
+test("alert_overdue_tasks adds unowned accounts' tasks only when asked", async () => {
+  await seedAccount("t-unowned", { name: "Nobody's Tasks", csm: "", contractStatus: "Active" });
+  await seedTask("t-5", { accountId: "t-unowned", title: "Orphan task",
+                          due: new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10),
+                          status: "Open" });
+  const without = await sql(`select * from alert_overdue_tasks('Admin User', false)`);
+  const with_   = await sql(`select * from alert_overdue_tasks('Admin User', true)`);
+  assert(!without.map(r => r.task_id).includes("t-5"), "an unowned account's task leaked in by default");
+  assert(with_.map(r => r.task_id).includes("t-5"), "an unowned account's task was not picked up for admins");
+});
+
+test("alert_qbr_nudge adds unowned accounts only when asked", async () => {
+  await seedAccount("q-7", { name: "Nobody's QBR", csm: "", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
+  const without = await sql(`select * from alert_qbr_nudge('Admin User', false)`);
+  const with_   = await sql(`select * from alert_qbr_nudge('Admin User', true)`);
+  assert(!without.map(r => r.account_id).includes("q-7"), "an unowned account leaked in by default");
+  assert(with_.map(r => r.account_id).includes("q-7"), "an unowned account was not picked up for admins");
 });

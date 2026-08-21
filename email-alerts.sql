@@ -125,7 +125,9 @@ language sql security definer set search_path = public as $$
   from accounts a
   where coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and nullif(a.data->>'renewalDate', '') is not null
-    and (a.data->>'renewalDate')::date between current_date and current_date + 30
+    and (case when nullif(a.data->>'renewalDate', '') is not null
+              then (a.data->>'renewalDate')::date end)
+        between current_date and current_date + 30
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
                 select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
@@ -150,7 +152,8 @@ language sql security definer set search_path = public as $$
   join accounts a on a.id = t.data->>'accountId'
   where coalesce(t.data->>'status', '') <> 'Done'
     and nullif(t.data->>'due', '') is not null
-    and (t.data->>'due')::date < current_date
+    and (case when nullif(t.data->>'due', '') is not null
+              then (t.data->>'due')::date end) < current_date
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
