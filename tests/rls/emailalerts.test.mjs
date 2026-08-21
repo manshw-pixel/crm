@@ -240,6 +240,14 @@ const stubSend = () => sql(`
   end $$;`);
 
 // Mutates shared state: deletes email_log and test_sent, and seeds account "s-1".
+// NOTE: this test does NOT assume it is the only source of accounts in the book -- other
+// tests earlier in this file seed accounts (some for "Plain User", some unowned) that are
+// still present when this runs, so a CSM other than Admin User may legitimately also get
+// mailed. Every assertion below is therefore scoped to admin@test.local specifically,
+// never to a total recipient/send count across the whole run. (CI caught this: an earlier
+// version asserted `/1 recipient/` and broke the moment a prior test left a second
+// genuine renewal in the database -- the dispatcher was right, the test's assumption
+// wasn't.)
 test("send_alerts mails each CSM their own book and logs the send", async () => {
   await stubSend();
   await sql(`update alert_config set api_key = 'test-key', from_email = 'admin@test.local' where id = 1`);
@@ -248,18 +256,17 @@ test("send_alerts mails each CSM their own book and logs the send", async () => 
   await seedAccount("s-1", { name: "Send Co", csm: "Admin User", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
 
-  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
-  assert(/1 recipient/.test(result), `unexpected dispatcher result: ${result}`);
+  await sql(`select send_alerts('renewals')`);
 
-  const logged = await sql(`select * from email_log where kind = 'renewals'`);
-  assert(logged.length === 1, `expected 1 email_log row, got ${logged.length}`);
-  assert(logged[0].recipient === "admin@test.local", `mailed the wrong person: ${logged[0].recipient}`);
+  const logged = await sql(`select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
+  assert(logged.length === 1, `expected 1 email_log row for admin@test.local, got ${logged.length}`);
   assert(logged[0].status === "queued", `expected status queued, got ${logged[0].status}`);
   assert(logged[0].request_id !== null, "the pg_net request id was discarded");
 
-  const sent = await sql(`select * from test_sent`);
-  assert(sent.length === 1, `expected 1 outbound post, got ${sent.length}`);
-  assert(JSON.stringify(sent[0].body).includes("Send Co"), "the account was not in the email body");
+  const sentToAdmin = (await sql(`select * from test_sent`))
+    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  assert(sentToAdmin.length === 1, `expected 1 outbound post to admin@test.local, got ${sentToAdmin.length}`);
+  assert(JSON.stringify(sentToAdmin[0].body).includes("Send Co"), "the account was not in the email body");
 });
 
 // Mutates shared state: deletes email_log, test_sent, and ALL rows in accounts. This test
@@ -285,24 +292,42 @@ test("send_alerts sends nothing when a book has no rows", async () => {
   assert(sent2.length === 1, `expected exactly 1 outbound post once rows existed, got ${sent2.length}`);
 });
 
-// Mutates shared state: deletes email_log, test_sent, and re-seeds account "s-2".
+// Mutates shared state: deletes email_log, test_sent, and re-seeds account "s-2". Like the
+// test above, this does not assume Admin User is the only recipient the run mails -- every
+// assertion is scoped to admin@test.local so leftover accounts from earlier tests (e.g.
+// Plain User's genuine renewal) cannot make this test pass or fail for the wrong reason.
 test("send_alerts will not double-send the same kind to the same person today", async () => {
   await stubSend();
   await sql(`delete from email_log`);
   await sql(`delete from test_sent`);
   await seedAccount("s-2", { name: "Once Co", csm: "Admin User", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
-  const [{ send_alerts: first }] = await sql(`select send_alerts('renewals')`);
-  assert(/1 recipient/.test(first), `expected run 1 to actually mail someone, got: ${first}`);
-  const [{ send_alerts: second }] = await sql(`select send_alerts('renewals')`);
-  const sent = await sql(`select * from test_sent`);
-  // Proves the mechanism sent at least once (so a dispatcher that never sends can't pass
-  // this test), and that the second identical run did not add a second post.
-  assert(sent.length === 1, `expected exactly 1 outbound post across both runs, got ${sent.length}`);
+  await sql(`select send_alerts('renewals')`);
+
+  const loggedAfterFirst = await sql(
+    `select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
+  assert(loggedAfterFirst.length === 1,
+    `expected run 1 to log exactly 1 email_log row for admin@test.local, got ${loggedAfterFirst.length}`);
+  const sentAfterFirst = (await sql(`select * from test_sent`))
+    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  assert(sentAfterFirst.length === 1,
+    `expected run 1 to actually mail admin@test.local once, got ${sentAfterFirst.length}`);
+
+  await sql(`select send_alerts('renewals')`);
+
+  const sentAfterSecond = (await sql(`select * from test_sent`))
+    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  // Proves the second identical run did not add a second post to the same recipient --
+  // paired above with proof that the mechanism sent at least once, so a dispatcher that
+  // never sends cannot pass this test the same way idempotency does.
+  assert(sentAfterSecond.length === 1,
+    `expected exactly 1 outbound post to admin@test.local across both runs, got ${sentAfterSecond.length}`);
   // Proves run 2 was silent BECAUSE the idempotency guard fired, not because some
   // unrelated reason (e.g. a builder returning zero rows) skipped it identically.
-  const logged = await sql(`select * from email_log where kind = 'renewals'`);
-  assert(logged.length === 1, `expected exactly 1 email_log row after two runs, got ${logged.length}`);
+  const loggedAfterSecond = await sql(
+    `select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
+  assert(loggedAfterSecond.length === 1,
+    `expected exactly 1 email_log row for admin@test.local after two runs, got ${loggedAfterSecond.length}`);
 });
 
 test("send_alerts refuses to run when the API key is still the placeholder", async () => {
