@@ -159,3 +159,40 @@ language sql security definer set search_path = public as $$
 $$;
 
 revoke execute on function public.alert_overdue_tasks(text, boolean) from public;
+
+-- Two sections in one email. The 'unlogged' half is an INFERENCE, not a fact: a past QBR
+-- date with no QBR activity near it usually means the meeting happened and was never
+-- written down, but it can equally mean the meeting slipped. The rendered email must say
+-- so in those words -- phrased as an accusation it will be resented, and rightly.
+create or replace function public.alert_qbr_nudge(
+  p_csm text, p_include_unowned boolean default false)
+returns table(account_id text, account_name text, next_qbr date, days_left int, section text)
+language sql security definer set search_path = public as $$
+  with mine as (
+    select a.id, a.data->>'name' as nm, (a.data->>'nextQbrDate')::date as nq
+    from accounts a
+    where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+      and coalesce(a.data->>'qbrFrequency', 'None') <> 'None'
+      and nullif(a.data->>'nextQbrDate', '') is not null
+      and ( trim(a.data->>'csm') = p_csm
+            or (p_include_unowned and not exists (
+                  select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+  )
+  select id, nm, nq, (nq - current_date)::int, 'due'
+  from mine
+  where nq <= current_date + 14
+  union all
+  select m.id, m.nm, m.nq, (m.nq - current_date)::int, 'unlogged'
+  from mine m
+  where m.nq < current_date
+    and not exists (
+      select 1 from activities v
+      where v.data->>'accountId' = m.id
+        and v.data->>'type' = 'QBR'
+        and nullif(v.data->>'date', '') is not null
+        and (v.data->>'date')::date between m.nq - 14 and m.nq + 14
+    )
+  order by 3 asc;
+$$;
+
+revoke execute on function public.alert_qbr_nudge(text, boolean) from public;

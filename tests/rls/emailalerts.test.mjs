@@ -2,7 +2,7 @@
 // directly with a superuser connection rather than through PostgREST -- execute is
 // revoked from `authenticated`, which is the point.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount, seedTask } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, seedTask, seedActivity } from "./fixtures.mjs";
 
 test("record_health writes one row per account", async () => {
   const { error } = await sessions.admin.rpc("record_health", {
@@ -156,4 +156,45 @@ test("alert_overdue_tasks does not leak another CSM's tasks", async () => {
   const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
   assert(!rows.map(r => r.task_id).includes("t-4"), "another CSM's overdue task leaked in");
   assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
+});
+
+const iso = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
+
+test("alert_qbr_nudge lists QBRs due within 14 days or already past", async () => {
+  await seedAccount("q-1", { name: "Due Soon", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(10) });
+  await seedAccount("q-2", { name: "Far Off",  csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(60) });
+  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'due'`);
+  const ids = rows.map(r => r.account_id);
+  assert(ids.includes("q-1"), "a QBR due in 10 days was not listed");
+  assert(!ids.includes("q-2"), "a QBR 60 days out was listed");
+});
+
+test("alert_qbr_nudge flags a past QBR with no QBR activity logged near it", async () => {
+  await seedAccount("q-3", { name: "Unlogged Co", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(-20) });
+  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'unlogged'`);
+  assert(rows.map(r => r.account_id).includes("q-3"),
+    "a past QBR with no activity was not flagged as possibly unlogged");
+});
+
+test("alert_qbr_nudge does NOT flag a past QBR that was logged within 14 days of it", async () => {
+  await seedAccount("q-4", { name: "Logged Co", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(-20) });
+  await seedActivity("act-1", { accountId: "q-4", type: "QBR", date: iso(-18),
+                                summary: "Q3 review held" });
+  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'unlogged'`);
+  assert(!rows.map(r => r.account_id).includes("q-4"),
+    "an account with a logged QBR was wrongly accused of not logging it");
+  // Prove the section is populated at all, or the assertion above is vacuous.
+  assert(rows.length > 0, "the unlogged section was empty, so nothing was proven");
+});
+
+test("alert_qbr_nudge ignores accounts with qbrFrequency None", async () => {
+  await seedAccount("q-5", { name: "No QBRs", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "None", nextQbrDate: "" });
+  const rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+  assert(!rows.map(r => r.account_id).includes("q-5"),
+    "an account with no QBR cadence was nudged");
 });
