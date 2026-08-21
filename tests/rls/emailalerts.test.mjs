@@ -239,6 +239,18 @@ const stubSend = () => sql(`
     return n;
   end $$;`);
 
+// Filters test_sent by the RECIPIENT (body.to[0].email), never by a substring match on the
+// whole body. A substring match also matches the sender/from_name, which appears in every
+// post regardless of who it went to -- an earlier version of these tests set
+// from_email = 'alerts@onevio.test' to satisfy the sender-placeholder guard and then matched
+// "admin@test.local" against the whole JSON body, so it silently counted Plain User's post
+// too (their post's `sender` field contained the same string). test_sent.body is jsonb, so
+// the driver already hands back a parsed object; the typeof guard is defense in depth only.
+const sentTo = async (email) => (await sql(`select * from test_sent`)).filter(r => {
+  const body = typeof r.body === "string" ? JSON.parse(r.body) : r.body;
+  return (body.to || []).some(t => t.email === email);
+});
+
 // Mutates shared state: deletes email_log and test_sent, and seeds account "s-1".
 // NOTE: this test does NOT assume it is the only source of accounts in the book -- other
 // tests earlier in this file seed accounts (some for "Plain User", some unowned) that are
@@ -250,7 +262,7 @@ const stubSend = () => sql(`
 // wasn't.)
 test("send_alerts mails each CSM their own book and logs the send", async () => {
   await stubSend();
-  await sql(`update alert_config set api_key = 'test-key', from_email = 'admin@test.local' where id = 1`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
   await sql(`delete from email_log`);
   await sql(`delete from test_sent`);
   await seedAccount("s-1", { name: "Send Co", csm: "Admin User", contractStatus: "Active",
@@ -263,8 +275,7 @@ test("send_alerts mails each CSM their own book and logs the send", async () => 
   assert(logged[0].status === "queued", `expected status queued, got ${logged[0].status}`);
   assert(logged[0].request_id !== null, "the pg_net request id was discarded");
 
-  const sentToAdmin = (await sql(`select * from test_sent`))
-    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  const sentToAdmin = await sentTo("admin@test.local");
   assert(sentToAdmin.length === 1, `expected 1 outbound post to admin@test.local, got ${sentToAdmin.length}`);
   assert(JSON.stringify(sentToAdmin[0].body).includes("Send Co"), "the account was not in the email body");
 });
@@ -308,15 +319,13 @@ test("send_alerts will not double-send the same kind to the same person today", 
     `select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
   assert(loggedAfterFirst.length === 1,
     `expected run 1 to log exactly 1 email_log row for admin@test.local, got ${loggedAfterFirst.length}`);
-  const sentAfterFirst = (await sql(`select * from test_sent`))
-    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  const sentAfterFirst = await sentTo("admin@test.local");
   assert(sentAfterFirst.length === 1,
     `expected run 1 to actually mail admin@test.local once, got ${sentAfterFirst.length}`);
 
   await sql(`select send_alerts('renewals')`);
 
-  const sentAfterSecond = (await sql(`select * from test_sent`))
-    .filter(r => JSON.stringify(r.body).includes("admin@test.local"));
+  const sentAfterSecond = await sentTo("admin@test.local");
   // Proves the second identical run did not add a second post to the same recipient --
   // paired above with proof that the mechanism sent at least once, so a dispatcher that
   // never sends cannot pass this test the same way idempotency does.
@@ -340,7 +349,7 @@ test("send_alerts refuses to run when the API key is still the placeholder", asy
   // no email actually went out.
   const sent = await sql(`select * from test_sent`);
   assert(sent.length === 0, `the placeholder guard returned a refusal but still sent ${sent.length} email(s)`);
-  await sql(`update alert_config set api_key = 'test-key', from_email = 'admin@test.local' where id = 1`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
 });
 
 test("send_alerts refuses to run when the sender is still the placeholder", async () => {
@@ -351,7 +360,7 @@ test("send_alerts refuses to run when the sender is still the placeholder", asyn
   assert(/not set/i.test(result), `expected a "not set" refusal, got: ${result}`);
   const sent = await sql(`select * from test_sent`);
   assert(sent.length === 0, `the sender-placeholder guard returned a refusal but still sent ${sent.length} email(s)`);
-  await sql(`update alert_config set from_email = 'admin@test.local' where id = 1`);
+  await sql(`update alert_config set from_email = 'alerts@onevio.test' where id = 1`);
 });
 
 test("send_alerts skips a kind disabled in alert_config.enabled_kinds", async () => {
