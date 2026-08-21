@@ -349,3 +349,69 @@ end $$;
 
 revoke execute on function public.alert_post(text, jsonb, jsonb) from public;
 revoke execute on function public.send_alerts(text) from public;
+
+-- pg_net is ASYNCHRONOUS: http_post returns immediately with an id and the response lands
+-- in net._http_response later. Without this job every row would sit at 'queued' forever
+-- and a bounced or rejected send would be indistinguishable from a delivered one.
+--
+-- language plpgsql, NOT sql: a `language sql` body referencing net._http_response would be
+-- validated against pg_net at CREATE time, which fails in any environment (like this test
+-- database) where pg_net is not installed. plpgsql resolves at run time, so the function
+-- creates cleanly either way -- same reasoning as alert_post above.
+create or replace function public.settle_alert_sends()
+returns text language plpgsql security definer set search_path = public, net as $$
+declare n_settled int; n_unknown int;
+begin
+  update email_log e
+     set status      = case when r.status_code between 200 and 299 then 'sent' else 'failed' end,
+         http_status = r.status_code,
+         -- Brevo's status/message id ONLY -- email_log holds no customer data, and this
+         -- column is the one place that could smuggle a digest body into a table with
+         -- different access rules. Truncated defensively regardless.
+         response    = left(coalesce(r.content, ''), 2000),
+         settled_at  = now()
+    from net._http_response r
+   where r.id = e.request_id
+     and e.status = 'queued';
+  get diagnostics n_settled = row_count;
+
+  -- A response that never arrives (including a row whose request_id is NULL, which can
+  -- never join net._http_response at all) must not leave the row lying about its own
+  -- state. 'unknown' is honest; 'queued' after an hour is a lie.
+  update email_log
+     set status = 'unknown', settled_at = now()
+   where status = 'queued'
+     and created_at < now() - interval '1 hour';
+  get diagnostics n_unknown = row_count;
+
+  -- Failures reach a human through the panel that already exists, rather than through a
+  -- new surface nobody would think to open.
+  if exists (select 1 from email_log where status = 'failed' and settled_at > now() - interval '1 day') then
+    perform log_error_system(
+      'email-send-failed',
+      'write_failed',
+      format('%s alert email(s) failed to send in the last day',
+             (select count(*) from email_log where status = 'failed' and settled_at > now() - interval '1 day')),
+      jsonb_build_object('table', 'email_log'));
+  end if;
+
+  return format('%s settled, %s abandoned', n_settled, n_unknown);
+end $$;
+
+-- log_error requires auth.uid(), which a cron job does not have -- pg_cron runs with no
+-- signed-in user, so the plan's "failures flow into error_log" requirement is otherwise
+-- unimplementable. This is the scheduler's way in: same table, same fingerprint collapsing,
+-- no signed-in user.
+create or replace function public.log_error_system(
+  p_fingerprint text, p_level text, p_message text, p_context jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  insert into error_log (fingerprint, level, message, context, app_version, user_agent)
+  values (p_fingerprint, p_level, p_message, coalesce(p_context, '{}'::jsonb), 'cron', 'pg_cron')
+  on conflict (fingerprint) do update set
+    count = error_log.count + 1, last_seen = now(),
+    level = excluded.level, message = excluded.message, context = excluded.context;
+end $$;
+
+revoke execute on function public.settle_alert_sends() from public;
+revoke execute on function public.log_error_system(text, text, text, jsonb) from public;

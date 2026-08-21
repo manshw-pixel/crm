@@ -342,3 +342,101 @@ test("send_alerts skips a kind disabled in alert_config.enabled_kinds", async ()
   assert(sent.length === 0, `a disabled kind still sent ${sent.length} email(s)`);
   await sql(`update alert_config set enabled_kinds = array['renewals','overdue_tasks','qbr_nudge'] where id = 1`);
 });
+
+// pg_net is deliberately NOT installed in this test database (extensions live in a file the
+// harness never applies, since pg_cron would abort the whole schema reset). So net._http_response
+// may not exist here. Create a minimal stand-in only if the real thing is absent -- if pg_net IS
+// present (e.g. in CI), these are no-ops and the tests run against the real table.
+async function ensureHttpResponseTable() {
+  await sql(`create schema if not exists net`);
+  await sql(`create table if not exists net._http_response (
+    id bigint primary key,
+    status_code int,
+    content text,
+    created timestamptz default now()
+  )`);
+}
+
+test("settle_alert_sends marks a 201 response as sent", async () => {
+  await ensureHttpResponseTable();
+  await sql(`delete from email_log`);
+  await sql(`insert into email_log (kind, recipient, row_count, request_id)
+             values ('renewals', 'ok@test.local', 2, 900001)`);
+  await sql(`insert into net._http_response (id, status_code, content, created)
+             values (900001, 201, '{"messageId":"x"}', now())
+             on conflict (id) do update set status_code = 201`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from email_log where request_id = 900001`);
+  assert(row.status === "sent", `expected sent, got ${row.status}`);
+  assert(row.http_status === 201, `expected http_status 201, got ${row.http_status}`);
+  assert(row.settled_at !== null, "settled_at was not stamped");
+});
+
+test("settle_alert_sends marks a 401 response as failed and records the body", async () => {
+  await ensureHttpResponseTable();
+  await sql(`insert into email_log (kind, recipient, row_count, request_id)
+             values ('renewals', 'bad@test.local', 2, 900002)`);
+  await sql(`insert into net._http_response (id, status_code, content, created)
+             values (900002, 401, '{"message":"Key not found"}', now())
+             on conflict (id) do update set status_code = 401`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from email_log where request_id = 900002`);
+  assert(row.status === "failed", `a 401 was not recorded as failed, got ${row.status}`);
+  assert(/Key not found/.test(row.response || ""), "Brevo's rejection body was not kept");
+});
+
+test("settle_alert_sends gives up on a send that never got a response", async () => {
+  await ensureHttpResponseTable();
+  await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
+             values ('renewals', 'lost@test.local', 1, 900003, now() - interval '2 hours')`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from email_log where request_id = 900003`);
+  assert(row.status === "unknown", `a stale queued row stayed ${row.status} forever`);
+});
+
+test("settle_alert_sends gives up on a stale row with no request_id at all", async () => {
+  // A queued row can have a NULL request_id (e.g. the post never happened). Such a row can
+  // never join net._http_response, so the stale sweep -- not the join -- must be the thing
+  // that rescues it. This proves the sweep has no accidental `request_id is not null` guard.
+  await ensureHttpResponseTable();
+  await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
+             values ('renewals', 'norequest@test.local', 1, null, now() - interval '2 hours')`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from email_log where recipient = 'norequest@test.local'`);
+  assert(row.status === "unknown", `a stale row with no request_id stayed ${row.status} forever`);
+});
+
+test("settle_alert_sends leaves a recent unanswered send alone", async () => {
+  await ensureHttpResponseTable();
+  await sql(`insert into email_log (kind, recipient, row_count, request_id)
+             values ('renewals', 'fresh@test.local', 1, 900004)`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from email_log where request_id = 900004`);
+  assert(row.status === "queued", `a send from seconds ago was prematurely settled to ${row.status}`);
+});
+
+test("settle_alert_sends routes a failed send into error_log for an admin to see", async () => {
+  await ensureHttpResponseTable();
+  await sql(`delete from error_log where fingerprint = 'email-send-failed'`);
+  await sql(`insert into email_log (kind, recipient, row_count, request_id)
+             values ('renewals', 'routed-fail@test.local', 1, 900005)`);
+  await sql(`insert into net._http_response (id, status_code, content, created)
+             values (900005, 500, '{"message":"server error"}', now())
+             on conflict (id) do update set status_code = 500`);
+  await sql(`select settle_alert_sends()`);
+  const [row] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
+  assert(row, "a failed send did not produce an error_log row");
+  assert(row.level === "write_failed", `expected level write_failed, got ${row.level}`);
+  assert(row.app_version === "cron", `expected app_version 'cron', got ${row.app_version}`);
+  assert(row.user_agent === "pg_cron", `expected user_agent 'pg_cron', got ${row.user_agent}`);
+});
+
+test("log_error_system collapses repeat calls into one row via fingerprint", async () => {
+  await sql(`delete from error_log where fingerprint = 'test-collapse-fp'`);
+  await sql(`select log_error_system('test-collapse-fp', 'write_failed', 'first', '{}'::jsonb)`);
+  await sql(`select log_error_system('test-collapse-fp', 'write_failed', 'second', '{}'::jsonb)`);
+  const rows = await sql(`select * from error_log where fingerprint = 'test-collapse-fp'`);
+  assert(rows.length === 1, `expected exactly 1 collapsed row, got ${rows.length}`);
+  assert(rows[0].count === 2, `expected count 2 after two calls, got ${rows[0].count}`);
+  assert(rows[0].message === "second", `expected the latest message to win, got ${rows[0].message}`);
+});
