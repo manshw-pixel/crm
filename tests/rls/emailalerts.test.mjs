@@ -81,9 +81,16 @@ test("unrouted_csms reports a csm value that matches no profile", async () => {
   assert(Number(hit.accounts) === 2, `expected 2 orphaned accounts, got ${hit.accounts}`);
 });
 
-test("unrouted_csms ignores accounts whose csm DOES match a profile", async () => {
-  await seedAccount("u-3", { name: "Owned Co", csm: "Admin User", contractStatus: "Active" });
+test("unrouted_csms reports unmatched csms and ignores matched ones", async () => {
+  await seedAccount("u-4", { name: "Matched Co",   csm: "Admin User",   contractStatus: "Active" });
+  await seedAccount("u-5", { name: "Unmatched Co", csm: "Ghost Person", contractStatus: "Active" });
   const rows = await sql(`select * from unrouted_csms()`);
+  // The positive half: proves the function actually returns rows, so the negative
+  // half below cannot pass merely because the result set was empty.
+  const ghost = rows.find(r => r.csm === "Ghost Person");
+  assert(ghost, "an unmatched csm was not reported");
+  assert(Number(ghost.accounts) === 1, `expected 1 account for Ghost Person, got ${ghost.accounts}`);
+  // The negative half, now meaningful.
   assert(!rows.find(r => r.csm === "Admin User"),
-    "a correctly-owned account was reported as unrouted");
+    "an account whose csm matches a real profile was wrongly reported as unrouted");
 });
