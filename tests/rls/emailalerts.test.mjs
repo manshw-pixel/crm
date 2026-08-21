@@ -2,7 +2,7 @@
 // directly with a superuser connection rather than through PostgREST -- execute is
 // revoked from `authenticated`, which is the point.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, seedTask } from "./fixtures.mjs";
 
 test("record_health writes one row per account", async () => {
   const { error } = await sessions.admin.rpc("record_health", {
@@ -128,4 +128,32 @@ test("alert_renewals adds unowned accounts only when asked", async () => {
   const with_   = await sql(`select * from alert_renewals('Admin User', true)`);
   assert(!without.map(r => r.account_id).includes("r-5"), "an unowned account leaked in by default");
   assert(with_.map(r => r.account_id).includes("r-5"), "an unowned account was not picked up for admins");
+});
+
+test("alert_overdue_tasks routes through the account's CSM and skips Done", async () => {
+  await seedAccount("t-acct", { name: "Task Co", csm: "Admin User", contractStatus: "Active" });
+  const past = new Date(Date.now() - 4 * 864e5).toISOString().slice(0, 10);
+  const future = new Date(Date.now() + 4 * 864e5).toISOString().slice(0, 10);
+  await seedTask("t-1", { accountId: "t-acct", title: "Chase renewal", due: past,   status: "Open" });
+  await seedTask("t-2", { accountId: "t-acct", title: "Already done",  due: past,   status: "Done" });
+  await seedTask("t-3", { accountId: "t-acct", title: "Not yet due",   due: future, status: "Open" });
+
+  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  const ids = rows.map(r => r.task_id);
+  assert(ids.includes("t-1"), "the overdue task was missing");
+  assert(!ids.includes("t-2"), "a Done task was reported as overdue");
+  assert(!ids.includes("t-3"), "a task due in the future was reported as overdue");
+  const hit = rows.find(r => r.task_id === "t-1");
+  assert(hit.days_overdue === 4, `expected 4 days overdue, got ${hit.days_overdue}`);
+  assert(hit.account_name === "Task Co", "the task was not joined to its account");
+});
+
+test("alert_overdue_tasks does not leak another CSM's tasks", async () => {
+  await seedAccount("t-other", { name: "Their Co", csm: "Plain User", contractStatus: "Active" });
+  await seedTask("t-4", { accountId: "t-other", title: "Theirs",
+                          due: new Date(Date.now() - 9 * 864e5).toISOString().slice(0, 10),
+                          status: "Open" });
+  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  assert(!rows.map(r => r.task_id).includes("t-4"), "another CSM's overdue task leaked in");
+  assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
 });

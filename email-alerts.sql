@@ -133,3 +133,29 @@ language sql security definer set search_path = public as $$
 $$;
 
 revoke execute on function public.alert_renewals(text, boolean) from public;
+
+-- Tasks carry no assignee of their own, so ownership is inherited from the account.
+create or replace function public.alert_overdue_tasks(
+  p_csm text, p_include_unowned boolean default false)
+returns table(task_id text, title text, due_date date, days_overdue int,
+              account_id text, account_name text)
+language sql security definer set search_path = public as $$
+  select t.id,
+         t.data->>'title',
+         (t.data->>'due')::date,
+         (current_date - (t.data->>'due')::date)::int,
+         a.id,
+         a.data->>'name'
+  from tasks t
+  join accounts a on a.id = t.data->>'accountId'
+  where coalesce(t.data->>'status', '') <> 'Done'
+    and nullif(t.data->>'due', '') is not null
+    and (t.data->>'due')::date < current_date
+    and coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    and ( trim(a.data->>'csm') = p_csm
+          or (p_include_unowned and not exists (
+                select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+  order by 3 asc;
+$$;
+
+revoke execute on function public.alert_overdue_tasks(text, boolean) from public;
