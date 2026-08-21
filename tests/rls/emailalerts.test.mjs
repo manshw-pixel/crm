@@ -646,6 +646,17 @@ const OWNER_PROBES = {
     await sql(`delete from error_log where fingerprint = 'rls-owner-probe'`);
   },
 
+  // Asserts on the RETURN VALUE, and the value pins the escape order: & must be escaped
+  // FIRST, so '<b>&' comes back as '&lt;b&gt;&amp;' -- if & were escaped last, the & this
+  // probe's own escaping just produced would itself get re-escaped, and the result would be
+  // '&lt;b&gt;&amp;amp;' instead. A probe that only checked "did not throw" would miss both
+  // a deleted function body and an order regression; this one catches both.
+  html_escape: async () => {
+    const [row] = await sql(`select html_escape('<b>&') as out`);
+    assert(row && row.out === "&lt;b&gt;&amp;",
+      `positive control failed: html_escape('<b>&') returned ${JSON.stringify(row && row.out)}, expected "&lt;b&gt;&amp;"`);
+  },
+
   // alert_post has NO probe: its body calls net.http_post and pg_net is deliberately absent
   // from this test database, so invoking it would fail for a reason unrelated to grants.
   //
@@ -679,6 +690,7 @@ const CLOSED_FUNCTIONS = [
     p_fingerprint: "rls-grant-probe", p_level: "write_failed",
     p_message: "should never be written", p_context: {},
   }, "public.log_error_system(text, text, text, jsonb)"],
+  ["html_escape", { p_text: "<b>&" }, "public.html_escape(text)"],
 ];
 
 // The deletion detector, shared by both role tests. The $1::text cast is deliberate: an
