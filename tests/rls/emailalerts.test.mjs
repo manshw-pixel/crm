@@ -223,3 +223,86 @@ test("alert_qbr_nudge adds unowned accounts only when asked", async () => {
   assert(!without.map(r => r.account_id).includes("q-7"), "an unowned account leaked in by default");
   assert(with_.map(r => r.account_id).includes("q-7"), "an unowned account was not picked up for admins");
 });
+
+// ---------- dispatcher ----------
+// Replace the network seam with a stub. pg_net runs inside the Supabase container, so a
+// real HTTP round trip would need host.docker.internal and is flaky on Windows; swapping
+// this one function removes the network from the suite entirely.
+const stubSend = () => sql(`
+  create table if not exists public.test_sent (
+    id bigserial primary key, url text, body jsonb, at timestamptz default now());
+  create or replace function public.alert_post(p_url text, p_headers jsonb, p_body jsonb)
+  returns bigint language plpgsql as $$
+  declare n bigint;
+  begin
+    insert into test_sent (url, body) values (p_url, p_body) returning id into n;
+    return n;
+  end $$;`);
+
+// Mutates shared state: deletes email_log and test_sent, and seeds account "s-1".
+test("send_alerts mails each CSM their own book and logs the send", async () => {
+  await stubSend();
+  await sql(`update alert_config set api_key = 'test-key' where id = 1`);
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await seedAccount("s-1", { name: "Send Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
+
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+  assert(/1 recipient/.test(result), `unexpected dispatcher result: ${result}`);
+
+  const logged = await sql(`select * from email_log where kind = 'renewals'`);
+  assert(logged.length === 1, `expected 1 email_log row, got ${logged.length}`);
+  assert(logged[0].recipient === "admin@test.local", `mailed the wrong person: ${logged[0].recipient}`);
+  assert(logged[0].status === "queued", `expected status queued, got ${logged[0].status}`);
+  assert(logged[0].request_id !== null, "the pg_net request id was discarded");
+
+  const sent = await sql(`select * from test_sent`);
+  assert(sent.length === 1, `expected 1 outbound post, got ${sent.length}`);
+  assert(JSON.stringify(sent[0].body).includes("Send Co"), "the account was not in the email body");
+});
+
+// Mutates shared state: deletes email_log, test_sent, and ALL rows in accounts. This test
+// runs last among the dispatcher tests that need real accounts (the double-send test below
+// re-seeds its own account rather than relying on anything left over here).
+test("send_alerts sends nothing when a book has no rows", async () => {
+  await stubSend();
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await sql(`delete from accounts`);
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+  const sent = await sql(`select * from test_sent`);
+  assert(sent.length === 0, `an empty digest was sent anyway: ${result}`);
+  // Prove the mechanism can send at all in this same empty-accounts state, so a dispatcher
+  // that silently sends nothing regardless of input cannot pass this test: seed one account
+  // and confirm the send now goes through.
+  await seedAccount("s-empty-check", { name: "Proof Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
+  await sql(`delete from email_log`);
+  const [{ send_alerts: result2 }] = await sql(`select send_alerts('renewals')`);
+  assert(/1 recipient/.test(result2), `expected a send once a real account existed: ${result2}`);
+  const sent2 = await sql(`select * from test_sent`);
+  assert(sent2.length === 1, `expected exactly 1 outbound post once rows existed, got ${sent2.length}`);
+});
+
+// Mutates shared state: deletes email_log, test_sent, and re-seeds account "s-2".
+test("send_alerts will not double-send the same kind to the same person today", async () => {
+  await stubSend();
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await seedAccount("s-2", { name: "Once Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
+  await sql(`select send_alerts('renewals')`);
+  await sql(`select send_alerts('renewals')`);
+  const sent = await sql(`select * from test_sent`);
+  // Proves the mechanism sent at least once (so a dispatcher that never sends can't pass
+  // this test), and that the second identical run did not add a second post.
+  assert(sent.length === 1, `expected exactly 1 outbound post across both runs, got ${sent.length}`);
+});
+
+test("send_alerts refuses to run when the API key is still the placeholder", async () => {
+  await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+  assert(/not set/i.test(result), `expected a "not set" refusal, got: ${result}`);
+  await sql(`update alert_config set api_key = 'test-key' where id = 1`);
+});

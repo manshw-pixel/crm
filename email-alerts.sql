@@ -199,3 +199,145 @@ language sql security definer set search_path = public as $$
 $$;
 
 revoke execute on function public.alert_qbr_nudge(text, boolean) from public;
+
+-- ---------- the network seam ----------
+-- The ONLY place this system talks to the outside world. It exists as its own function so
+-- the test suite can `create or replace` it with a recorder: pg_net lives inside the
+-- Supabase container and reaching a host process from there is platform-specific and
+-- flaky, whereas swapping one function is neither.
+--
+-- It returns the pg_net request id. renewal-alerts.sql called net.http_post through
+-- `perform` and THREW THAT ID AWAY, then reported success -- which is why a revoked key,
+-- an unverified sender and a blown quota were all indistinguishable from a delivered
+-- email. Never discard this value.
+--
+-- language plpgsql, NOT sql: a `language sql` body is validated against pg_net at CREATE
+-- TIME, and pg_net is deliberately not installed in the test database (the extensions
+-- live in email-alerts-schedule.sql, which the test harness never applies, because
+-- `create extension pg_cron` would abort the whole schema reset). plpgsql defers name
+-- resolution to run time, so this creates cleanly with no extension installed, and the
+-- test suite's recorder (which replaces this function wholesale) never needs pg_net
+-- either. Do not "simplify" this back to `language sql` -- it will fail to create and
+-- every RLS test in this file will go red.
+create or replace function public.alert_post(p_url text, p_headers jsonb, p_body jsonb)
+returns bigint language plpgsql as $$
+begin
+  return net.http_post(url := p_url, headers := p_headers, body := p_body);
+end $$;
+
+create or replace function public.send_alerts(p_kind text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  cfg        alert_config;
+  r          record;
+  rows_html  text;
+  n_rows     int;
+  n_sent     int := 0;
+  req        bigint;
+  subject    text;
+  unrouted   text;
+begin
+  select * into cfg from alert_config where id = 1;
+  if cfg is null or cfg.api_key like 'PASTE%' then
+    return 'alert_config not set — edit email-alerts.sql and run it again';
+  end if;
+  if not (p_kind = any(cfg.enabled_kinds)) then
+    return format('%s is disabled in alert_config.enabled_kinds', p_kind);
+  end if;
+
+  -- Unmatched CSM names, rendered into the admin digest so the failure is visible to a
+  -- human rather than only to whoever thinks to read a table.
+  select string_agg(format('<li>%s — %s account(s)</li>', csm, accounts), '')
+    into unrouted from unrouted_csms();
+
+  for r in select * from alert_recipients() loop
+    if p_kind = 'renewals' then
+      select count(*), string_agg(format(
+        '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;color:%s"><b>%s day(s)</b></td></tr>',
+        account_name, to_char(renewal_date, 'DD Mon YYYY'),
+        case when days_left <= 7 then '#e11d48' else '#d97706' end, days_left), '')
+        into n_rows, rows_html
+        from alert_renewals(r.person, r.admin);
+      subject := format('[OneVio] %s renewal(s) due within 30 days', n_rows);
+
+    elsif p_kind = 'overdue_tasks' then
+      select count(*), string_agg(format(
+        '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;color:#e11d48"><b>%s day(s)</b></td></tr>',
+        account_name, title, days_overdue), '')
+        into n_rows, rows_html
+        from alert_overdue_tasks(r.person, r.admin);
+      subject := format('[OneVio] %s overdue task(s)', n_rows);
+
+    elsif p_kind = 'qbr_nudge' then
+      -- alert_qbr_nudge can legitimately return the SAME account twice, once per
+      -- `section` ('due' and 'unlogged') -- a past-due unlogged review satisfies both.
+      -- The section label is rendered into every row so the reader sees two clearly
+      -- distinct, labelled lines rather than what looks like a duplicate.
+      select count(*), string_agg(format(
+        '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td>'
+        || '<td style="padding:6px 12px;border-bottom:1px solid #eee">%s</td></tr>',
+        account_name, to_char(next_qbr, 'DD Mon YYYY'),
+        case when section = 'due' then 'due to be scheduled'
+             else 'may have happened without being logged' end), '')
+        into n_rows, rows_html
+        from alert_qbr_nudge(r.person, r.admin);
+      subject := format('[OneVio] %s account(s) need a review scheduled or logged', n_rows);
+
+    else
+      return format('unknown alert kind: %s', p_kind);
+    end if;
+
+    -- A digest with nothing in it is not sent. This is what keeps a daily email from
+    -- becoming something people filter to a folder.
+    continue when coalesce(n_rows, 0) = 0;
+
+    -- Idempotency: the unique (kind, recipient, day) constraint means a cron double-fire
+    -- or a manual re-run takes this branch and sends nothing. Claim the slot BEFORE
+    -- posting, so a crash between the two cannot produce a second email.
+    begin
+      insert into email_log (kind, recipient, row_count) values (p_kind, r.email, n_rows);
+    exception when unique_violation then
+      continue;
+    end;
+
+    req := alert_post(
+      cfg.api_base,
+      jsonb_build_object('api-key', cfg.api_key, 'content-type', 'application/json'),
+      jsonb_build_object(
+        'sender', jsonb_build_object('email', cfg.from_email, 'name', cfg.from_name),
+        'to', jsonb_build_array(jsonb_build_object('email', r.email, 'name', r.person)),
+        'subject', subject,
+        'htmlContent',
+          '<div style="font-family:Segoe UI,Arial,sans-serif;max-width:620px">'
+          || format('<h2 style="color:#4f46e5">%s</h2>', subject)
+          || '<table style="border-collapse:collapse;width:100%">' || rows_html || '</table>'
+          || case when p_kind = 'qbr_nudge' then
+               '<p style="color:#64748b;font-size:12px;margin-top:12px">Rows marked '
+               || '&ldquo;may have happened without being logged&rdquo; are a guess, not a '
+               || 'record: the review date has passed and no QBR activity was logged near '
+               || 'it. If the meeting did not happen, reschedule it instead.</p>'
+             else '' end
+          || case when r.admin and unrouted is not null then
+               '<p style="color:#b45309;font-size:12px;margin-top:16px"><b>Accounts nobody '
+               || 'is receiving alerts for</b> — the CSM name on these matches no user:</p>'
+               || format('<ul style="color:#b45309;font-size:12px">%s</ul>', unrouted)
+             else '' end
+          || '<p style="color:#94a3b8;font-size:12px;margin-top:16px">Sent by OneVio. '
+          || 'Open the CRM for details and quick actions.</p></div>'
+      ));
+
+    update email_log set request_id = req
+     where kind = p_kind and recipient = r.email and day = current_date;
+    n_sent := n_sent + 1;
+  end loop;
+
+  return format('%s: %s recipient(s) mailed', p_kind, n_sent);
+end $$;
+
+revoke execute on function public.alert_post(text, jsonb, jsonb) from public;
+revoke execute on function public.send_alerts(text) from public;
