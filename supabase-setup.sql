@@ -414,7 +414,10 @@ begin
   return n;
 end $$;
 
-revoke execute on function public.record_health(jsonb) from public, anon;
+-- Revoke from PUBLIC, not from anon, for the same reason as log_error above: PUBLIC is
+-- the grant that actually needs revoking, and `anon` is a role that may not exist on
+-- every install -- naming it here is the "helpful" edit that breaks a fresh database.
+revoke execute on function public.record_health(jsonb) from public;
 grant execute on function public.record_health(jsonb) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
