@@ -225,6 +225,33 @@ test("alert_qbr_nudge adds unowned accounts only when asked", async () => {
   assert(with_.map(r => r.account_id).includes("q-7"), "an unowned account was not picked up for admins");
 });
 
+test("alert_qbr_nudge tolerates a blank activity date instead of raising", async () => {
+  await seedAccount("q-8", { name: "Blank Date Co", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(-20) });
+  // A blank date on a QBR-typed activity: the case-wrapped guard must stop the cast from
+  // ever running on it, regardless of how Postgres orders the AND conjuncts.
+  await seedActivity("act-2", { accountId: "q-8", type: "QBR", date: "",
+                                summary: "date left blank by mistake" });
+  // A blank date on a NON-QBR-typed activity: the `type` filter is likewise not
+  // ordering-guaranteed, so a fix that only guards QBR-typed rows would still break here.
+  await seedActivity("act-3", { accountId: "q-8", type: "Call", date: "",
+                                summary: "unrelated call, also has a blank date" });
+
+  let rows, err = null;
+  try {
+    rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+  } catch (e) { err = e; }
+  assert(!err, `alert_qbr_nudge raised on a blank activity date: ${err && err.message}`);
+  assert(rows.map(r => r.account_id).includes("q-8"),
+    "the account should still be flagged (the blank-date activity does not count as a logged QBR)");
+
+  let sendErr = null;
+  try {
+    await sql(`select send_alerts('qbr_nudge')`);
+  } catch (e) { sendErr = e; }
+  assert(!sendErr, `send_alerts('qbr_nudge') raised on a blank activity date: ${sendErr && sendErr.message}`);
+});
+
 // ---------- dispatcher ----------
 // Replace the network seam with a stub. pg_net runs inside the Supabase container, so a
 // real HTTP round trip would need host.docker.internal and is flaky on Windows; swapping

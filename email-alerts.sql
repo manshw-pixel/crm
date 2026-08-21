@@ -193,7 +193,8 @@ language sql security definer set search_path = public as $$
       where v.data->>'accountId' = m.id
         and v.data->>'type' = 'QBR'
         and nullif(v.data->>'date', '') is not null
-        and (v.data->>'date')::date between m.nq - 14 and m.nq + 14
+        and (case when nullif(v.data->>'date', '') is not null
+                  then (v.data->>'date')::date end) between m.nq - 14 and m.nq + 14
     )
   order by 3 asc;
 $$;
