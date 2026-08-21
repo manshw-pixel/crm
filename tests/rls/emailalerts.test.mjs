@@ -1,6 +1,7 @@
-// Email alerts against a REAL Postgres. Builders are pure functions, so they are called
-// directly with a superuser connection rather than through PostgREST -- execute is
-// revoked from `authenticated`, which is the point.
+// Email alerts against a REAL Postgres. The alert functions are called directly with a
+// superuser connection rather than through PostgREST because execute is revoked from
+// `public`, `anon` AND `authenticated` -- the closing tests at the bottom of this file
+// prove that revocation holds for both published API roles.
 import { test, assert } from "../health/framework.mjs";
 import { sessions, sql, seedAccount, seedTask, seedActivity } from "./fixtures.mjs";
 
@@ -484,4 +485,57 @@ test("log_error_system collapses repeat calls into one row via fingerprint", asy
   assert(rows.length === 1, `expected exactly 1 collapsed row, got ${rows.length}`);
   assert(rows[0].count === 2, `expected count 2 after two calls, got ${rows[0].count}`);
   assert(rows[0].message === "second", `expected the latest message to win, got ${rows[0].message}`);
+});
+
+// ---------- the alert functions are closed to both published API roles ----------
+// `revoke ... from public` alone does NOT close these on Supabase: fixtures.mjs re-applies
+// `alter default privileges in schema public grant all on functions to ... anon,
+// authenticated, ...` (mirroring hosted Supabase) before email-alerts.sql runs, so every
+// function created afterwards carries an EXPLICIT execute grant to anon and authenticated,
+// which revoking PUBLIC leaves untouched. The anon key is published in crm.html and shipped
+// to GitHub Pages, so an open alert_recipients() -- SECURITY DEFINER over auth.users --
+// would leak every user's email address to the internet.
+//
+// Each assertion checks error.code === '42501' (insufficient_privilege) SPECIFICALLY, not
+// merely that an error came back. send_alerts() returns a plain string on the no-config
+// path and log_error_system() succeeds silently, so a truthy-error check would pass for
+// entirely the wrong reason -- or not fail at all.
+const CLOSED_FUNCTIONS = [
+  ["alert_recipients", {}],
+  ["unrouted_csms", {}],
+  ["alert_renewals", { p_csm: "Ana", p_include_unowned: false }],
+  ["alert_overdue_tasks", { p_csm: "Ana", p_include_unowned: false }],
+  ["alert_qbr_nudge", { p_csm: "Ana", p_include_unowned: false }],
+  ["alert_post", { p_url: "http://127.0.0.1:1/none", p_headers: {}, p_body: {} }],
+  ["send_alerts", { p_kind: "renewals" }],
+  ["settle_alert_sends", {}],
+  ["log_error_system", {
+    p_fingerprint: "rls-grant-probe", p_level: "write_failed",
+    p_message: "should never be written", p_context: {},
+  }],
+];
+
+for (const [fn, args] of CLOSED_FUNCTIONS) {
+  test(`an anonymous client cannot execute ${fn}()`, async () => {
+    const { data, error } = await sessions.anon.rpc(fn, args);
+    assert(error, `anon executed ${fn}() successfully and got: ${JSON.stringify(data)}`);
+    assert(error.code === "42501",
+      `expected 42501 (insufficient_privilege) from ${fn}(), got ${error.code}: ${error.message}`);
+  });
+
+  test(`a signed-in plain user cannot execute ${fn}()`, async () => {
+    const { data, error } = await sessions.user.rpc(fn, args);
+    assert(error, `an authenticated user executed ${fn}() successfully and got: ${JSON.stringify(data)}`);
+    assert(error.code === "42501",
+      `expected 42501 (insufficient_privilege) from ${fn}(), got ${error.code}: ${error.message}`);
+  });
+}
+
+// A revoked function must not have run. log_error_system() is the one in the list above
+// with an observable side effect, so it is the one that can prove the denial happened
+// BEFORE the body executed rather than after.
+test("the denied log_error_system calls wrote no error_log row", async () => {
+  const rows = await sql(`select * from error_log where fingerprint = 'rls-grant-probe'`);
+  assert(rows.length === 0,
+    `a revoked log_error_system() still wrote ${rows.length} row(s)`);
 });

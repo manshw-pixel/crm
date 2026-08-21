@@ -415,3 +415,29 @@ end $$;
 
 revoke execute on function public.settle_alert_sends() from public;
 revoke execute on function public.log_error_system(text, text, text, jsonb) from public;
+
+-- ---------- close the functions to the published API roles ----------
+-- The `revoke ... from public` lines above are necessary but NOT sufficient on Supabase.
+-- Supabase sets `alter default privileges in schema public grant all on functions to
+-- postgres, anon, authenticated, service_role`, so every function created afterwards
+-- carries an EXPLICIT execute grant to anon and authenticated. Revoking PUBLIC does not
+-- touch an explicit grant, and the anon key is published in crm.html and deployed to
+-- GitHub Pages -- which would leave alert_recipients(), a SECURITY DEFINER read over
+-- auth.users, callable by anyone on the internet.
+--
+-- Naming the roles is safe here in a way it is not in supabase-setup.sql (see the note at
+-- supabase-setup.sql:352-354): that file must also apply to a plain Postgres where `anon`
+-- does not exist, whereas email-alerts.sql only ever runs on Supabase, where both roles do.
+--
+-- No grant back. The app calls only log_error, merge_row, replace_all and record_health
+-- (`grep -n '\.rpc(' crm.html`); pg_cron runs the alert functions as the scheduling
+-- superuser, whom these grants do not gate.
+revoke execute on function public.alert_recipients() from public, anon, authenticated;
+revoke execute on function public.unrouted_csms() from public, anon, authenticated;
+revoke execute on function public.alert_renewals(text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_overdue_tasks(text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_qbr_nudge(text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_post(text, jsonb, jsonb) from public, anon, authenticated;
+revoke execute on function public.send_alerts(text) from public, anon, authenticated;
+revoke execute on function public.settle_alert_sends() from public, anon, authenticated;
+revoke execute on function public.log_error_system(text, text, text, jsonb) from public, anon, authenticated;
