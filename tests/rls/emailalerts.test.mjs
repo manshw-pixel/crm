@@ -2,7 +2,7 @@
 // directly with a superuser connection rather than through PostgREST -- execute is
 // revoked from `authenticated`, which is the point.
 import { test, assert } from "../health/framework.mjs";
-import { sessions } from "./fixtures.mjs";
+import { sessions, sql } from "./fixtures.mjs";
 
 test("record_health writes one row per account", async () => {
   const { error } = await sessions.admin.rpc("record_health", {
@@ -33,4 +33,22 @@ test("an anonymous client cannot record health", async () => {
   const { data } = await sessions.admin
     .from("health_snapshots").select("*").eq("account_id", "h4");
   assert((data || []).length === 0, "the anonymous write landed anyway");
+});
+
+test("email_log is admin-readable and closed to plain users", async () => {
+  await sql(`insert into email_log (kind, recipient, row_count, status)
+             values ('renewals', 'someone@test.local', 3, 'queued')`);
+  const asAdmin = await sessions.admin.from("email_log").select("*");
+  assert((asAdmin.data || []).length >= 1, "an admin could not read email_log");
+  const asUser = await sessions.user.from("email_log").select("*");
+  assert((asUser.data || []).length === 0, "a plain user could read email_log");
+});
+
+test("email_log refuses a second send of the same kind to the same person today", async () => {
+  await sql(`insert into email_log (kind, recipient, row_count) values ('dupe', 'd@test.local', 1)`);
+  let threw = false;
+  try {
+    await sql(`insert into email_log (kind, recipient, row_count) values ('dupe', 'd@test.local', 1)`);
+  } catch (e) { threw = true; }
+  assert(threw, "the uniqueness constraint did not prevent a duplicate send");
 });
