@@ -367,6 +367,56 @@ begin
   end loop;
 end $$;
 
+-- ---------- health snapshots ----------
+-- A daily per-account score, written by the APP. Health is computed in JavaScript from
+-- admin-tunable weights; reimplementing that formula in SQL would create a second source
+-- of truth that drifts the moment someone tunes a weight. So SQL never scores anything --
+-- it only ever compares two numbers that the app stored.
+--
+-- Unlike ARR, health has no event ledger and CANNOT be reconstructed backwards. This table
+-- only ever knows what it was told, starting the day it ships.
+create table if not exists public.health_snapshots (
+  account_id text not null,
+  day        date not null default current_date,
+  score      int  not null check (score between 0 and 100),
+  primary key (account_id, day)
+);
+
+alter table public.health_snapshots enable row level security;
+
+-- select: any authenticated user. Scores are already visible in the app to everyone.
+drop policy if exists health_snapshots_select on public.health_snapshots;
+create policy health_snapshots_select on public.health_snapshots
+  for select to authenticated using (true);
+
+-- NO insert/update/delete policy, deliberately: record_health() owns every mutation, so a
+-- user cannot forge or erase a baseline and thereby suppress a future drop alert.
+
+create or replace function public.record_health(p_scores jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  -- definer bypasses RLS, so the check the missing insert policy would have performed has
+  -- to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'record_health: sign in required';
+  end if;
+
+  insert into health_snapshots (account_id, day, score)
+  select e->>'accountId', current_date,
+         least(100, greatest(0, (e->>'score')::numeric::int))
+  from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) e
+  where e->>'accountId' is not null
+    and e->>'score' ~ '^-?[0-9]+(\.[0-9]+)?$'
+  on conflict (account_id, day) do update set score = excluded.score;
+
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
+revoke execute on function public.record_health(jsonb) from public, anon;
+grant execute on function public.record_health(jsonb) to authenticated;
+
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
 -- and unguessable, but treat uploads as shareable). 10 MB client cap.

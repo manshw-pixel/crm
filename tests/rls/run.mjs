@@ -9,6 +9,7 @@ import "./merge.test.mjs";
 import "./storage.test.mjs";
 import "./replace.test.mjs";
 import "./errorlog.test.mjs";
+import "./emailalerts.test.mjs";
 
 try {
   await bootstrap();
