@@ -342,8 +342,11 @@ begin
     stack = excluded.stack,
     context = excluded.context;
 
-  -- Retention, run here rather than on a schedule: this project has no scheduler, and the
-  -- work is trivial. The WHERE is not optional -- Supabase rejects an unqualified DELETE.
+  -- Retention, run inline rather than on a schedule. email-alerts-schedule.sql now installs
+  -- pg_cron, so "this project has no scheduler" is no longer true -- but the inline sweep
+  -- is kept deliberately: it runs exactly when rows are added, needs no second moving
+  -- part, and works on a stack where the alert layer was never installed. The WHERE is not
+  -- optional -- Supabase rejects an unqualified DELETE.
   delete from error_log where last_seen < now() - interval '30 days';
 end $$;
 

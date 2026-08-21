@@ -79,17 +79,44 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
 - In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
 
-## Optional: daily renewal email alerts
+## Optional: email alerts
 
-Emails every team member a digest of accounts renewing within 30 days (daily at 09:00 IST, only when something is due).
+Each person gets a digest covering **their own accounts only**: renewals due within 30
+days and overdue tasks (daily at 09:00 IST), plus a Monday nudge for reviews that need
+scheduling or look like they happened without being logged. Nothing is sent when there is
+nothing to report.
 
 1. Create a free account at [brevo.com](https://www.brevo.com) (300 emails/day free).
-2. Brevo → **Senders & Domains → Senders** → add and verify the address alerts should come **from** (your own email works).
+2. Brevo → **Senders & Domains → Senders** → add and verify the address alerts come **from**.
 3. Brevo → **SMTP & API → API Keys** → **Generate a new API key** → copy it.
-4. Open `renewal-alerts.sql`, paste the API key and your verified sender address into the two `EDIT ME` lines — **do this in the Supabase SQL Editor, not in the repo copy** (never commit the real key to GitHub).
-5. Run the whole script in Supabase **SQL Editor**. The last line fires a test immediately — its result text tells you whether an email was sent, and it lands in every signed-up user's inbox.
+4. Open `email-alerts.sql`, paste the key and sender into the two `EDIT ME` lines —
+   **do this in the Supabase SQL Editor, not in the repo copy** (never commit the real key).
+   Edit **both** lines: the sender address must be a real, verified address too, not just
+   the API key. The dispatcher refuses to send while `from_email` is still the placeholder
+   `you@example.com`, and if you only paste the key you'll get a puzzling
+   "alert_config not set" result instead of a sent email.
+5. Run `email-alerts.sql` first, in the Supabase **SQL Editor**. Then run
+   `email-alerts-schedule.sql` — this second script is what actually installs pg_cron and
+   starts the scheduled sending; running only the first file creates the tables and
+   functions but nothing will ever fire on its own. The last line of the second script
+   fires a test immediately and its result text says what happened.
 
-To change the send time, edit the cron expression (`'30 3 * * *'` is UTC) and re-run the script. To stop alerts: `select cron.unschedule('crm-renewal-alerts');`
+This **replaces** `renewal-alerts.sql`, which mailed the whole team one shared digest. The
+schedule script unschedules that job for you; the old file is kept only for reference.
+
+**Checking whether mail is actually going out.** Settings → the error panel shows a
+`email-send-failed` entry if any send failed in the last day. Admins can also read the
+`email_log` table directly: `status` is `sent`, `failed`, `queued` or `unknown`, and
+`response` carries Brevo's own words when a send was rejected.
+
+**Accounts nobody is alerted about.** Alerts are routed by matching an account's CSM name
+to a user's name. If they do not match — a typo, a renamed user, an unassigned account —
+those accounts are listed in a highlighted block at the bottom of every admin's digest.
+Fix them by correcting the CSM field on the account.
+
+To change send times, edit the cron expressions at the end of `email-alerts-schedule.sql`
+(they are UTC) and re-run that file. To stop all alerts:
+`select cron.unschedule(j) from unnest(array['onevio-alerts-daily','onevio-alerts-monday','onevio-alerts-settle']) j;`
 
 ## Day-to-day notes
 

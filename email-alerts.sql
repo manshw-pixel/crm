@@ -214,7 +214,7 @@ revoke execute on function public.alert_qbr_nudge(text, boolean) from public;
 -- language plpgsql, NOT sql: a `language sql` body is validated against pg_net at CREATE
 -- TIME, and pg_net is deliberately not installed in the test database (the extensions
 -- live in email-alerts-schedule.sql, which the test harness never applies, because
--- `create extension pg_cron` would abort the whole schema reset). plpgsql defers name
+-- installing pg_cron there would abort the whole schema reset). plpgsql defers name
 -- resolution to run time, so this creates cleanly with no extension installed, and the
 -- test suite's recorder (which replaces this function wholesale) never needs pg_net
 -- either. Do not "simplify" this back to `language sql` -- it will fail to create and
