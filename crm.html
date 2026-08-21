@@ -3710,6 +3710,32 @@ function App({ user }) {
     const score = healthScore(a, st.activities, st.settings.weights);
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
+  // Record today's health baseline once per session. This is the ONLY writer of
+  // health_snapshots: the scoring formula lives here in JS and must stay the single source
+  // of truth, so SQL is given finished numbers rather than the inputs to recompute from.
+  //
+  // Once per session, not once per render: `scored` re-computes on every account edit, and
+  // a write per edit would be hundreds of pointless round trips for a value that is keyed
+  // by day anyway. The upsert makes a second write harmless, not merely tolerable.
+  const healthRecorded = React.useRef(false);
+  React.useEffect(() => {
+    if (healthRecorded.current || !user || !scored.length) return;
+    healthRecorded.current = true;
+    const payload = scored.map(a => ({ accountId: a.id, score: Math.round(a.score) }));
+    if (typeof window !== "undefined") {
+      // Test seam: the suite asserts on what was sent without a live database.
+      window.__recordHealthCalls = (window.__recordHealthCalls || []).concat([payload]);
+    }
+    // Deliberately NOT writeQueue.enqueue. A baseline is advisory: losing today's row costs
+    // one day of drop-detection sensitivity, whereas putting it in the serial write queue
+    // would delay real user edits behind it.
+    try {
+      const p = sb.rpc("record_health", { p_scores: payload });
+      // supabase-js REJECTS on network/CORS and RESOLVES { error } otherwise. Swallow both:
+      // a failed baseline must never surface as a user-visible error.
+      if (p && p.then) p.then(() => {}, () => {});
+    } catch (e) { /* same reasoning */ }
+  }, [user, scored.length]);
   useEffect(() => { // one aggregate snapshot per calendar month (whole book) for trend lines
     if (!loaded || !scored.length) return;
     const month = iso(Date.now()).slice(0, 7);

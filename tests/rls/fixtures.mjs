@@ -19,6 +19,7 @@ export const ANON_KEY = process.env.SUPABASE_ANON_KEY
   || "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhbm9uIiwiZXhwIjoxOTgzODEyOTk2fQ.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0";
 
 const SETUP_SQL = fileURLToPath(new URL("../../supabase-setup.sql", import.meta.url));
+const ALERTS_SQL = fileURLToPath(new URL("../../email-alerts.sql", import.meta.url));
 
 const newClient = () => createClient(API_URL, ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -52,6 +53,11 @@ export async function resetStack() {
       delete from auth.users;
     `);
     await client.query(readFileSync(SETUP_SQL, "utf8"));
+    // The alert layer lives in its own file because it needs pg_cron/pg_net and a
+    // hand-pasted API key. It still has to be applied here, or every builder test would
+    // fail with "function does not exist" and look like a bug in the test rather than a
+    // missing file.
+    await client.query(readFileSync(ALERTS_SQL, "utf8"));
     // PostgREST caches the schema. Without this the tables we just recreated come back as
     // PGRST205 "Could not find the table in the schema cache" on the very first request.
     await client.query(`notify pgrst, 'reload schema';`);
@@ -170,3 +176,25 @@ export async function seedRow(table, id, data = { name: "Seeded" }) {
   const { error } = await sessions.admin.from(table).insert({ id, data });
   if (error) throw new Error(`seedRow(${table}, ${id}) failed: ${error.message}`);
 }
+
+// Raw SQL as the `postgres` superuser. Builders are revoked from `authenticated` on
+// purpose, so PostgREST cannot reach them and the suite must not try.
+export async function sql(text, params = []) {
+  const client = new pg.Client({ connectionString: DB_URL });
+  await client.connect();
+  try {
+    const { rows } = await client.query(text, params);
+    return rows;
+  } finally {
+    await client.end();
+  }
+}
+
+// Seed a JSONB row directly. seedRow() goes through PostgREST as admin; these go through
+// SQL so a test can seed rows a policy would refuse, and so dates land unambiguously.
+export const seedAccount  = (id, data) => sql(`insert into accounts    (id, data) values ($1, $2)
+                                               on conflict (id) do update set data = excluded.data`, [id, data]);
+export const seedTask     = (id, data) => sql(`insert into tasks       (id, data) values ($1, $2)
+                                               on conflict (id) do update set data = excluded.data`, [id, data]);
+export const seedActivity = (id, data) => sql(`insert into activities  (id, data) values ($1, $2)
+                                               on conflict (id) do update set data = excluded.data`, [id, data]);

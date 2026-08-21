@@ -1,4 +1,16 @@
 -- ============================================================
+-- SUPERSEDED — do not run this file.
+-- Replaced by email-alerts.sql + email-alerts-schedule.sql, which mail each CSM their own
+-- accounts instead of the whole team one shared digest. Kept only for reference.
+--
+-- Running this file re-creates the 'crm-renewal-alerts' cron job below (line ~106). If
+-- email-alerts-schedule.sql has already been run, that job now runs ALONGSIDE
+-- 'onevio-alerts-daily' and every renewal produces TWO emails a day: one team-wide from
+-- this job, one per-CSM from the new one. If you ran this by mistake, undo it with:
+--   select cron.unschedule('crm-renewal-alerts');
+-- ============================================================
+
+-- ============================================================
 -- CS CRM — daily renewal email alerts
 -- Sends every team member a digest of accounts renewing within
 -- 30 days, once per day (only when something is due).
