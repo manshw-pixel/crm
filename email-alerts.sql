@@ -390,7 +390,11 @@ begin
          settled_at  = now()
     from net._http_response r
    where r.id = e.request_id
-     and e.status = 'queued';
+     -- 'unknown' as well as 'queued': a pg_net response arriving after the ~1h sweep
+     -- window below has already flipped the row to 'unknown'. Matching both statuses
+     -- lets a late-arriving response self-correct a row that was only ever abandoned
+     -- for lack of an answer, instead of permanently mislabeling a delivered email.
+     and e.status in ('queued', 'unknown');
   get diagnostics n_settled = row_count;
 
   -- A response that never arrives (including a row whose request_id is NULL, which can
@@ -404,12 +408,15 @@ begin
 
   -- Failures reach a human through the panel that already exists, rather than through a
   -- new surface nobody would think to open.
-  if exists (select 1 from email_log where status = 'failed' and settled_at > now() - interval '1 day') then
+  -- interval '1 hour', not '1 day': the sweep runs hourly, so a '1 day' guard would count
+  -- the same failed row on every one of the next 24 sweeps, inflating the escalation count
+  -- to 24 for a single failure. '1 hour' counts each newly-settled failure once.
+  if exists (select 1 from email_log where status = 'failed' and settled_at > now() - interval '1 hour') then
     perform log_error_system(
       'email-send-failed',
       'write_failed',
       format('%s alert email(s) failed to send in the last day',
-             (select count(*) from email_log where status = 'failed' and settled_at > now() - interval '1 day')),
+             (select count(*) from email_log where status = 'failed' and settled_at > now() - interval '1 hour')),
       jsonb_build_object('table', 'email_log'));
   end if;
 

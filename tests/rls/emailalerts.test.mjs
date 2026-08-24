@@ -622,6 +622,53 @@ test("settle_alert_sends routes a failed send into error_log for an admin to see
   assert(row.user_agent === "pg_cron", `expected user_agent 'pg_cron', got ${row.user_agent}`);
 });
 
+test("settle_alert_sends counts a failure once across repeat sweeps, not once per sweep", async () => {
+  // F6: the escalation guard used to check `settled_at > now() - interval '1 day'`, but the
+  // sweep runs hourly -- so a failure settled 2 hours ago (well inside a day, well outside an
+  // hour) would still match on every subsequent hourly sweep and re-trigger log_error_system,
+  // inflating error_log.count far past the single real failure it represents. Backdating
+  // settled_at to 2 hours ago isolates exactly that gap: outside the correct 1-hour guard,
+  // inside the old, wrong 1-day one.
+  await ensureHttpResponseTable();
+  await sql(`delete from error_log where fingerprint = 'email-send-failed'`);
+  await sql(`delete from email_log where request_id = 900020`);
+  await sql(`insert into email_log (kind, recipient, row_count, request_id, status, settled_at)
+             values ('renewals', 'twice-swept@test.local', 1, 900020, 'failed', now() - interval '2 hours')`);
+
+  await sql(`select settle_alert_sends()`);
+  const [afterFirst] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
+  assert(afterFirst, "first sweep did not create an error_log row");
+
+  await sql(`select settle_alert_sends()`);
+  const [afterSecond] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
+  assert(afterSecond.count === afterFirst.count,
+    `a failure settled 2 hours ago was re-counted by a later sweep: count went from ${afterFirst.count} to ${afterSecond.count}`);
+});
+
+test("settle_alert_sends self-corrects an 'unknown' row once a late response arrives", async () => {
+  // F7: the join update required status = 'queued', but the stale-row sweep flips anything
+  // older than an hour to 'unknown' -- so a pg_net response arriving after ~1.5h permanently
+  // recorded a delivered email as 'unknown'. This drives the same row through both sweeps in
+  // sequence: first with no response (must land on 'unknown'), then with a late response that
+  // must be allowed to overwrite it.
+  await ensureHttpResponseTable();
+  await sql(`delete from email_log where request_id = 900021`);
+  await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
+             values ('renewals', 'late-response@test.local', 1, 900021, now() - interval '2 hours')`);
+
+  await sql(`select settle_alert_sends()`);
+  const [stale] = await sql(`select * from email_log where request_id = 900021`);
+  assert(stale.status === "unknown", `expected the unanswered row to go 'unknown' first, got ${stale.status}`);
+
+  await sql(`insert into net._http_response (id, status_code, content, created)
+             values (900021, 201, '{"messageId":"late"}', now())
+             on conflict (id) do update set status_code = 201`);
+  await sql(`select settle_alert_sends()`);
+  const [corrected] = await sql(`select * from email_log where request_id = 900021`);
+  assert(corrected.status === "sent",
+    `a late response did not self-correct an 'unknown' row, stayed ${corrected.status}`);
+});
+
 test("log_error_system collapses repeat calls into one row via fingerprint", async () => {
   await sql(`delete from error_log where fingerprint = 'test-collapse-fp'`);
   await sql(`select log_error_system('test-collapse-fp', 'write_failed', 'first', '{}'::jsonb)`);
