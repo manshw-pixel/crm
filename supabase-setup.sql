@@ -342,17 +342,28 @@ begin
     stack = excluded.stack,
     context = excluded.context;
 
-  -- Retention, run here rather than on a schedule: this project has no scheduler, and the
-  -- work is trivial. The WHERE is not optional -- Supabase rejects an unqualified DELETE.
+  -- Retention, run inline rather than on a schedule. email-alerts-schedule.sql now installs
+  -- pg_cron, so "this project has no scheduler" is no longer true -- but the inline sweep
+  -- is kept deliberately: it runs exactly when rows are added, needs no second moving
+  -- part, and works on a stack where the alert layer was never installed. The WHERE is not
+  -- optional -- Supabase rejects an unqualified DELETE.
   delete from error_log where last_seen < now() - interval '30 days';
 end $$;
 
--- Revoke from PUBLIC, not from anon. Postgres grants EXECUTE to PUBLIC by default on every
--- new function and `create or replace` preserves it, so revoking from `anon` alone removes
--- a direct grant that was never made while anon keeps inheriting execute via PUBLIC. This
--- pair is what actually makes the grant explicit -- and it also removes the file's only
--- statement that errors if a role happens not to exist.
-revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public;
+-- Revoke from PUBLIC **and** from anon -- both are needed, and neither substitutes for the
+-- other. PUBLIC: Postgres grants EXECUTE to PUBLIC by default on every new function and
+-- `create or replace` preserves it, so anon would keep inheriting execute through PUBLIC.
+-- anon: on Supabase, functions created in schema `public` by `postgres` ALSO pick up an
+-- explicit grant to anon and authenticated from the project's default privileges, which
+-- `revoke ... from public` does not touch. Revoking only PUBLIC leaves that direct grant
+-- standing and anon still reaches the body.
+--
+-- An earlier comment here warned that naming `anon` breaks an install where the role does
+-- not exist. That concern is real for portable SQL, but not for this file: it targets
+-- Supabase, where anon and authenticated are created by the platform before any user SQL
+-- runs, and the RLS harness re-establishes both roles and those default privileges
+-- (tests/rls/fixtures.mjs) before applying this file.
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public, anon;
 grant execute on function public.log_error(text, text, text, text, jsonb, text, text) to authenticated;
 
 -- ---------- realtime ----------
@@ -366,6 +377,86 @@ begin
     end;
   end loop;
 end $$;
+
+-- ---------- health snapshots ----------
+-- A daily per-account score, written by the APP. Health is computed in JavaScript from
+-- admin-tunable weights; reimplementing that formula in SQL would create a second source
+-- of truth that drifts the moment someone tunes a weight. So SQL never scores anything --
+-- it only ever compares two numbers that the app stored.
+--
+-- Unlike ARR, health has no event ledger and CANNOT be reconstructed backwards. This table
+-- only ever knows what it was told, starting the day it ships.
+create table if not exists public.health_snapshots (
+  account_id text not null,
+  day        date not null default current_date,
+  score      int  not null check (score between 0 and 100),
+  primary key (account_id, day)
+);
+
+alter table public.health_snapshots enable row level security;
+
+-- select: any authenticated user. Scores are already visible in the app to everyone.
+drop policy if exists health_snapshots_select on public.health_snapshots;
+create policy health_snapshots_select on public.health_snapshots
+  for select to authenticated using (true);
+
+-- NO insert/update/delete policy, deliberately: every mutation funnels through
+-- record_health(), which validates the shape of `score` and checks that `accountId` names a
+-- real account before it inserts. RLS keeps direct writes out of the API roles, so those two
+-- checks cannot be bypassed by anon or authenticated -- service_role and the table owner
+-- bypass RLS entirely, as they do everywhere else in this schema.
+--
+-- Scope this honestly -- it is NOT an authorization boundary. Any authenticated user of this
+-- internal CRM can already edit accounts directly, and record_health() is open to every
+-- authenticated user, so a signed-in user CAN overwrite today's score for an account they
+-- can see. What the funnel actually buys is integrity: no malformed scores, and no snapshot
+-- rows for accounts that do not exist.
+--
+-- That accountId check holds at WRITE time only -- health_snapshots has no foreign key on
+-- account_id, so deleting an account later does not cascade and its snapshots are orphaned.
+
+create or replace function public.record_health(p_scores jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  -- definer bypasses RLS, so the check the missing insert policy would have performed has
+  -- to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'record_health: sign in required';
+  end if;
+
+  insert into health_snapshots (account_id, day, score)
+  select e->>'accountId', current_date,
+         least(100, greatest(0, (e->>'score')::numeric::int))
+  from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) e
+  where e->>'accountId' is not null
+    and e->>'score' ~ '^-?[0-9]+(\.[0-9]+)?$'
+    -- An unknown accountId is DROPPED, not raised on: the app sends one batch for every
+    -- account on screen, and an account deleted between render and write must not cost the
+    -- rest of the batch its snapshot. Without this, health_snapshots can be stuffed with
+    -- rows referencing accounts that never existed.
+    and exists (select 1 from accounts a where a.id = e->>'accountId')
+  on conflict (account_id, day) do update set score = excluded.score;
+
+  get diagnostics n = row_count;
+
+  -- health_snapshots has no scheduled sweep, so it grows at accounts x days forever without
+  -- this. Retain 90 days, not 30 like error_log: drop detection needs more history than the
+  -- error log to tell a genuine decline from a one-day dip. Inline for the same reason as
+  -- log_error's sweep -- runs exactly when rows are added, no second moving part. The WHERE
+  -- is not optional -- Supabase rejects an unqualified DELETE.
+  delete from health_snapshots where day < current_date - interval '90 days';
+
+  return n;
+end $$;
+
+-- Revoke from PUBLIC **and** anon, for the same reason as log_error above: PUBLIC carries
+-- Postgres's default EXECUTE, and Supabase's default privileges add a separate explicit
+-- grant to anon that revoking PUBLIC leaves standing. Without the second role named here,
+-- an anonymous caller still reaches the body and is stopped only by the `sign in required`
+-- raise inside it -- a check, not a grant.
+revoke execute on function public.record_health(jsonb) from public, anon;
+grant execute on function public.record_health(jsonb) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long

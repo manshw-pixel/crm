@@ -22,7 +22,14 @@ const CHANNEL = process.env.CRM_TEST_CHANNEL ?? "msedge";
 const MOCK = `window.__sbFactory = () => {
   const api = t => ({
     select: () => {
-      const p = Promise.resolve({ data: window.__seedRows?.[t] || [], error: null });
+      // Fault injection for the \`loaded\` guard test: __loadDelay holds fetchAll's initial
+      // reads open so a test can dispatch into the store (bumping scored.length) BEFORE
+      // \`loaded\` flips, proving the health-baseline effect waits for \`loaded\` rather than
+      // firing off scored.length alone.
+      const delay = window.__loadDelay || 0;
+      const p = delay
+        ? new Promise(res => setTimeout(() => res({ data: window.__seedRows?.[t] || [], error: null }), delay))
+        : Promise.resolve({ data: window.__seedRows?.[t] || [], error: null });
       p.eq = () => Promise.resolve({ data: window.__seedRows?.[t] || [], error: null, single: () => Promise.resolve({ data: (window.__seedRows?.[t] || [])[0] || null, error: null }) });
       return p;
     },
@@ -62,6 +69,14 @@ const MOCK = `window.__sbFactory = () => {
       (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
+      }
+      // Fault injection for the health-baseline retry test: __recordHealthFails counts down
+      // the number of record_health calls that REJECT (mirrors supabase-js's network/CORS
+      // failure mode -- see the "supabase-js REJECTS ... RESOLVES { error }" comment in
+      // crm.html), so a test can force one network blip and then let the retry succeed.
+      if (fn === "record_health" && window.__recordHealthFails > 0) {
+        window.__recordHealthFails--;
+        return Promise.reject(new Error("mock record_health rejection"));
       }
       return Promise.resolve({ error: null });
     },
