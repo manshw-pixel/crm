@@ -402,14 +402,18 @@ create policy health_snapshots_select on public.health_snapshots
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
--- real account before it inserts. RLS keeps direct writes out, so those two checks cannot be
--- bypassed.
+-- real account before it inserts. RLS keeps direct writes out of the API roles, so those two
+-- checks cannot be bypassed by anon or authenticated -- service_role and the table owner
+-- bypass RLS entirely, as they do everywhere else in this schema.
 --
 -- Scope this honestly -- it is NOT an authorization boundary. Any authenticated user of this
 -- internal CRM can already edit accounts directly, and record_health() is open to every
 -- authenticated user, so a signed-in user CAN overwrite today's score for an account they
 -- can see. What the funnel actually buys is integrity: no malformed scores, and no snapshot
 -- rows for accounts that do not exist.
+--
+-- That accountId check holds at WRITE time only -- health_snapshots has no foreign key on
+-- account_id, so deleting an account later does not cascade and its snapshots are orphaned.
 
 create or replace function public.record_health(p_scores jsonb)
 returns int language plpgsql security definer set search_path = public as $$
@@ -435,6 +439,14 @@ begin
   on conflict (account_id, day) do update set score = excluded.score;
 
   get diagnostics n = row_count;
+
+  -- health_snapshots has no scheduled sweep, so it grows at accounts x days forever without
+  -- this. Retain 90 days, not 30 like error_log: drop detection needs more history than the
+  -- error log to tell a genuine decline from a one-day dip. Inline for the same reason as
+  -- log_error's sweep -- runs exactly when rows are added, no second moving part. The WHERE
+  -- is not optional -- Supabase rejects an unqualified DELETE.
+  delete from health_snapshots where day < current_date - interval '90 days';
+
   return n;
 end $$;
 

@@ -696,6 +696,46 @@ test("log_error_system collapses repeat calls into one row via fingerprint", asy
   assert(rows[0].message === "second", `expected the latest message to win, got ${rows[0].message}`);
 });
 
+test("log_error_system sweeps rows past 30 days but keeps rows inside the horizon", async () => {
+  // System-wide, not scoped to a fingerprint: any leftover stale row in error_log would
+  // otherwise get swept by THIS call too and could mask a broken sweep in another test, or
+  // vice versa. Clearing the whole table first is the only way this test's assertions are
+  // about this test's rows.
+  await sql(`delete from error_log`);
+  await sql(`insert into error_log (fingerprint, level, message, last_seen)
+             values ('test-retain-old', 'crash', 'stale', now() - interval '31 days'),
+                    ('test-retain-fresh', 'crash', 'recent', now() - interval '29 days')`);
+  // Any call sweeps -- reuse a third fingerprint so the assertion isn't entangled with the
+  // insert/update logic already covered above.
+  await sql(`select log_error_system('test-retain-trigger', 'write_failed', 'trigger', '{}'::jsonb)`);
+  const rows = await sql(`select fingerprint from error_log order by fingerprint`);
+  const fps = rows.map(r => r.fingerprint);
+  assert(!fps.includes("test-retain-old"),
+    `a row past the 30-day horizon survived the sweep: ${fps.join(", ")}`);
+  assert(fps.includes("test-retain-fresh"),
+    `a row inside the 30-day horizon was deleted by the sweep: ${fps.join(", ")}`);
+});
+
+test("record_health sweeps snapshots past 90 days but keeps snapshots inside the horizon", async () => {
+  await seedAccount("h-retain", { name: "Retention Account" });
+  // System-wide for health_snapshots for the same reason as the error_log sweep above.
+  await sql(`delete from health_snapshots`);
+  await sql(`insert into health_snapshots (account_id, day, score)
+             values ('h-retain', current_date - interval '91 days', 40),
+                    ('h-retain', current_date - interval '89 days', 55)`);
+  // Any record_health call sweeps -- a distinct day (today) so the upsert-within-a-day
+  // behaviour tested elsewhere doesn't collide with the two seeded rows.
+  const { error } = await sessions.admin.rpc("record_health",
+    { p_scores: [{ accountId: "h-retain", score: 70 }] });
+  assert(!error, `record_health failed: ${error && error.message}`);
+  const old = await sql(`select 1 from health_snapshots where account_id = 'h-retain' and day = current_date - interval '91 days'`);
+  const fresh = await sql(`select 1 from health_snapshots where account_id = 'h-retain' and day = current_date - interval '89 days'`);
+  const today = await sql(`select 1 from health_snapshots where account_id = 'h-retain' and day = current_date`);
+  assert(old.length === 0, "a snapshot past the 90-day horizon survived the sweep");
+  assert(fresh.length === 1, "a snapshot inside the 90-day horizon was deleted by the sweep");
+  assert(today.length === 1, "today's write did not land");
+});
+
 // ---------- the alert functions are closed to both published API roles ----------
 // `revoke ... from public` alone does NOT close these on Supabase: fixtures.mjs re-applies
 // `alter default privileges in schema public grant all on functions to ... anon,
