@@ -3719,8 +3719,7 @@ function App({ user }) {
   // by day anyway. The upsert makes a second write harmless, not merely tolerable.
   const healthRecorded = React.useRef(false);
   React.useEffect(() => {
-    if (healthRecorded.current || !user || !scored.length) return;
-    healthRecorded.current = true;
+    if (!loaded || healthRecorded.current || !user || !scored.length) return;
     const payload = scored.map(a => ({ accountId: a.id, score: Math.round(a.score) }));
     if (typeof window !== "undefined") {
       // Test seam: the suite asserts on what was sent without a live database.
@@ -3732,10 +3731,13 @@ function App({ user }) {
     try {
       const p = sb.rpc("record_health", { p_scores: payload });
       // supabase-js REJECTS on network/CORS and RESOLVES { error } otherwise. Swallow both:
-      // a failed baseline must never surface as a user-visible error.
-      if (p && p.then) p.then(() => {}, () => {});
+      // a failed baseline must never surface as a user-visible error. Only the SUCCESS path
+      // marks the ref, so a network blip at load retries on the next render instead of
+      // permanently skipping the day's baseline for this session.
+      if (p && p.then) p.then(() => { healthRecorded.current = true; }, () => {});
+      else healthRecorded.current = true;
     } catch (e) { /* same reasoning */ }
-  }, [user, scored.length]);
+  }, [loaded, user, scored.length]);
   useEffect(() => { // one aggregate snapshot per calendar month (whole book) for trend lines
     if (!loaded || !scored.length) return;
     const month = iso(Date.now()).slice(0, 7);
