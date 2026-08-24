@@ -122,6 +122,9 @@ test("email_log is admin-readable and closed to plain users", async () => {
 });
 
 test("email_log refuses a second send of the same kind to the same person today", async () => {
+  // Self-contained: clear any leftover 'dupe'/'d@test.local' row (any day) so the FIRST
+  // insert below cannot itself trip the uniqueness constraint for the wrong reason.
+  await sql(`delete from email_log where kind = 'dupe' and recipient = 'd@test.local'`);
   await sql(`insert into email_log (kind, recipient, row_count) values ('dupe', 'd@test.local', 1)`);
   let err = null;
   try {
@@ -554,6 +557,9 @@ test("settle_alert_sends marks a 201 response as sent", async () => {
 
 test("settle_alert_sends marks a 401 response as failed and records the body", async () => {
   await ensureHttpResponseTable();
+  // Self-contained: clear this test's own request_id before seeding, so running it alone
+  // (or twice in the same DB) means the same thing as running it after the 201 test above.
+  await sql(`delete from email_log where request_id = 900002`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id)
              values ('renewals', 'bad@test.local', 2, 900002)`);
   await sql(`insert into net._http_response (id, status_code, content, created)
@@ -567,6 +573,10 @@ test("settle_alert_sends marks a 401 response as failed and records the body", a
 
 test("settle_alert_sends gives up on a send that never got a response", async () => {
   await ensureHttpResponseTable();
+  // Self-contained: clear this test's own request_id (and any stray response row someone
+  // else might have left under it) so it means the same thing run alone or in sequence.
+  await sql(`delete from email_log where request_id = 900003`);
+  await sql(`delete from net._http_response where id = 900003`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
              values ('renewals', 'lost@test.local', 1, 900003, now() - interval '2 hours')`);
   await sql(`select settle_alert_sends()`);
@@ -579,6 +589,9 @@ test("settle_alert_sends gives up on a stale row with no request_id at all", asy
   // never join net._http_response, so the stale sweep -- not the join -- must be the thing
   // that rescues it. This proves the sweep has no accidental `request_id is not null` guard.
   await ensureHttpResponseTable();
+  // Self-contained: clear any leftover row under this recipient (request_id is null, so it
+  // cannot be keyed by id) before seeding.
+  await sql(`delete from email_log where recipient = 'norequest@test.local'`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
              values ('renewals', 'norequest@test.local', 1, null, now() - interval '2 hours')`);
   await sql(`select settle_alert_sends()`);
@@ -588,6 +601,12 @@ test("settle_alert_sends gives up on a stale row with no request_id at all", asy
 
 test("settle_alert_sends leaves a recent unanswered send alone", async () => {
   await ensureHttpResponseTable();
+  // Self-contained: clear both request_ids used below, plus any net._http_response row
+  // that might already exist for the "fresh" id -- that row's ABSENCE is what this test is
+  // discriminating on, so a stray leftover response under 900004 would make it settle and
+  // silently invalidate the assertion.
+  await sql(`delete from email_log where request_id in (900010, 900004)`);
+  await sql(`delete from net._http_response where id in (900010, 900004)`);
   // Control row: has a matching net._http_response and MUST settle to 'sent' in this same
   // call. Without it, "still queued" below would pass identically against a settle function
   // that does nothing at all -- this row proves the mechanism actually ran.
@@ -609,6 +628,9 @@ test("settle_alert_sends leaves a recent unanswered send alone", async () => {
 test("settle_alert_sends routes a failed send into error_log for an admin to see", async () => {
   await ensureHttpResponseTable();
   await sql(`delete from error_log where fingerprint = 'email-send-failed'`);
+  // Self-contained: clear this test's own request_id before seeding, so it means the same
+  // thing whether it runs alone or after an earlier pass left 900005 behind.
+  await sql(`delete from email_log where request_id = 900005`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id)
              values ('renewals', 'routed-fail@test.local', 1, 900005)`);
   await sql(`insert into net._http_response (id, status_code, content, created)
@@ -670,6 +692,10 @@ test("settle_alert_sends self-corrects an 'unknown' row once a late response arr
   // must be allowed to overwrite it.
   await ensureHttpResponseTable();
   await sql(`delete from email_log where request_id = 900021`);
+  // The first sweep below must find NO response row for 900021 -- that absence is what
+  // drives it to 'unknown'. A stray leftover response from an earlier pass would let it
+  // settle to 'sent' immediately and defeat the test.
+  await sql(`delete from net._http_response where id = 900021`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id, created_at)
              values ('renewals', 'late-response@test.local', 1, 900021, now() - interval '2 hours')`);
 
