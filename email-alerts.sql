@@ -110,6 +110,26 @@ $$;
 revoke execute on function public.alert_recipients() from public;
 revoke execute on function public.unrouted_csms()   from public;
 
+-- A regex-passing string is not necessarily a real date ('2026-13-45' matches
+-- ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ but has no 13th month), and the regex + nullif guards below
+-- are per-account, not scoped to any one recipient -- a builder's WHERE and target list
+-- both run over EVERY account in the table for EVERY recipient's call. An unhandled ::date
+-- raise on one poisoned row therefore aborts that builder call for whoever is asking, not
+-- just for the account's own CSM. safe_date() turns "raise" into "this one row is not a
+-- valid date", so a bad value simply excludes that row -- for everyone -- instead of
+-- taking down everyone's digest. immutable, not stable: it has no side effects and always
+-- returns the same output for the same input, which is what lets the planner treat it like
+-- any other cast.
+create or replace function public.safe_date(p_text text)
+returns date language plpgsql immutable as $$
+begin
+  return p_text::date;
+exception when others then
+  return null;
+end $$;
+
+revoke execute on function public.safe_date(text) from public;
+
 -- ---------- builders ----------
 -- Builders are PURE: they return rows, write nothing and call nothing over the network.
 -- That is what lets the suite prove the logic without sending a single email.
@@ -120,19 +140,19 @@ returns table(account_id text, account_name text, renewal_date date, days_left i
 language sql security definer set search_path = public as $$
   select a.id,
          a.data->>'name',
-         (a.data->>'renewalDate')::date,
-         ((a.data->>'renewalDate')::date - current_date)::int
+         safe_date(a.data->>'renewalDate'),
+         (safe_date(a.data->>'renewalDate') - current_date)::int
   from accounts a
   where coalesce(a.data->>'contractStatus', '') <> 'Churned'
-    -- The nullif guard rejects blank strings only; free-text import (Import JSON accepts
-    -- arbitrary JSON) can land a garbage value like "TBD" that nullif lets straight through
-    -- and ::date then raises 22007 on. The regex confines the cast to well-formed
-    -- YYYY-MM-DD strings, which is the only shape this app's own date pickers ever write.
+    -- The nullif+regex guard rejects blanks and non-date-shaped strings up front, cheaply.
+    -- It is NOT a guarantee, though: '2026-13-45' matches the shape and still fails to cast
+    -- (no 13th month exists), so the value still runs through safe_date(), which returns
+    -- null for anything that fails to parse. `between` against a null is false, so the row
+    -- is simply excluded rather than raising and aborting this call for whoever asked --
+    -- see safe_date's own comment above for why that matters.
     and nullif(a.data->>'renewalDate', '') is not null
     and a.data->>'renewalDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-    and (case when nullif(a.data->>'renewalDate', '') is not null
-              then (a.data->>'renewalDate')::date end)
-        between current_date and current_date + 30
+    and safe_date(a.data->>'renewalDate') between current_date and current_date + 30
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
                 select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
@@ -149,18 +169,18 @@ returns table(task_id text, title text, due_date date, days_overdue int,
 language sql security definer set search_path = public as $$
   select t.id,
          t.data->>'title',
-         (t.data->>'due')::date,
-         (current_date - (t.data->>'due')::date)::int,
+         safe_date(t.data->>'due'),
+         (current_date - safe_date(t.data->>'due'))::int,
          a.id,
          a.data->>'name'
   from tasks t
   join accounts a on a.id = t.data->>'accountId'
   where coalesce(t.data->>'status', '') <> 'Done'
-    -- See alert_renewals above: nullif alone lets a garbage (non-blank) date string through.
+    -- See alert_renewals and safe_date above: the regex is a cheap first filter, not a
+    -- guarantee -- safe_date() is what actually excludes an invalid date without raising.
     and nullif(t.data->>'due', '') is not null
     and t.data->>'due' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-    and (case when nullif(t.data->>'due', '') is not null
-              then (t.data->>'due')::date end) < current_date
+    and safe_date(t.data->>'due') < current_date
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
@@ -179,13 +199,15 @@ create or replace function public.alert_qbr_nudge(
 returns table(account_id text, account_name text, next_qbr date, days_left int, section text)
 language sql security definer set search_path = public as $$
   with mine as (
-    select a.id, a.data->>'name' as nm, (a.data->>'nextQbrDate')::date as nq
+    select a.id, a.data->>'name' as nm, safe_date(a.data->>'nextQbrDate') as nq
     from accounts a
     where coalesce(a.data->>'contractStatus', '') <> 'Churned'
       and coalesce(a.data->>'qbrFrequency', 'None') <> 'None'
-      -- See alert_renewals above: nullif alone lets a garbage (non-blank) date string through.
+      -- See alert_renewals and safe_date above: the regex is a cheap first filter, not a
+      -- guarantee -- safe_date() is what actually excludes an invalid date without raising.
       and nullif(a.data->>'nextQbrDate', '') is not null
       and a.data->>'nextQbrDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
+      and safe_date(a.data->>'nextQbrDate') is not null
       and ( trim(a.data->>'csm') = p_csm
             or (p_include_unowned and not exists (
                   select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
@@ -203,8 +225,7 @@ language sql security definer set search_path = public as $$
         and v.data->>'type' = 'QBR'
         and nullif(v.data->>'date', '') is not null
         and v.data->>'date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-        and (case when nullif(v.data->>'date', '') is not null
-                  then (v.data->>'date')::date end) between m.nq - 14 and m.nq + 14
+        and safe_date(v.data->>'date') between m.nq - 14 and m.nq + 14
     )
   order by 3 asc;
 $$;
@@ -288,13 +309,14 @@ begin
     into unrouted from unrouted_csms();
 
   for r in select * from alert_recipients() loop
-    -- Per-recipient guard: the regex gates on the builder functions catch the known
-    -- garbage-date shape, but this loop still has no business trusting every account's
-    -- free-text JSON to be well-formed forever. Without this block, one bad row raised
-    -- from inside a builder aborts the whole cron job mid-loop -- no email_log row, no
-    -- error_log entry, every recipient silently gets nothing, and nothing surfaces it. A
-    -- per-recipient exception handler means one bad account costs that recipient's digest,
-    -- not everyone else's.
+    -- Per-recipient guard: a bad date is now excluded rather than raised (see safe_date
+    -- above), but this loop still has no business trusting every account's free-text JSON
+    -- to be well-formed forever -- alert_post, subject formatting, or anything else in this
+    -- block can still throw for a reason no builder filters out. Without this block, any
+    -- such failure aborts the whole cron job mid-loop -- no email_log row, no error_log
+    -- entry, every recipient silently gets nothing, and nothing surfaces it. A per-recipient
+    -- exception handler means one failure here costs that recipient's digest, not everyone
+    -- else's -- and n_failed in the result text (below) means it isn't silent either.
     begin
     if p_kind = 'renewals' then
       select count(*), string_agg(format(
@@ -514,3 +536,4 @@ revoke execute on function public.send_alerts(text) from public, anon, authentic
 revoke execute on function public.settle_alert_sends() from public, anon, authenticated;
 revoke execute on function public.log_error_system(text, text, text, jsonb) from public, anon, authenticated;
 revoke execute on function public.html_escape(text) from public, anon, authenticated;
+revoke execute on function public.safe_date(text) from public, anon, authenticated;

@@ -528,24 +528,30 @@ test("send_alerts escapes HTML in account names and task titles", async () => {
   await sql(`delete from test_sent`);
 });
 
-// Regression test for fix-wave-2 findings 1 & 2. Nothing above exercises the per-recipient
-// `exception when others` handler at all -- alert_renewals/alert_overdue_tasks/alert_qbr_nudge
-// are `language sql` and get inlined into send_alerts' query, so the regex gate tested above
-// is defence in depth, not a guarantee the planner can't reorder quals around. This seeds a
-// value that MATCHES the regex (`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`) but is not a real date --
-// '2026-13-45' has no 13th month or 45th day -- so it sails past the regex and still raises
-// on `::date`, reaching the handler instead of being filtered out.
+// Regression test for fix-wave-2 finding 2 (as fixed the second time). The first version of
+// this test seeded a regex-passing, non-real date ('2026-13-45' -- matches
+// ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ but has no 13th month) expecting it to reach the per-recipient
+// exception handler. CI caught the real bug this exposed: the date predicate in every builder
+// runs over ALL accounts, not scoped to the recipient being built for, so ONE poisoned row
+// broke EVERY recipient's digest, not just the CSM who owned it -- and because the seeded
+// account was never cleaned up, it went on breaking two unrelated owner-probe tests later in
+// the file too.
 //
-// RED before the wave-2 fix: (a)-(c) pass against the handler as it existed before this
-// change (it already logged and continued correctly) -- only (d) is new behaviour; without
-// the fix `result` would read "renewals: 1 recipient(s) mailed" with no hint a second
-// recipient silently failed, so the `/1 failed/` assertion fails. If the whole per-recipient
-// `begin ... exception when others ... end` block were removed instead, the unhandled
-// exception aborts the whole statement: send_alerts throws, the `await sql(...)` call itself
-// rejects, and every assertion below fails because there is no `result` and Plain User is
-// never mailed either -- proving the handler is what makes the good recipient's success
-// possible at all.
-test("send_alerts's per-recipient exception handler quarantines one bad recipient without costing the other, and reports the failure", async () => {
+// The actual fix is safe_date(): the four raw `::date` casts in the builders now route
+// through it, so an invalid-but-regex-shaped value is simply excluded (like the app's
+// existing "tolerates a garbage date" tests already prove for the regex-rejected shapes) --
+// it never raises, so the per-recipient handler is never even reached for this case. That
+// makes this test's job proving EXCLUSION, not recovery: Admin User's only renewal is the bad
+// date, so their book is empty and they get no email at all (same as the "sends nothing when
+// a book has no rows" behaviour), while Plain User's real renewal still goes out untouched.
+//
+// RED against the code WITHOUT safe_date (i.e. before this second fix, builders still using
+// raw `::date`): the bad row raises inside alert_renewals for EVERY recipient's call,
+// including Plain User's, so assertion (a) fails (`sentToPlain.length` is 0, not 1); the
+// per-recipient handler catches the raise once per recipient it hit, so assertion (e) fails
+// too (error_log gets 2 rows, one per recipient, not 0); and the result string carries
+// ", 2 failed" so assertion (d)'s `NOT /failed/` fails as well.
+test("send_alerts excludes an invalid-but-regex-shaped date instead of breaking every recipient's digest", async () => {
   await stubSend();
   await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
   await sql(`delete from email_log`);
@@ -564,28 +570,35 @@ test("send_alerts's per-recipient exception handler quarantines one bad recipien
   // everyone else theirs.
   const sentToPlain = await sentTo("user@test.local");
   assert(sentToPlain.length === 1,
-    `expected Plain User to still be mailed despite Admin User's failure, got ${sentToPlain.length}`);
+    `expected Plain User to still be mailed despite Admin User's bad date, got ${sentToPlain.length}`);
 
-  // (b) the failure was logged with the expected fingerprint.
-  const errRows = await sql(`select * from error_log where fingerprint = 'email-digest-build-failed'`);
-  assert(errRows.length === 1,
-    `expected exactly 1 error_log row for the failed digest, got ${errRows.length}`);
+  // (b) Admin User's own book is empty (their only renewal was the bad date, now excluded),
+  // so nothing is sent to them either -- proving the row is gone, not silently mangled.
+  const sentToAdmin = await sentTo("admin@test.local");
+  assert(sentToAdmin.length === 0,
+    `expected no post to admin@test.local (their only renewal was invalid), got ${sentToAdmin.length}`);
 
-  // (c) email_log is left clean for the failed recipient -- the handler's implicit
-  // subtransaction rollback must not leave a half-written row.
+  // (c) email_log has no row for Admin User -- an empty book is never claimed or sent.
   const loggedForAdmin = await sql(
     `select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
   assert(loggedForAdmin.length === 0,
-    `expected no email_log row for the failed recipient, got ${loggedForAdmin.length}`);
+    `expected no email_log row for admin@test.local, got ${loggedForAdmin.length}`);
 
-  // (d) the new return string reports the failure -- a partial (or total) failure must
-  // never read like a quiet no-op.
-  assert(/1 failed/.test(result), `expected the result to report the failure, got: ${result}`);
-  assert(/1 recipient/.test(result), `expected the result to still report the successful send, got: ${result}`);
+  // (d) the result reports a clean send with no failure -- excluding a bad row is not a
+  // failure, so it must not appear in the result text as one.
+  assert(/1 recipient/.test(result), `expected the result to report the successful send, got: ${result}`);
+  assert(!/failed/.test(result), `expected no failure marker for a merely-excluded row, got: ${result}`);
+
+  // (e) the bad date never reached the per-recipient exception handler at all -- safe_date()
+  // excluded it before any raise happened, so no error_log row was written for it.
+  const errRows = await sql(`select * from error_log where fingerprint = 'email-digest-build-failed'`);
+  assert(errRows.length === 0,
+    `expected no error_log row -- an excluded date is not a caught exception, got ${errRows.length}`);
 
   await sql(`delete from email_log`);
   await sql(`delete from test_sent`);
   await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+  await sql(`delete from accounts where id in ('h-fail', 'h-ok')`);
 });
 
 test("send_alerts refuses to run when the API key is still the placeholder", async () => {
