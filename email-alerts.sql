@@ -45,7 +45,13 @@ values (1,
   'PASTE_YOUR_BREVO_API_KEY',   -- EDIT ME
   'you@example.com',            -- EDIT ME (verified Brevo sender)
   'OneVio')
-on conflict (id) do nothing;    -- do NOT clobber a key already pasted in production
+-- do NOT clobber a key already pasted in production. The flip side, which surprises people:
+-- once row 1 exists, editing the EDIT ME lines above and re-running this file changes
+-- NOTHING. To correct a key or sender that is already stored, UPDATE it instead:
+--   update public.alert_config
+--      set api_key = '<brevo key>', from_email = '<verified sender>' where id = 1;
+-- send_alerts()'s refusal message says the same thing, so the two cannot drift apart.
+on conflict (id) do nothing;
 
 -- ---------- send log ----------
 -- Mirrors error_log's policy shape. Stores WHO was mailed and HOW MANY rows -- never
@@ -293,8 +299,15 @@ begin
   -- third, a blown quota, only shows up at send time and lands in email_log). A real key
   -- paired with the still-default 'you@example.com' sender would otherwise sail past this
   -- check and fail silently at Brevo.
+  -- The remedy named here is an UPDATE, deliberately. Telling the reader to re-run
+  -- email-alerts.sql would be advice that cannot work: the config insert above ends with
+  -- `on conflict (id) do nothing`, so once row 1 exists no re-run of this file can ever
+  -- change it. The earlier wording said exactly that, and it sent operators round a loop
+  -- of editing and re-running a file that was never going to take effect.
   if cfg is null or cfg.api_key like 'PASTE%' or cfg.from_email = 'you@example.com' then
-    return 'alert_config not set — edit email-alerts.sql and run it again';
+    return 'alert_config not set — re-running email-alerts.sql will NOT fix this (its '
+        || 'insert is "on conflict do nothing"). Run: update public.alert_config set '
+        || 'api_key = ''<brevo key>'', from_email = ''<verified sender>'' where id = 1;';
   end if;
   if p_kind not in ('renewals', 'overdue_tasks', 'qbr_nudge') then
     return format('unknown alert kind: %s', p_kind);

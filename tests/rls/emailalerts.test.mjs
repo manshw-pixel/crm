@@ -607,6 +607,15 @@ test("send_alerts refuses to run when the API key is still the placeholder", asy
   await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
   const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
   assert(/not set/i.test(result), `expected a "not set" refusal, got: ${result}`);
+  // The refusal must name a remedy that WORKS. It used to say "edit email-alerts.sql and
+  // run it again" -- advice that cannot succeed, because that file's config insert ends
+  // with `on conflict (id) do nothing`, so once row 1 exists no re-run rewrites it. An
+  // operator following the old message edits and re-runs forever with no effect. Assert
+  // both halves: the update is named, and the re-run is not prescribed.
+  assert(/update\s+public\.alert_config/i.test(result),
+    `the refusal does not name the UPDATE that actually fixes it, got: ${result}`);
+  assert(!/run it again/i.test(result),
+    `the refusal still prescribes re-running the file, which cannot work, got: ${result}`);
   // A refusal string alone proves nothing if the guard were moved after the send -- confirm
   // no email actually went out.
   const sent = await sql(`select * from test_sent`);
