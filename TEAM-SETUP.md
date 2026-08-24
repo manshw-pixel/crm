@@ -122,7 +122,7 @@ Fix them by correcting the CSM field on the account.
 
 To change send times, edit the cron expressions at the end of `email-alerts-schedule.sql`
 (they are UTC) and re-run that file. To stop all alerts:
-`select cron.unschedule(j) from unnest(array['onevio-alerts-daily','onevio-alerts-monday','onevio-alerts-settle']) j;`
+`select cron.unschedule(j) from unnest(array['onevio-alerts-renewals','onevio-alerts-overdue','onevio-alerts-monday','onevio-alerts-settle']) j;`
 
 ## Day-to-day notes
 

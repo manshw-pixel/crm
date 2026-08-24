@@ -25,11 +25,21 @@ select cron.unschedule('crm-renewal-alerts')
   where exists (select 1 from cron.job where jobname = 'crm-renewal-alerts');
 
 select cron.unschedule(j) from unnest(array[
-  'onevio-alerts-daily','onevio-alerts-monday','onevio-alerts-settle']) j
+  'onevio-alerts-daily','onevio-alerts-renewals','onevio-alerts-overdue',
+  'onevio-alerts-monday','onevio-alerts-settle']) j
  where exists (select 1 from cron.job where jobname = j);
 
-select cron.schedule('onevio-alerts-daily', '30 3 * * *', $$
+-- Two separate jobs, not one bundled statement: pg_cron submits each job's body via the
+-- simple query protocol, which wraps multiple statements in one implicit transaction. If
+-- send_alerts('overdue_tasks') raised inside a combined job, the already-completed
+-- send_alerts('renewals') would roll back with it -- its email_log rows and queued
+-- net.http_post requests both vanish, silently dropping that day's renewals digest. A few
+-- minutes apart keeps one job's failure from taking the other down with it.
+select cron.schedule('onevio-alerts-renewals', '30 3 * * *', $$
   select public.send_alerts('renewals');
+$$);
+
+select cron.schedule('onevio-alerts-overdue', '35 3 * * *', $$
   select public.send_alerts('overdue_tasks');
 $$);
 
