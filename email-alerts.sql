@@ -436,6 +436,11 @@ begin
   on conflict (fingerprint) do update set
     count = error_log.count + 1, last_seen = now(),
     level = excluded.level, message = excluded.message, context = excluded.context;
+
+  -- Same retention sweep as log_error, run inline for the same reason: it runs exactly when
+  -- rows are added, needs no second moving part. The WHERE is not optional -- Supabase
+  -- rejects an unqualified DELETE.
+  delete from error_log where last_seen < now() - interval '30 days';
 end $$;
 
 revoke execute on function public.settle_alert_sends() from public;
