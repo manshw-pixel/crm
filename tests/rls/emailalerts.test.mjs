@@ -528,6 +528,66 @@ test("send_alerts escapes HTML in account names and task titles", async () => {
   await sql(`delete from test_sent`);
 });
 
+// Regression test for fix-wave-2 findings 1 & 2. Nothing above exercises the per-recipient
+// `exception when others` handler at all -- alert_renewals/alert_overdue_tasks/alert_qbr_nudge
+// are `language sql` and get inlined into send_alerts' query, so the regex gate tested above
+// is defence in depth, not a guarantee the planner can't reorder quals around. This seeds a
+// value that MATCHES the regex (`^[0-9]{4}-[0-9]{2}-[0-9]{2}$`) but is not a real date --
+// '2026-13-45' has no 13th month or 45th day -- so it sails past the regex and still raises
+// on `::date`, reaching the handler instead of being filtered out.
+//
+// RED before the wave-2 fix: (a)-(c) pass against the handler as it existed before this
+// change (it already logged and continued correctly) -- only (d) is new behaviour; without
+// the fix `result` would read "renewals: 1 recipient(s) mailed" with no hint a second
+// recipient silently failed, so the `/1 failed/` assertion fails. If the whole per-recipient
+// `begin ... exception when others ... end` block were removed instead, the unhandled
+// exception aborts the whole statement: send_alerts throws, the `await sql(...)` call itself
+// rejects, and every assertion below fails because there is no `result` and Plain User is
+// never mailed either -- proving the handler is what makes the good recipient's success
+// possible at all.
+test("send_alerts's per-recipient exception handler quarantines one bad recipient without costing the other, and reports the failure", async () => {
+  await stubSend();
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await sql(`delete from accounts`);
+  await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+
+  await seedAccount("h-fail", { name: "Bad Date Co", csm: "Admin User", contractStatus: "Active",
+                                 renewalDate: "2026-13-45" });
+  await seedAccount("h-ok", { name: "Good Co", csm: "Plain User", contractStatus: "Active",
+                               renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
+
+  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+
+  // (a) the other recipient still gets their digest -- one bad account must not cost
+  // everyone else theirs.
+  const sentToPlain = await sentTo("user@test.local");
+  assert(sentToPlain.length === 1,
+    `expected Plain User to still be mailed despite Admin User's failure, got ${sentToPlain.length}`);
+
+  // (b) the failure was logged with the expected fingerprint.
+  const errRows = await sql(`select * from error_log where fingerprint = 'email-digest-build-failed'`);
+  assert(errRows.length === 1,
+    `expected exactly 1 error_log row for the failed digest, got ${errRows.length}`);
+
+  // (c) email_log is left clean for the failed recipient -- the handler's implicit
+  // subtransaction rollback must not leave a half-written row.
+  const loggedForAdmin = await sql(
+    `select * from email_log where kind = 'renewals' and recipient = 'admin@test.local'`);
+  assert(loggedForAdmin.length === 0,
+    `expected no email_log row for the failed recipient, got ${loggedForAdmin.length}`);
+
+  // (d) the new return string reports the failure -- a partial (or total) failure must
+  // never read like a quiet no-op.
+  assert(/1 failed/.test(result), `expected the result to report the failure, got: ${result}`);
+  assert(/1 recipient/.test(result), `expected the result to still report the successful send, got: ${result}`);
+
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+});
+
 test("send_alerts refuses to run when the API key is still the placeholder", async () => {
   await stubSend();
   await sql(`delete from test_sent`);
