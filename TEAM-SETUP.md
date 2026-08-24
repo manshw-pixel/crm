@@ -95,6 +95,20 @@ nothing to report.
    the API key. The dispatcher refuses to send while `from_email` is still the placeholder
    `you@example.com`, and if you only paste the key you'll get a puzzling
    "alert_config not set" result instead of a sent email.
+
+   **If you already ran the file once with the placeholders still in it**, editing it and
+   running it again will *not* help: the config insert ends with `on conflict (id) do
+   nothing`, which protects a real key in production but also means row 1 is never
+   rewritten. Correct it with an update instead, in the SQL Editor:
+
+   ```sql
+   update public.alert_config
+      set api_key = '<brevo key>', from_email = '<verified sender>'
+    where id = 1;
+   ```
+
+   Check what is actually stored with
+   `select left(api_key, 12), from_email from public.alert_config where id = 1;`
 5. Run `email-alerts.sql` first, in the Supabase **SQL Editor**. Then run
    `email-alerts-schedule.sql` — this second script is what actually installs pg_cron and
    starts the scheduled sending; running only the first file creates the tables and
