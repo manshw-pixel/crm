@@ -124,7 +124,12 @@ language sql security definer set search_path = public as $$
          ((a.data->>'renewalDate')::date - current_date)::int
   from accounts a
   where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    -- The nullif guard rejects blank strings only; free-text import (Import JSON accepts
+    -- arbitrary JSON) can land a garbage value like "TBD" that nullif lets straight through
+    -- and ::date then raises 22007 on. The regex confines the cast to well-formed
+    -- YYYY-MM-DD strings, which is the only shape this app's own date pickers ever write.
     and nullif(a.data->>'renewalDate', '') is not null
+    and a.data->>'renewalDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
     and (case when nullif(a.data->>'renewalDate', '') is not null
               then (a.data->>'renewalDate')::date end)
         between current_date and current_date + 30
@@ -151,7 +156,9 @@ language sql security definer set search_path = public as $$
   from tasks t
   join accounts a on a.id = t.data->>'accountId'
   where coalesce(t.data->>'status', '') <> 'Done'
+    -- See alert_renewals above: nullif alone lets a garbage (non-blank) date string through.
     and nullif(t.data->>'due', '') is not null
+    and t.data->>'due' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
     and (case when nullif(t.data->>'due', '') is not null
               then (t.data->>'due')::date end) < current_date
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
@@ -176,7 +183,9 @@ language sql security definer set search_path = public as $$
     from accounts a
     where coalesce(a.data->>'contractStatus', '') <> 'Churned'
       and coalesce(a.data->>'qbrFrequency', 'None') <> 'None'
+      -- See alert_renewals above: nullif alone lets a garbage (non-blank) date string through.
       and nullif(a.data->>'nextQbrDate', '') is not null
+      and a.data->>'nextQbrDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       and ( trim(a.data->>'csm') = p_csm
             or (p_include_unowned and not exists (
                   select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
@@ -193,6 +202,7 @@ language sql security definer set search_path = public as $$
       where v.data->>'accountId' = m.id
         and v.data->>'type' = 'QBR'
         and nullif(v.data->>'date', '') is not null
+        and v.data->>'date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
         and (case when nullif(v.data->>'date', '') is not null
                   then (v.data->>'date')::date end) between m.nq - 14 and m.nq + 14
     )
@@ -277,6 +287,14 @@ begin
     into unrouted from unrouted_csms();
 
   for r in select * from alert_recipients() loop
+    -- Per-recipient guard: the regex gates on the builder functions catch the known
+    -- garbage-date shape, but this loop still has no business trusting every account's
+    -- free-text JSON to be well-formed forever. Without this block, one bad row raised
+    -- from inside a builder aborts the whole cron job mid-loop -- no email_log row, no
+    -- error_log entry, every recipient silently gets nothing, and nothing surfaces it. A
+    -- per-recipient exception handler means one bad account costs that recipient's digest,
+    -- not everyone else's.
+    begin
     if p_kind = 'renewals' then
       select count(*), string_agg(format(
         '<tr><td style="padding:6px 12px;border-bottom:1px solid #eee"><b>%s</b></td>'
@@ -360,6 +378,13 @@ begin
     update email_log set request_id = req
      where kind = p_kind and recipient = r.email and day = current_date;
     n_sent := n_sent + 1;
+    exception when others then
+      perform log_error_system(
+        'email-digest-build-failed',
+        'write_failed',
+        format('building %s digest for %s failed: %s', p_kind, r.email, sqlerrm),
+        jsonb_build_object('kind', p_kind, 'recipient', r.email));
+    end;
   end loop;
 
   return format('%s: %s recipient(s) mailed', p_kind, n_sent);
@@ -378,7 +403,7 @@ revoke execute on function public.send_alerts(text) from public;
 -- creates cleanly either way -- same reasoning as alert_post above.
 create or replace function public.settle_alert_sends()
 returns text language plpgsql security definer set search_path = public, net as $$
-declare n_settled int; n_unknown int;
+declare n_settled int; n_unknown int; escalation_since timestamptz; n_failed int;
 begin
   update email_log e
      set status      = case when r.status_code between 200 and 299 then 'sent' else 'failed' end,
@@ -408,15 +433,23 @@ begin
 
   -- Failures reach a human through the panel that already exists, rather than through a
   -- new surface nobody would think to open.
-  -- interval '1 hour', not '1 day': the sweep runs hourly, so a '1 day' guard would count
-  -- the same failed row on every one of the next 24 sweeps, inflating the escalation count
-  -- to 24 for a single failure. '1 hour' counts each newly-settled failure once.
-  if exists (select 1 from email_log where status = 'failed' and settled_at > now() - interval '1 hour') then
+  -- Anchored to the last escalation, not a fixed interval: the sweep's own cadence ('10 * *
+  -- * *') does not line up with any fixed window -- a failure settling near the top of the
+  -- hour is still inside a `now() - interval '1 hour'` guard on the NEXT sweep too, and gets
+  -- counted twice. Anchoring to error_log.last_seen for this fingerprint means each sweep
+  -- only ever looks at failures settled since the escalation it itself just wrote, so a
+  -- given failure is counted exactly once no matter how the cron cadence lines up.
+  select last_seen into escalation_since from error_log where fingerprint = 'email-send-failed';
+  escalation_since := coalesce(escalation_since, now() - interval '1 hour');
+
+  select count(*) into n_failed
+    from email_log where status = 'failed' and settled_at > escalation_since;
+
+  if n_failed > 0 then
     perform log_error_system(
       'email-send-failed',
       'write_failed',
-      format('%s alert email(s) failed to send in the last day',
-             (select count(*) from email_log where status = 'failed' and settled_at > now() - interval '1 hour')),
+      format('%s alert email(s) failed to send since the last check', n_failed),
       jsonb_build_object('table', 'email_log'));
   end if;
 
