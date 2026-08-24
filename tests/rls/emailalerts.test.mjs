@@ -624,21 +624,38 @@ test("settle_alert_sends routes a failed send into error_log for an admin to see
 
 test("settle_alert_sends counts a failure once across repeat sweeps, not once per sweep", async () => {
   // F6: the escalation guard used to check `settled_at > now() - interval '1 day'`, but the
-  // sweep runs hourly -- so a failure settled 2 hours ago (well inside a day, well outside an
-  // hour) would still match on every subsequent hourly sweep and re-trigger log_error_system,
-  // inflating error_log.count far past the single real failure it represents. Backdating
-  // settled_at to 2 hours ago isolates exactly that gap: outside the correct 1-hour guard,
-  // inside the old, wrong 1-day one.
+  // sweep runs hourly -- so a failure stays inside a 1-day window for the next 23 hourly
+  // sweeps after the one that first counted it, and log_error_system fires again on every one
+  // of them.
+  //
+  // Any OTHER failed row left lying around by an earlier test (e.g. request_id 900005 from the
+  // "routes a failed send into error_log" test above, whose settled_at is `now()` and stays
+  // inside any of the guard's windows for a long time) would make this test's escalation fire
+  // for the wrong reason and pass or fail independent of the code under test. So this clears
+  // every failed row system-wide before seeding its own -- not just its own request_id -- to
+  // guarantee the one row seeded here is the only thing that can trip the guard.
   await ensureHttpResponseTable();
   await sql(`delete from error_log where fingerprint = 'email-send-failed'`);
+  await sql(`delete from email_log where status = 'failed'`);
   await sql(`delete from email_log where request_id = 900020`);
   await sql(`insert into email_log (kind, recipient, row_count, request_id, status, settled_at)
-             values ('renewals', 'twice-swept@test.local', 1, 900020, 'failed', now() - interval '2 hours')`);
+             values ('renewals', 'twice-swept@test.local', 1, 900020, 'failed', now())`);
 
+  // Sweep 1: the row just failed, settled_at is `now()` -- inside every guard, fixed or not.
+  // Must count once.
   await sql(`select settle_alert_sends()`);
   const [afterFirst] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
   assert(afterFirst, "first sweep did not create an error_log row");
+  assert(afterFirst.count === 1, `expected count 1 after the first sweep, got ${afterFirst.count}`);
 
+  // Simulate an hour passing by backdating the SAME row's settled_at to 2 hours ago -- this is
+  // the only thing that changes between sweep 1 and sweep 2.
+  await sql(`update email_log set settled_at = now() - interval '2 hours' where request_id = 900020`);
+
+  // Sweep 2, same row, now 2 hours old: outside the correct 1-hour guard (must NOT recount),
+  // but still inside the old, wrong 1-day guard (WOULD recount, taking count to 2). This is
+  // exactly the discriminating case -- it fails against the unfixed '1 day' guard and passes
+  // against the fixed '1 hour' one.
   await sql(`select settle_alert_sends()`);
   const [afterSecond] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
   assert(afterSecond.count === afterFirst.count,

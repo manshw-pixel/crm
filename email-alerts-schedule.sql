@@ -34,12 +34,14 @@ select cron.unschedule(j) from unnest(array[
 -- send_alerts('overdue_tasks') raised inside a combined job, the already-completed
 -- send_alerts('renewals') would roll back with it -- its email_log rows and queued
 -- net.http_post requests both vanish, silently dropping that day's renewals digest. A few
--- minutes apart keeps one job's failure from taking the other down with it.
+-- minutes apart keeps one job's failure from taking the other down with it -- and 03:40 is
+-- picked deliberately to land on neither 03:30 (this job) nor 03:35 (onevio-alerts-monday,
+-- below, which only runs Mondays but would otherwise share a minute with this job every week).
 select cron.schedule('onevio-alerts-renewals', '30 3 * * *', $$
   select public.send_alerts('renewals');
 $$);
 
-select cron.schedule('onevio-alerts-overdue', '35 3 * * *', $$
+select cron.schedule('onevio-alerts-overdue', '40 3 * * *', $$
   select public.send_alerts('overdue_tasks');
 $$);
 
