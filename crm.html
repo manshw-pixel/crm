@@ -3732,8 +3732,12 @@ function App({ user }) {
       const p = sb.rpc("record_health", { p_scores: payload });
       // supabase-js REJECTS on network/CORS and RESOLVES { error } otherwise. Swallow both:
       // a failed baseline must never surface as a user-visible error. Only the SUCCESS path
-      // marks the ref, so a network blip at load retries on the next render instead of
-      // permanently skipping the day's baseline for this session.
+      // marks the ref, so a failure leaves healthRecorded.current false and this effect can
+      // still fire again -- but effects run on DEPENDENCY CHANGE, not on every render, and
+      // once `loaded` is true the only dep left that can change is `scored.length`. That
+      // retries the baseline write after an account is added or deleted, and only then: a
+      // session that only edits existing accounts, or only reads, never touches
+      // scored.length and so never retries after a failed load.
       if (p && p.then) p.then(() => { healthRecorded.current = true; }, () => {});
       else healthRecorded.current = true;
     } catch (e) { /* same reasoning */ }
