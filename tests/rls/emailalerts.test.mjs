@@ -210,6 +210,22 @@ test("alert_renewals adds unowned accounts only when asked", async () => {
   assert(with_.map(r => r.account_id).includes("r-5"), "an unowned account was not picked up for admins");
 });
 
+test("alert_renewals tolerates a garbage (non-blank) renewalDate instead of raising", async () => {
+  // I1: the pre-existing nullif guard only rejects EMPTY strings. Import JSON accepts
+  // arbitrary JSON, so an admin can land an account with renewalDate = "TBD" -- a non-blank
+  // string that sails past nullif and hits `::date`, which raises 22007. Before the regex
+  // gate this statement threw and the whole call failed; against the fix it must simply
+  // exclude the bad row and still return the good one.
+  await seedAccount("r-6", { name: "Garbage Date Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: "TBD" });
+  await seedAccount("r-7", { name: "Fine Co", csm: "Admin User", contractStatus: "Active",
+                             renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
+  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  const ids = rows.map(r => r.account_id);
+  assert(!ids.includes("r-6"), "a garbage renewalDate was not filtered out");
+  assert(ids.includes("r-7"), "a well-formed renewal was wrongly excluded alongside the garbage one");
+});
+
 test("alert_overdue_tasks routes through the account's CSM and skips Done", async () => {
   await seedAccount("t-acct", { name: "Task Co", csm: "Admin User", contractStatus: "Active" });
   const past = new Date(Date.now() - 4 * 864e5).toISOString().slice(0, 10);
@@ -236,6 +252,18 @@ test("alert_overdue_tasks does not leak another CSM's tasks", async () => {
   const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
   assert(!rows.map(r => r.task_id).includes("t-4"), "another CSM's overdue task leaked in");
   assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
+});
+
+test("alert_overdue_tasks tolerates a garbage (non-blank) due date instead of raising", async () => {
+  // Same 22007 shape as I1 above, on the `due` column this time.
+  await seedAccount("t-garbage", { name: "Garbage Due Co", csm: "Admin User", contractStatus: "Active" });
+  await seedTask("t-6", { accountId: "t-garbage", title: "Bad due date", due: "TBD", status: "Open" });
+  await seedTask("t-7", { accountId: "t-garbage", title: "Fine due date",
+                          due: new Date(Date.now() - 1 * 864e5).toISOString().slice(0, 10), status: "Open" });
+  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  const ids = rows.map(r => r.task_id);
+  assert(!ids.includes("t-6"), "a garbage due date was not filtered out");
+  assert(ids.includes("t-7"), "a well-formed overdue task was wrongly excluded alongside the garbage one");
 });
 
 const iso = d => new Date(Date.now() + d * 864e5).toISOString().slice(0, 10);
@@ -282,6 +310,18 @@ test("alert_qbr_nudge ignores accounts with qbrFrequency None", async () => {
   const ids = rows.map(r => r.account_id);
   assert(ids.includes("q-6"), "an account with a real QBR cadence in the window was missing");
   assert(!ids.includes("q-5"), "an account with no QBR cadence was nudged");
+});
+
+test("alert_qbr_nudge tolerates a garbage (non-blank) nextQbrDate instead of raising", async () => {
+  // Same 22007 shape as I1 above, on `nextQbrDate` this time.
+  await seedAccount("q-8", { name: "Garbage QBR Co", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: "TBD" });
+  await seedAccount("q-9", { name: "Fine QBR Co", csm: "Admin User", contractStatus: "Active",
+                             qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
+  const rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+  const ids = rows.map(r => r.account_id);
+  assert(!ids.includes("q-8"), "a garbage nextQbrDate was not filtered out");
+  assert(ids.includes("q-9"), "a well-formed QBR was wrongly excluded alongside the garbage one");
 });
 
 test("alert_overdue_tasks adds unowned accounts' tasks only when asked", async () => {
@@ -670,6 +710,15 @@ test("settle_alert_sends counts a failure once across repeat sweeps, not once pe
   assert(afterFirst, "first sweep did not create an error_log row");
   assert(afterFirst.count === 1, `expected count 1 after the first sweep, got ${afterFirst.count}`);
 
+  // M3: sweep 1 can itself create a NEW failed row -- any queued row above whose
+  // net._http_response carries a 4xx/5xx lands in email_log as 'failed' with
+  // settled_at = now(), same as 900020. Left alone, that row would trip sweep 2's guard on
+  // its own and pass this test against the FIXED code for the wrong reason (this test was
+  // previously self-contained only because every OTHER test happens to clean up after
+  // itself -- exactly the implicit coupling commit 88db410 removed elsewhere). Re-clear
+  // every failed row except the one this test is tracking before moving on to sweep 2.
+  await sql(`delete from email_log where status = 'failed' and request_id != 900020`);
+
   // Simulate an hour passing by backdating the SAME row's settled_at to 2 hours ago -- this is
   // the only thing that changes between sweep 1 and sweep 2.
   await sql(`update email_log set settled_at = now() - interval '2 hours' where request_id = 900020`);
@@ -682,6 +731,39 @@ test("settle_alert_sends counts a failure once across repeat sweeps, not once pe
   const [afterSecond] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
   assert(afterSecond.count === afterFirst.count,
     `a failure settled 2 hours ago was re-counted by a later sweep: count went from ${afterFirst.count} to ${afterSecond.count}`);
+});
+
+test("settle_alert_sends does not double-count a failure across back-to-back sweeps at cron cadence", async () => {
+  // M1: a FIXED `now() - interval '1 hour'` guard (even the corrected '1 hour', not the old
+  // '1 day') still double-counts, because the sweep's own cadence ('10 * * * *' in
+  // email-alerts-schedule.sql) does not align with any fixed window. A failure that settles
+  // at, say, 10:10:05 is still inside `now() - interval '1 hour'` at the VERY NEXT sweep
+  // (11:10:03) -- 59 minutes and 58 seconds later, well under an hour. Two sweeps fired
+  // seconds apart (as here) is the same shape at the extreme: settled_at is `now()` for
+  // both, so a fixed-interval guard sees it as "inside the window" on every sweep until it
+  // ages out, not just once. The fix anchors the window to error_log.last_seen for this
+  // fingerprint instead, so sweep 2 only looks at failures settled AFTER sweep 1 already
+  // escalated -- which this one was not.
+  await ensureHttpResponseTable();
+  await sql(`delete from error_log where fingerprint = 'email-send-failed'`);
+  await sql(`delete from email_log where status = 'failed'`);
+  await sql(`delete from email_log where request_id = 900022`);
+  await sql(`insert into email_log (kind, recipient, row_count, request_id, status, settled_at)
+             values ('renewals', 'back-to-back@test.local', 1, 900022, 'failed', now())`);
+
+  // Sweep 1: creates the escalation, count 1.
+  await sql(`select settle_alert_sends()`);
+  const [afterFirst] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
+  assert(afterFirst && afterFirst.count === 1, `expected count 1 after the first sweep, got ${afterFirst && afterFirst.count}`);
+
+  // Sweep 2, immediately after, same row, settled_at unchanged (still `now()`, not backdated
+  // at all). Against a fixed-interval guard this recounts (count -> 2); against the anchored
+  // fix, escalation_since is now sweep 1's last_seen, which is >= this row's settled_at, so
+  // the row is correctly seen as already-escalated and NOT recounted.
+  await sql(`select settle_alert_sends()`);
+  const [afterSecond] = await sql(`select * from error_log where fingerprint = 'email-send-failed'`);
+  assert(afterSecond.count === 1,
+    `a single failure was double-counted by two sweeps fired back-to-back: count went from 1 to ${afterSecond.count}`);
 });
 
 test("settle_alert_sends self-corrects an 'unknown' row once a late response arrives", async () => {
