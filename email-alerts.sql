@@ -261,6 +261,7 @@ declare
   rows_html  text;
   n_rows     int;
   n_sent     int := 0;
+  n_failed   int := 0;
   req        bigint;
   subject    text;
   unrouted   text;
@@ -379,6 +380,7 @@ begin
      where kind = p_kind and recipient = r.email and day = current_date;
     n_sent := n_sent + 1;
     exception when others then
+      n_failed := n_failed + 1;
       perform log_error_system(
         'email-digest-build-failed',
         'write_failed',
@@ -387,7 +389,14 @@ begin
     end;
   end loop;
 
-  return format('%s: %s recipient(s) mailed', p_kind, n_sent);
+  -- A failed digest must never read the same as a quiet no-op: append the failure count
+  -- whenever one is nonzero, so the result text in the SQL Editor (the operator's only
+  -- signal on first-run setup — see email-alerts-schedule.sql) can't be mistaken for
+  -- "nobody has anything due today".
+  return format('%s: %s recipient(s) mailed', p_kind, n_sent)
+    || case when n_failed > 0
+         then format(', %s failed (see error panel)', n_failed)
+         else '' end;
 end $$;
 
 revoke execute on function public.alert_post(text, jsonb, jsonb) from public;
