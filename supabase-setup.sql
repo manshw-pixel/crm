@@ -12,6 +12,11 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- Disabling is the reversible alternative to deleting a user: a delete would orphan the
+-- free-text `csm` / `owner` references that renameEverywhere() exists to keep in sync.
+alter table public.profiles
+  add column if not exists disabled boolean not null default false;
+
 create table if not exists public.settings (
   id int primary key check (id = 1),
   data jsonb not null default '{}'::jsonb,
@@ -35,6 +40,14 @@ create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as
 $$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin') $$;
 
+-- ---------- helper: is the current user active (not disabled)? ----------
+-- Gates every policy below. This is what makes disabling take effect on a LIVE session:
+-- the user keeps a valid JWT, but their next query matches no rows. Anything enforced only
+-- in the client would be a label the browser is trusted to honour, which it is not.
+create or replace function public.is_active()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and not disabled) $$;
+
 -- ---------- signup trigger: auto-create profile; first user = admin ----------
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
@@ -57,8 +70,17 @@ create trigger on_auth_user_created
 create or replace function public.guard_admin_count()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if tg_op = 'UPDATE' and old.role = 'admin' and new.role <> 'admin'
-     and (select count(*) from profiles where role = 'admin' and id <> old.id) = 0 then
+  if tg_op = 'UPDATE' and new.disabled and not old.disabled and new.id = auth.uid() then
+    raise exception 'You cannot disable yourself';
+  end if;
+  -- One predicate for both routes to zero admins: demotion (role change) and disabling.
+  -- The original guard watched only role, so an admin could disable their way to an app
+  -- nobody can administer -- the same failure it was written to prevent.
+  if tg_op = 'UPDATE'
+     and old.role = 'admin' and not old.disabled
+     and (new.role <> 'admin' or new.disabled)
+     and (select count(*) from profiles
+            where role = 'admin' and not disabled and id <> old.id) = 0 then
     raise exception 'At least one admin must remain';
   end if;
   return new;
@@ -66,7 +88,7 @@ end $$;
 
 drop trigger if exists guard_admin_count on public.profiles;
 create trigger guard_admin_count
-  before insert or update of role on public.profiles
+  before insert or update of role, disabled on public.profiles
   for each row execute function public.guard_admin_count();
 
 -- ---------- row-level security ----------

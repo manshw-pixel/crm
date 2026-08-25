@@ -47,3 +47,35 @@ test("one of two admins can be demoted", async () => {
   assert(!demote, `demoting one of two admins should be allowed, got: ${demote && demote.message}`);
   assert(await roleOf(second.id) === "user", "the demotion did not take effect");
 });
+
+// guard_admin_count() now also fires on `disabled` (widened from `update of role`), and
+// carries a second guard: an admin cannot disable themselves, even with others still active.
+test("disabling the last admin is refused", async () => {
+  const { data } = await sessions.admin.auth.getUser();
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", data.user.id);
+  assert(error, "disabling the only admin should raise");
+  // The self-disable guard fires first for the sole admin (they're disabling themselves),
+  // so either message is a correct refusal here.
+  assert(/yourself|at least one admin/i.test(error.message),
+    `expected a refusal, got: ${error.message}`);
+});
+
+test("an admin cannot disable themselves even when another admin exists", async () => {
+  const second = await signUpFresh("admin2@test.local");
+  const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
+  assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
+
+  const { data } = await sessions.admin.auth.getUser();
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", data.user.id);
+  assert(error, "expected self-disable to be refused");
+  assert(/yourself/i.test(error.message), `unexpected message: ${error && error.message}`);
+});
+
+test("one of two admins can be disabled by the other", async () => {
+  const second = await signUpFresh("admin3@test.local");
+  const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
+  assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
+
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", second.id);
+  assert(!error, `expected the disable to succeed, got: ${error && error.message}`);
+});
