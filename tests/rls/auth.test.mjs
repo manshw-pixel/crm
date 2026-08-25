@@ -61,7 +61,7 @@ test("disabling the last admin is refused", async () => {
 });
 
 test("an admin cannot disable themselves even when another admin exists", async () => {
-  const second = await signUpFresh("admin2@test.local");
+  const second = await signUpFresh("admin2b@test.local");
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
 
