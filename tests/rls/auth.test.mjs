@@ -79,3 +79,61 @@ test("one of two admins can be disabled by the other", async () => {
   const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", second.id);
   assert(!error, `expected the disable to succeed, got: ${error && error.message}`);
 });
+
+// admin_user_list() / admin_set_user_email() -- Task 3. profiles has no email column;
+// these definer functions are the only path an admin has to auth.users addresses.
+
+test("admin_user_list returns every user with their email", async () => {
+  const { error, data } = await sessions.admin.rpc("admin_user_list");
+  assert(!error, `admin_user_list failed: ${error && error.message}`);
+  const emails = (data || []).map(r => r.email);
+  // Proves the definer join actually reaches auth.users -- not just that SOME rows came
+  // back. The suite shares state across files, so this asserts membership, not equality.
+  assert(emails.includes("admin@test.local"), `admin@test.local missing from ${JSON.stringify(emails)}`);
+  assert(emails.includes("user@test.local"), `user@test.local missing from ${JSON.stringify(emails)}`);
+});
+
+test("a non-admin cannot call admin_user_list", async () => {
+  // The permitting case is proven above by sessions.admin against the same function --
+  // this is the positive discrimination the refusal is measured against.
+  const { error } = await sessions.user.rpc("admin_user_list");
+  assert(error, "expected admin_user_list to refuse a non-admin");
+});
+
+test("an admin can change a user's email, and a non-admin cannot", async () => {
+  const target = await signUpFresh("email-target1@test.local");
+  const newAddr = "email-target1-new@test.local";
+
+  // Non-admin refusal, checked BEFORE the admin succeeds, so a later success can't be
+  // mistaken for evidence the refusal was ever real.
+  const { error: refused } = await sessions.user.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(refused, "expected admin_set_user_email to refuse a non-admin");
+
+  const { error: ok } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(!ok, `expected the admin's change to succeed, got: ${ok && ok.message}`);
+});
+
+test("admin_set_user_email rejects a duplicate address", async () => {
+  const a = await signUpFresh("dup-a@test.local");
+  const b = await signUpFresh("dup-b@test.local");
+  const takenAddr = "dup-a-taken@test.local";
+
+  // Prove the permitting case first: admin CAN move a's address to a fresh one.
+  const { error: setup } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: a.id, p_email: takenAddr });
+  assert(!setup, `setup rename for a failed: ${setup && setup.message}`);
+
+  const { error } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: b.id, p_email: takenAddr });
+  assert(error, "expected a duplicate email to be refused");
+  assert(/already in use/i.test(error.message), `unexpected message: ${error.message}`);
+});
+
+test("admin_set_user_email rejects a malformed address", async () => {
+  const target = await signUpFresh("malformed-target@test.local");
+  const { error } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: "not-an-email" });
+  assert(error, "expected a malformed email to be refused");
+});

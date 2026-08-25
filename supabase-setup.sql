@@ -485,6 +485,70 @@ end $$;
 revoke execute on function public.record_health(jsonb) from public, anon;
 grant execute on function public.record_health(jsonb) to authenticated;
 
+-- ---------- admin user management ----------
+-- profiles has no email column; addresses live in auth.users, which the browser cannot
+-- read. Definer rights are what make this join possible at all -- the same reason
+-- alert_recipients() in email-alerts.sql is a definer function.
+create or replace function public.admin_user_list()
+returns table(id uuid, name text, role text, disabled boolean, email text)
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  -- A definer function runs as its owner and bypasses RLS, so it must assert its own
+  -- authorisation. Relying on the caller's policies here would expose every address.
+  if not public.is_admin() then
+    raise exception 'admin_user_list: admin only';
+  end if;
+  return query
+    select p.id, p.name, p.role, p.disabled, u.email::text
+    from profiles p join auth.users u on u.id = p.id
+    order by p.created_at;
+end $$;
+
+create or replace function public.admin_set_user_email(p_id uuid, p_email text)
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare
+  addr text := lower(trim(p_email));
+begin
+  if not public.is_admin() then
+    raise exception 'admin_set_user_email: admin only';
+  end if;
+  if addr !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'admin_set_user_email: % is not a valid email address', p_email;
+  end if;
+  if exists (select 1 from auth.users where lower(email) = addr and id <> p_id) then
+    raise exception 'admin_set_user_email: % is already in use', addr;
+  end if;
+  if not exists (select 1 from profiles where id = p_id) then
+    raise exception 'admin_set_user_email: no such user';
+  end if;
+
+  update auth.users
+     set email = addr,
+         -- Bypassing GoTrue's confirm-change flow is a deliberate decision (spec §6).
+         -- Leaving a pending change behind would let a stale confirmation link later
+         -- overwrite the address an admin just set.
+         email_change = '',
+         email_change_token_new = '',
+         email_change_token_current = '',
+         email_confirmed_at = coalesce(email_confirmed_at, now()),
+         updated_at = now()
+   where id = p_id;
+
+  -- GoTrue ALSO keeps the address inside auth.identities.identity_data, and resolves
+  -- some sign-in paths through it. Updating only auth.users can leave the identity
+  -- stale, which is how a user ends up unable to log in with EITHER address. Task 4
+  -- proves which behaviour is real; keep both in step regardless.
+  update auth.identities
+     set identity_data = jsonb_set(identity_data, '{email}', to_jsonb(addr)),
+         updated_at = now()
+   where user_id = p_id and provider = 'email';
+end $$;
+
+revoke execute on function public.admin_user_list() from public;
+revoke execute on function public.admin_set_user_email(uuid, text) from public;
+grant execute on function public.admin_user_list() to authenticated;
+grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
+
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
 -- and unguessable, but treat uploads as shareable). 10 MB client cap.
