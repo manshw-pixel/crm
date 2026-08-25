@@ -38,7 +38,7 @@ end $$;
 -- ---------- helper: is the current user an admin? ----------
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as
-$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin') $$;
+$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not disabled) $$;
 
 -- ---------- helper: is the current user active (not disabled)? ----------
 -- Gates every policy below. This is what makes disabling take effect on a LIVE session:
@@ -101,8 +101,12 @@ alter table public.tasks enable row level security;
 alter table public.opportunities enable row level security;
 
 -- profiles: everyone signed-in reads; only admins change roles/names of others
+-- A disabled user must still read their OWN row (and only it), so Root() can tell them
+-- their access was removed. Gate it flatly and their profile fetch errors instead, leaving
+-- them stuck on "Loading profile…" -- the opposite of a clean sign-out.
 drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles for select to authenticated using (true);
+create policy profiles_select on public.profiles for select to authenticated
+  using (public.is_active() or id = auth.uid());
 drop policy if exists profiles_update_admin on public.profiles;
 create policy profiles_update_admin on public.profiles for update to authenticated
   using (public.is_admin()) with check (public.is_admin());
@@ -120,11 +124,11 @@ declare t text;
 begin
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
-    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (true)', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (public.is_active())', t);
     execute format('drop policy if exists %1$s_insert on public.%1$I', t);
-    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (true)', t);
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (public.is_active())', t);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (true) with check (true)', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (public.is_active()) with check (public.is_active())', t);
   end loop;
 end $$;
 
@@ -136,7 +140,7 @@ declare t text;
 begin
   foreach t in array array['contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_delete on public.%1$I', t);
-    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (true)', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (public.is_active())', t);
   end loop;
 end $$;
 
@@ -486,12 +490,14 @@ grant execute on function public.record_health(jsonb) to authenticated;
 insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
 on conflict (id) do nothing;
 
+-- Gated the same way as the entity tables: a disabled user must not read or upload files
+-- just because the storage policies live apart from the do-block loops above.
 drop policy if exists attachments_read on storage.objects;
 create policy attachments_read on storage.objects
-  for select to authenticated using (bucket_id = 'attachments');
+  for select to authenticated using (bucket_id = 'attachments' and public.is_active());
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
-  for insert to authenticated with check (bucket_id = 'attachments');
+  for insert to authenticated with check (bucket_id = 'attachments' and public.is_active());
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
-  for delete to authenticated using (bucket_id = 'attachments');
+  for delete to authenticated using (bucket_id = 'attachments' and public.is_active());

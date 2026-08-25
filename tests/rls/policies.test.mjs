@@ -1,7 +1,7 @@
 // Admin-gated operations. REMEMBER: a denied delete or update returns NO error — the row
 // simply does not change. Every denial is verified by reading back as admin.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, seedRow, stillExists, valueOf, roleOf } from "./fixtures.mjs";
+import { sessions, seedRow, stillExists, valueOf, roleOf, signUpFresh } from "./fixtures.mjs";
 
 test("a plain user cannot delete an account", async () => {
   await seedRow("accounts", "rls-del-1");
@@ -124,4 +124,83 @@ test("an anonymous client cannot update or delete", async () => {
 
   await sessions.anon.from("accounts").delete().eq("id", "rls-anon-2");
   assert(await stillExists("accounts", "rls-anon-2"), "an anonymous client deleted a row");
+});
+
+// --- is_active() gating: disabling a user revokes a LIVE session --------------------
+// No re-login happens in any of these tests — the victim's client keeps the same token
+// throughout. That is the point: is_active() is re-evaluated on every request, so the
+// same JWT that worked a moment ago matches zero rows the instant `disabled` flips.
+// Each test signs up its own fresh user rather than touching sessions.admin/sessions.user,
+// since there is no per-test reset and those two are shared by every other test in the
+// suite (including tests that run after this file).
+
+test("a disabled user reads nothing from the business tables", async () => {
+  const victim = await signUpFresh("disable-victim1@test.local");
+  await seedRow("accounts", "rls-disable-1");
+
+  // Prove the session WORKS before disabling. Without this the assertion below passes
+  // just as happily against a broken client, proving nothing.
+  const before = await victim.client.from("accounts").select("id").eq("id", "rls-disable-1");
+  assert(!before.error && before.data.length === 1,
+    `victim should read the seeded account before being disabled, got ${JSON.stringify(before)}`);
+
+  const { error: disableErr } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+  assert(!disableErr, `disabling the victim failed: ${disableErr && disableErr.message}`);
+
+  const after = await victim.client.from("accounts").select("id").eq("id", "rls-disable-1");
+  assert(!after.error && after.data.length === 0,
+    `disabled user should read 0 rows, got ${JSON.stringify(after)}`);
+});
+
+test("a disabled user cannot insert", async () => {
+  const victim = await signUpFresh("disable-victim2@test.local");
+  const pre = await victim.client.from("accounts").insert({ id: "rls-disable-pre", data: { name: "Pre" } });
+  assert(!pre.error, `victim should insert before being disabled, got: ${pre.error && pre.error.message}`);
+
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+
+  const { error } = await victim.client.from("accounts").insert({ id: "rls-disable-post", data: { name: "Post" } });
+  assert(error, "disabled user should not be able to insert");
+  assert(!(await stillExists("accounts", "rls-disable-post")), "the disabled user's insert took effect");
+});
+
+test("a disabled user can still read their OWN profile, and no other", async () => {
+  const victim = await signUpFresh("disable-victim3@test.local");
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+
+  // Root() needs this row to tell the user they have been disabled. Deny it and they
+  // hang on "Loading profile…" instead.
+  const own = await victim.client.from("profiles").select("id,disabled").eq("id", victim.id).single();
+  assert(!own.error && own.data.disabled === true,
+    `disabled user must read their own profile, got ${JSON.stringify(own)}`);
+
+  const all = await victim.client.from("profiles").select("id");
+  assert(!all.error && all.data.length === 1,
+    `disabled user should see only their own profile, got ${JSON.stringify(all)}`);
+});
+
+test("a disabled admin loses admin powers", async () => {
+  const second = await signUpFresh("disable-admin1@test.local");
+  const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
+  assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
+
+  await seedRow("accounts", "rls-disable-admin");
+  const { error: disableErr } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", second.id);
+  assert(!disableErr, `disabling the second admin failed: ${disableErr && disableErr.message}`);
+
+  // accounts_delete is admin-only; a disabled admin must not pass is_admin().
+  await second.client.from("accounts").delete().eq("id", "rls-disable-admin");
+  assert(await stillExists("accounts", "rls-disable-admin"),
+    "a disabled admin should not have been able to delete the account");
+});
+
+test("re-enabling a user restores access", async () => {
+  const victim = await signUpFresh("disable-admin2@test.local");
+  await seedRow("accounts", "rls-disable-reenable");
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+  const { error: reEnableErr } = await sessions.admin.from("profiles").update({ disabled: false }).eq("id", victim.id);
+  assert(!reEnableErr, `re-enabling the victim failed: ${reEnableErr && reEnableErr.message}`);
+
+  const { data, error } = await victim.client.from("accounts").select("id").eq("id", "rls-disable-reenable");
+  assert(!error && data.length === 1, `re-enabled user should read again, got ${JSON.stringify({ data, error })}`);
 });
