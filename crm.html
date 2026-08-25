@@ -3422,18 +3422,34 @@ function UsersCard({ me }) {
     if (newName === u.name && editing.email.trim().toLowerCase() === (u.email || "").toLowerCase()) return setEditing(null);
     if (users.some(x => x.id !== u.id && x.name === newName)) return setErr("That name is already taken.");
     setBusy(true);
+    const nameChanged = newName !== u.name;
+    const emailChanged = editing.email.trim().toLowerCase() !== (u.email || "").toLowerCase();
     try {
-      if (newName !== u.name) {
+      if (nameChanged) {
         const { error } = await sb.from("profiles").update({ name: newName }).eq("id", u.id);
         if (error) throw error;
         await renameEverywhere(u.name, newName);
       }
-      if (editing.email.trim().toLowerCase() !== (u.email || "").toLowerCase()) {
-        const { error } = await sb.rpc("admin_set_user_email",
-          { p_id: u.id, p_email: editing.email.trim() });
-        if (error) throw error;
+      try {
+        if (emailChanged) {
+          const { error } = await sb.rpc("admin_set_user_email",
+            { p_id: u.id, p_email: editing.email.trim() });
+          if (error) throw error;
+        }
+      } catch (emailEx) {
+        // Name already went through (if it changed) -- don't leave the user thinking
+        // nothing happened. Reload so the list reflects the applied rename, close the
+        // editor, and say plainly which half failed.
+        if (nameChanged) {
+          setErr(`Renamed ${u.name} → ${newName}, but the email update failed: ${emailEx.message}`);
+          setEditing(null); load();
+        } else {
+          setErr(emailEx.message);
+        }
+        setBusy(false);
+        return;
       }
-      setMsg(`Updated ${u.name}${newName !== u.name ? ` → ${newName}; their accounts and tasks were updated too` : ""}.`);
+      setMsg(`Updated ${u.name}${nameChanged ? ` → ${newName}; their accounts and tasks were updated too` : ""}.`);
       setEditing(null); load();
     } catch (ex) { setErr(ex.message); }
     setBusy(false);
@@ -3474,7 +3490,7 @@ function UsersCard({ me }) {
           ) : (
             <span className="flex-1">
               <div>{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}
-                {u.disabled && <span className="ml-2 rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-600">disabled</span>}
+                {u.disabled && <span data-user-disabled-badge className="ml-2 rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-600">disabled</span>}
                 <button title="Edit user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name, email: u.email || "" }); }}>✎</button>
               </div>
               <div className="text-xs text-slate-500">{u.email}</div>
@@ -3485,8 +3501,8 @@ function UsersCard({ me }) {
             ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
             : <button className="text-xs text-rose-500 hover:underline" onClick={() => setRole(u, "user")}>demote</button>)}
           {u.id !== me.id && (u.disabled
-            ? <button className="text-xs text-emerald-600 hover:underline" onClick={() => applyDisabled(u, false)}>enable</button>
-            : <button className="text-xs text-rose-500 hover:underline" onClick={() => setConfirmDisable(u)}>disable</button>)}
+            ? <button data-user-enable-btn className="text-xs text-emerald-600 hover:underline" onClick={() => applyDisabled(u, false)}>enable</button>
+            : <button data-user-disable-btn className="text-xs text-rose-500 hover:underline" onClick={() => setConfirmDisable(u)}>disable</button>)}
         </div>
       ))}
       <form onSubmit={addUser} className="mt-3 flex flex-wrap items-center gap-2">
