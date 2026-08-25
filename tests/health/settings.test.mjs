@@ -46,3 +46,13 @@ test("a disabled user is marked as such and offers re-enable", async () => {
   assert(enableBtnCount > 0, "re-enable control missing");
   await browser.close();
 });
+
+test("a disabled user is ejected instead of seeing the app", async () => {
+  const { page, browser } = await launch(
+    `window.__seedProfile = { id: "u1", name: "Test User", role: "user", disabled: true };`);
+  const txt = await rootText(page);
+  assert(/access/i.test(txt) && /removed/i.test(txt),
+    `expected an access-removed message, got: ${txt.slice(0, 200)}`);
+  assert(!/Dashboard/.test(txt), "a disabled user must not reach the app shell");
+  await browser.close();
+});

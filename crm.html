@@ -405,7 +405,7 @@ async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
     sb.from("settings").select("data").eq("id", 1),
-    sb.from("profiles").select("id,name,role"),
+    sb.from("profiles").select("id,name,role,disabled"),
   ]);
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
@@ -1228,7 +1228,7 @@ function AddTaskForm({ acct, dispatch, onDone, team = [], user, existing }) {
   const [kept, setKept] = useState(existing ? existing.attachments || [] : []);
   const [busy, setBusy] = useState(false);
   const fileRef = useRef();
-  const owners = [...new Set([user ? user.name : null, ...team.map(u => u.name), acct.csm, existing ? existing.owner : null].filter(Boolean))];
+  const owners = [...new Set([user ? user.name : null, ...team.filter(u => !u.disabled).map(u => u.name), acct.csm, existing ? existing.owner : null].filter(Boolean))];
   return (
     <form className="space-y-2" onSubmit={async e => {
       e.preventDefault(); if (!title.trim() || busy) return;
@@ -1294,7 +1294,7 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
 function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user }) {
-  const csmOptions = [...new Set(["", ...team.map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
+  const csmOptions = [...new Set(["", ...team.filter(u => !u.disabled).map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
   const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
@@ -4005,7 +4005,7 @@ function Root() {
   }, []);
   useEffect(() => {
     if (!session) { setProfile(null); return; }
-    sb.from("profiles").select("id,name,role").eq("id", session.user.id).single()
+    sb.from("profiles").select("id,name,role,disabled").eq("id", session.user.id).single()
       // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
       // wraps App, so window.__toast is genuinely undefined here and alert is the only
       // channel left. Deliberately kept.
@@ -4015,6 +4015,17 @@ function Root() {
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
+  // The RLS policies are the real boundary -- a disabled user's queries already return
+  // nothing. This is the humane surface on top: say what happened instead of rendering an
+  // app with no data in it. Deliberately NOT worded "cannot sign in": GoTrue still issues
+  // them a token; what they have lost is access.
+  if (profile.disabled) return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
+      <p className="font-semibold text-slate-900">Your access has been removed.</p>
+      <p>Ask an administrator to re-enable your account.</p>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+    </div>
+  );
   // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
   // Renewals leaves the nav and every other view usable. This outer one is the backstop --
   // App's own body computes analytics (retentionStats at ~3204), so data that breaks THAT
