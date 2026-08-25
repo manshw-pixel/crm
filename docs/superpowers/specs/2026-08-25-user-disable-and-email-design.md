@@ -70,6 +70,19 @@ The three `attachments_*` storage policies (supabase-setup.sql:467-476) must be 
 They are separate from the entity-table loop and easy to miss; leaving them means a
 disabled user can still read and upload files, which is access by any reasonable reading.
 
+**`settings_select` and `health_snapshots_select` are gated as well** (added during
+implementation, after review found both still `using (true)`). Neither is in the entity
+loop, but both hold business data — scoring weights, currency rates, snapshots, segments,
+and account health history — and neither has the product-level reason that justifies
+`profiles_select`'s exception. The rule is the goal, not the loop: if a policy grants a
+`authenticated` user access to business data, it is gated.
+
+**`error_log_insert` is the deliberate exception in the other direction.** It stays
+`with check (true)`. It is the most permissive policy in the file by design — a user who
+cannot report an error is a user you never hear about — and a disabled user hitting an
+error should still be able to report it. The table holds no business data and is
+admin-read-only.
+
 This is the whole point of the feature. A disabled user holding a valid JWT gets nothing
 back from their next query. Anything weaker means "disabled" is a label the client is
 trusted to honour, which it is not.
