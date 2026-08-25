@@ -544,8 +544,10 @@ begin
    where user_id = p_id and provider = 'email';
 end $$;
 
-revoke execute on function public.admin_user_list() from public;
-revoke execute on function public.admin_set_user_email(uuid, text) from public;
+-- Revoke from PUBLIC and anon both -- see record_health's revoke above for why PUBLIC
+-- alone leaves anon's separate default grant standing.
+revoke execute on function public.admin_user_list() from public, anon;
+revoke execute on function public.admin_set_user_email(uuid, text) from public, anon;
 grant execute on function public.admin_user_list() to authenticated;
 grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
 
