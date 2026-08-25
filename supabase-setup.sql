@@ -355,6 +355,8 @@ begin
   if auth.uid() is null then
     raise exception 'log_error: sign in required';
   end if;
+  -- Deliberately NOT gated on is_active(), unlike record_health below: a disabled user who
+  -- cannot report an error is a user whose failures we never hear about.
 
   insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
   values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
@@ -451,6 +453,15 @@ begin
   if auth.uid() is null then
     raise exception 'record_health: sign in required';
   end if;
+  -- record_health is SECURITY DEFINER, so it bypasses RLS entirely -- gating every policy
+  -- on is_active() (health_snapshots_select included) does nothing to stop a disabled user
+  -- from calling this RPC directly. A disabled user still holds a valid JWT (spec S3), so
+  -- that check has to be repeated here explicitly. Do NOT delete this while "simplifying" --
+  -- health_snapshots cannot be reconstructed backwards, so a disabled user overwriting it
+  -- destroys data with no way to recover it.
+  if not public.is_active() then
+    raise exception 'record_health: no access';
+  end if;
 
   insert into health_snapshots (account_id, day, score)
   select e->>'accountId', current_date,
@@ -530,6 +541,7 @@ begin
          email_change = '',
          email_change_token_new = '',
          email_change_token_current = '',
+         email_change_confirm_status = 0,
          email_confirmed_at = coalesce(email_confirmed_at, now()),
          updated_at = now()
    where id = p_id;
@@ -538,6 +550,9 @@ begin
   -- some sign-in paths through it. Updating only auth.users can leave the identity
   -- stale, which is how a user ends up unable to log in with EITHER address. Task 4
   -- proves which behaviour is real; keep both in step regardless.
+  -- This function assumes the 'email' provider -- a user signed in via an OAuth identity
+  -- (google, github, ...) would keep that identity's stale address; there is no
+  -- 'provider = email' row for it to update.
   update auth.identities
      set identity_data = jsonb_set(identity_data, '{email}', to_jsonb(addr)),
          updated_at = now()
@@ -553,7 +568,10 @@ grant execute on function public.admin_set_user_email(uuid, text) to authenticat
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
--- and unguessable, but treat uploads as shareable). 10 MB client cap.
+-- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
+-- attachments_read below stops API listing/reading by a disabled user, but NOT fetching a
+-- URL they already hold -- the bucket is public, so a bare GET on the object URL never
+-- touches this policy.
 insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
 on conflict (id) do nothing;
 

@@ -213,3 +213,58 @@ test("re-enabling a user restores access", async () => {
   const { data, error } = await victim.client.from("accounts").select("id").eq("id", "rls-disable-reenable");
   assert(!error && data.length === 1, `re-enabled user should read again, got ${JSON.stringify({ data, error })}`);
 });
+
+// settings_select and health_snapshots_select were gated on is_active() late and had no
+// test -- prove active-CAN-read first, then disable and assert it cannot. An
+// absence-only assertion proves nothing (see rls-anon-key-vacuity in the project memory).
+
+test("a disabled user cannot read settings", async () => {
+  const victim = await signUpFresh("disable-victim-settings@test.local");
+  await sessions.admin.from("settings").insert({ id: 1, data: { rates: { INR: 0.012 } } });
+
+  const before = await victim.client.from("settings").select("id");
+  assert(!before.error && before.data.length === 1,
+    `victim should read settings before being disabled, got ${JSON.stringify(before)}`);
+
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+
+  const after = await victim.client.from("settings").select("id");
+  assert(!after.error && after.data.length === 0,
+    `disabled user should read 0 settings rows, got ${JSON.stringify(after)}`);
+});
+
+test("a disabled user cannot read health_snapshots", async () => {
+  const victim = await signUpFresh("disable-victim-health@test.local");
+  await seedRow("accounts", "rls-disable-health-acct");
+  await sessions.admin.from("health_snapshots").insert({ account_id: "rls-disable-health-acct", score: 80 });
+
+  const before = await victim.client.from("health_snapshots").select("account_id").eq("account_id", "rls-disable-health-acct");
+  assert(!before.error && before.data.length === 1,
+    `victim should read health_snapshots before being disabled, got ${JSON.stringify(before)}`);
+
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+
+  const after = await victim.client.from("health_snapshots").select("account_id").eq("account_id", "rls-disable-health-acct");
+  assert(!after.error && after.data.length === 0,
+    `disabled user should read 0 health_snapshots rows, got ${JSON.stringify(after)}`);
+});
+
+// record_health() is SECURITY DEFINER and bypasses RLS entirely, so gating
+// health_snapshots_select above does nothing to stop a disabled user calling this RPC
+// directly -- this is the assertion whose absence hid that bug (see final-fix-report).
+test("record_health is refused for a disabled user", async () => {
+  const victim = await signUpFresh("disable-victim-record@test.local");
+  await seedRow("accounts", "rls-disable-record-acct");
+
+  const before = await victim.client.rpc("record_health", { p_scores: [{ accountId: "rls-disable-record-acct", score: 55 }] });
+  assert(!before.error, `victim should call record_health before being disabled, got: ${before.error && before.error.message}`);
+
+  await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
+
+  const { error } = await victim.client.rpc("record_health", { p_scores: [{ accountId: "rls-disable-record-acct", score: 99 }] });
+  assert(error, "a disabled user should not be able to call record_health");
+
+  const row = await sessions.admin.from("health_snapshots").select("score").eq("account_id", "rls-disable-record-acct").single();
+  assert(!row.error && row.data.score === 55,
+    `a disabled user's record_health call must not have taken effect, got ${JSON.stringify(row)}`);
+});

@@ -2207,7 +2207,11 @@ function ConfirmDialog({ title, body, confirmLabel = "Confirm", tone = "danger",
 }
 function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
   const toast = useToast();
-  const names = team.map(t => t.name).filter(Boolean);
+  // Bulk assignment, not an edit of one existing value -- unlike AddTaskForm/AccountForm
+  // (crm.html ~1231, ~1297) there is no single "current" CSM/owner to fold back in: each
+  // selected account can already have a different one. So this only needs to keep disabled
+  // users out of the choices, not preserve anything.
+  const names = team.filter(u => !u.disabled).map(t => t.name).filter(Boolean);
   const [csmVal, setCsmVal] = useState(names[0] || user.name);
   const [tierVal, setTierVal] = useState("Mid");
   const [title, setTitle] = useState(""); const [due, setDue] = useState(iso(Date.now()));
@@ -3517,7 +3521,7 @@ function UsersCard({ me }) {
       <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). Disabling a user removes their access immediately; re-enable them any time. To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
       {confirmDisable && <ConfirmDialog
         title={`Disable ${confirmDisable.name}?`}
-        body="They lose access to every account, task and file immediately — even if they are signed in right now. You can re-enable them at any time."
+        body="They lose access to every account, task and file immediately — even if they are signed in right now — except any file link they already hold, which keeps working. You can re-enable them at any time."
         confirmLabel="Disable"
         onConfirm={async () => { await applyDisabled(confirmDisable, true); setConfirmDisable(null); }}
         onClose={() => setConfirmDisable(null)} />}
