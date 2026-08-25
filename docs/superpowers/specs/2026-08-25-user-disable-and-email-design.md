@@ -51,6 +51,25 @@ Every entity policy in `supabase-setup.sql` changes from `using (true)` to
 `using (public.is_active())`, with the same predicate in each `with check`. `is_admin()`
 gains `and not disabled`.
 
+**`profiles_select` is the one deliberate exception:**
+
+```sql
+using (public.is_active() or id = auth.uid())
+```
+
+A disabled user must still be able to read *their own* profile row and nothing else.
+Without the `or`, `Root()`'s `.single()` fetch (crm.html:3961) returns no row, errors, and
+strands them on "Loading profile…" forever — the opposite of the clean sign-out in §3.
+With it, they read one row, see `disabled = true`, and get ejected with a message.
+`Root()`'s select must therefore include `disabled` alongside `id,name,role`.
+
+`merge_row` needs no change: it is `security invoker` (deliberately — see the comment above
+it in supabase-setup.sql), so the tightened policies apply to it automatically.
+
+The three `attachments_*` storage policies (supabase-setup.sql:467-476) must be gated too.
+They are separate from the entity-table loop and easy to miss; leaving them means a
+disabled user can still read and upload files, which is access by any reasonable reading.
+
 This is the whole point of the feature. A disabled user holding a valid JWT gets nothing
 back from their next query. Anything weaker means "disabled" is a label the client is
 trusted to honour, which it is not.
