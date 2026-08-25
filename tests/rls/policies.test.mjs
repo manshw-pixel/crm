@@ -184,6 +184,15 @@ test("a disabled admin loses admin powers", async () => {
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
 
+  // Prove the promotion actually stuck, and that second.client can delete WHILE active,
+  // before disabling. Without this, a promotion that silently failed to take effect would
+  // still make the assertion below pass -- a non-admin's delete is denied either way.
+  await seedRow("accounts", "rls-disable-admin-before");
+  const before = await second.client.from("accounts").delete().eq("id", "rls-disable-admin-before");
+  assert(!before.error, `promoted admin should delete before being disabled, got: ${before.error && before.error.message}`);
+  assert(!(await stillExists("accounts", "rls-disable-admin-before")),
+    "the promoted admin's delete while active did not take effect");
+
   await seedRow("accounts", "rls-disable-admin");
   const { error: disableErr } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", second.id);
   assert(!disableErr, `disabling the second admin failed: ${disableErr && disableErr.message}`);

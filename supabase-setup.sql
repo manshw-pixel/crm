@@ -113,7 +113,7 @@ create policy profiles_update_admin on public.profiles for update to authenticat
 
 -- settings: read all, write admin
 drop policy if exists settings_select on public.settings;
-create policy settings_select on public.settings for select to authenticated using (true);
+create policy settings_select on public.settings for select to authenticated using (public.is_active());
 drop policy if exists settings_write on public.settings;
 create policy settings_write on public.settings for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
@@ -421,10 +421,11 @@ create table if not exists public.health_snapshots (
 
 alter table public.health_snapshots enable row level security;
 
--- select: any authenticated user. Scores are already visible in the app to everyone.
+-- select: any authenticated, active user. Scores are already visible in the app to everyone
+-- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
 drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_active());
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
