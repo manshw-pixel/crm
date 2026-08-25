@@ -1,7 +1,7 @@
 # Disabling users, and editing their name and email
 
 Date: 2026-08-25
-Status: approved, not yet implemented
+Status: implemented (PR #39)
 
 ## Problem
 

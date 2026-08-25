@@ -79,6 +79,36 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
 - In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
 
+## Disabling a user
+
+Admins can disable a colleague from **Settings → Users** instead of deleting their
+account outright — their profile and history stay in place, but their access stops.
+
+**Rolling this out to an existing project.** This feature shipped by changing
+`supabase-setup.sql` itself, not by adding a new file. To pick it up, re-run
+`supabase-setup.sql` **whole, top to bottom**, in the Supabase SQL editor — the same
+step as section 2, just done again. This run **rewrites the live RLS policies**, it does
+not merely add to them. Do not run only part of the file: a partial run leaves policies
+that reference the new `disabled` column before that column exists, and the visible
+failure mode is everyone losing access to everything at once. That's obvious the moment
+it happens, and it's fixed the same way — finish running the file top to bottom.
+
+**What "disabled" actually blocks.** A disabled user loses read/write access to every
+entity through the database's row-level security rules the moment you flip the switch,
+and they're signed out of the open app with an "Your access has been removed" screen the
+next time it talks to the server. What disabling does **not** do is block sign-in itself:
+Supabase's auth service (GoTrue) will still hand a disabled user a valid session token if
+they try to log in again, because RLS only governs access to data, not authentication.
+Don't describe this feature anywhere as preventing sign-in — it doesn't. If you ever need
+a hard sign-in block, that requires calling GoTrue's admin API with the project's
+`service_role` secret, which this app does not do.
+
+One more wrinkle: a user disabled **while already signed in** keeps a stale copy of their
+own profile in the browser until something forces a refresh (a reload, a new query), so
+they may not see the ejection screen right away. That's a cosmetic delay only — RLS is
+already denying their queries from the instant you disable them, so they have no real
+access regardless of what their screen still shows.
+
 ## Optional: email alerts
 
 Each person gets a digest covering **their own accounts only**: renewals due within 30
