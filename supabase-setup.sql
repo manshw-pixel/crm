@@ -12,6 +12,11 @@ create table if not exists public.profiles (
   created_at timestamptz not null default now()
 );
 
+-- Disabling is the reversible alternative to deleting a user: a delete would orphan the
+-- free-text `csm` / `owner` references that renameEverywhere() exists to keep in sync.
+alter table public.profiles
+  add column if not exists disabled boolean not null default false;
+
 create table if not exists public.settings (
   id int primary key check (id = 1),
   data jsonb not null default '{}'::jsonb,
@@ -33,7 +38,15 @@ end $$;
 -- ---------- helper: is the current user an admin? ----------
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as
-$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin') $$;
+$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not disabled) $$;
+
+-- ---------- helper: is the current user active (not disabled)? ----------
+-- Gates every policy below. This is what makes disabling take effect on a LIVE session:
+-- the user keeps a valid JWT, but their next query matches no rows. Anything enforced only
+-- in the client would be a label the browser is trusted to honour, which it is not.
+create or replace function public.is_active()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and not disabled) $$;
 
 -- ---------- signup trigger: auto-create profile; first user = admin ----------
 create or replace function public.handle_new_user()
@@ -57,8 +70,17 @@ create trigger on_auth_user_created
 create or replace function public.guard_admin_count()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
-  if tg_op = 'UPDATE' and old.role = 'admin' and new.role <> 'admin'
-     and (select count(*) from profiles where role = 'admin' and id <> old.id) = 0 then
+  if tg_op = 'UPDATE' and new.disabled and not old.disabled and new.id = auth.uid() then
+    raise exception 'You cannot disable yourself';
+  end if;
+  -- One predicate for both routes to zero admins: demotion (role change) and disabling.
+  -- The original guard watched only role, so an admin could disable their way to an app
+  -- nobody can administer -- the same failure it was written to prevent.
+  if tg_op = 'UPDATE'
+     and old.role = 'admin' and not old.disabled
+     and (new.role <> 'admin' or new.disabled)
+     and (select count(*) from profiles
+            where role = 'admin' and not disabled and id <> old.id) = 0 then
     raise exception 'At least one admin must remain';
   end if;
   return new;
@@ -66,7 +88,7 @@ end $$;
 
 drop trigger if exists guard_admin_count on public.profiles;
 create trigger guard_admin_count
-  before insert or update of role on public.profiles
+  before insert or update of role, disabled on public.profiles
   for each row execute function public.guard_admin_count();
 
 -- ---------- row-level security ----------
@@ -79,15 +101,19 @@ alter table public.tasks enable row level security;
 alter table public.opportunities enable row level security;
 
 -- profiles: everyone signed-in reads; only admins change roles/names of others
+-- A disabled user must still read their OWN row (and only it), so Root() can tell them
+-- their access was removed. Gate it flatly and their profile fetch errors instead, leaving
+-- them stuck on "Loading profile…" -- the opposite of a clean sign-out.
 drop policy if exists profiles_select on public.profiles;
-create policy profiles_select on public.profiles for select to authenticated using (true);
+create policy profiles_select on public.profiles for select to authenticated
+  using (public.is_active() or id = auth.uid());
 drop policy if exists profiles_update_admin on public.profiles;
 create policy profiles_update_admin on public.profiles for update to authenticated
   using (public.is_admin()) with check (public.is_admin());
 
 -- settings: read all, write admin
 drop policy if exists settings_select on public.settings;
-create policy settings_select on public.settings for select to authenticated using (true);
+create policy settings_select on public.settings for select to authenticated using (public.is_active());
 drop policy if exists settings_write on public.settings;
 create policy settings_write on public.settings for all to authenticated
   using (public.is_admin()) with check (public.is_admin());
@@ -98,11 +124,11 @@ declare t text;
 begin
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
-    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (true)', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (public.is_active())', t);
     execute format('drop policy if exists %1$s_insert on public.%1$I', t);
-    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (true)', t);
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (public.is_active())', t);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (true) with check (true)', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (public.is_active()) with check (public.is_active())', t);
   end loop;
 end $$;
 
@@ -114,7 +140,7 @@ declare t text;
 begin
   foreach t in array array['contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_delete on public.%1$I', t);
-    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (true)', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (public.is_active())', t);
   end loop;
 end $$;
 
@@ -329,6 +355,8 @@ begin
   if auth.uid() is null then
     raise exception 'log_error: sign in required';
   end if;
+  -- Deliberately NOT gated on is_active(), unlike record_health below: a disabled user who
+  -- cannot report an error is a user whose failures we never hear about.
 
   insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
   values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
@@ -395,10 +423,11 @@ create table if not exists public.health_snapshots (
 
 alter table public.health_snapshots enable row level security;
 
--- select: any authenticated user. Scores are already visible in the app to everyone.
+-- select: any authenticated, active user. Scores are already visible in the app to everyone
+-- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
 drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
-  for select to authenticated using (true);
+  for select to authenticated using (public.is_active());
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
@@ -423,6 +452,15 @@ begin
   -- to be made explicitly here instead.
   if auth.uid() is null then
     raise exception 'record_health: sign in required';
+  end if;
+  -- record_health is SECURITY DEFINER, so it bypasses RLS entirely -- gating every policy
+  -- on is_active() (health_snapshots_select included) does nothing to stop a disabled user
+  -- from calling this RPC directly. A disabled user still holds a valid JWT (spec S3), so
+  -- that check has to be repeated here explicitly. Do NOT delete this while "simplifying" --
+  -- health_snapshots cannot be reconstructed backwards, so a disabled user overwriting it
+  -- destroys data with no way to recover it.
+  if not public.is_active() then
+    raise exception 'record_health: no access';
   end if;
 
   insert into health_snapshots (account_id, day, score)
@@ -458,18 +496,93 @@ end $$;
 revoke execute on function public.record_health(jsonb) from public, anon;
 grant execute on function public.record_health(jsonb) to authenticated;
 
+-- ---------- admin user management ----------
+-- profiles has no email column; addresses live in auth.users, which the browser cannot
+-- read. Definer rights are what make this join possible at all -- the same reason
+-- alert_recipients() in email-alerts.sql is a definer function.
+create or replace function public.admin_user_list()
+returns table(id uuid, name text, role text, disabled boolean, email text)
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  -- A definer function runs as its owner and bypasses RLS, so it must assert its own
+  -- authorisation. Relying on the caller's policies here would expose every address.
+  if not public.is_admin() then
+    raise exception 'admin_user_list: admin only';
+  end if;
+  return query
+    select p.id, p.name, p.role, p.disabled, u.email::text
+    from profiles p join auth.users u on u.id = p.id
+    order by p.created_at;
+end $$;
+
+create or replace function public.admin_set_user_email(p_id uuid, p_email text)
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare
+  addr text := lower(trim(p_email));
+begin
+  if not public.is_admin() then
+    raise exception 'admin_set_user_email: admin only';
+  end if;
+  if addr !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'admin_set_user_email: % is not a valid email address', p_email;
+  end if;
+  if exists (select 1 from auth.users where lower(email) = addr and id <> p_id) then
+    raise exception 'admin_set_user_email: % is already in use', addr;
+  end if;
+  if not exists (select 1 from profiles where id = p_id) then
+    raise exception 'admin_set_user_email: no such user';
+  end if;
+
+  update auth.users
+     set email = addr,
+         -- Bypassing GoTrue's confirm-change flow is a deliberate decision (spec §6).
+         -- Leaving a pending change behind would let a stale confirmation link later
+         -- overwrite the address an admin just set.
+         email_change = '',
+         email_change_token_new = '',
+         email_change_token_current = '',
+         email_change_confirm_status = 0,
+         email_confirmed_at = coalesce(email_confirmed_at, now()),
+         updated_at = now()
+   where id = p_id;
+
+  -- GoTrue ALSO keeps the address inside auth.identities.identity_data, and resolves
+  -- some sign-in paths through it. Updating only auth.users can leave the identity
+  -- stale, which is how a user ends up unable to log in with EITHER address. Task 4
+  -- proves which behaviour is real; keep both in step regardless.
+  -- This function assumes the 'email' provider -- a user signed in via an OAuth identity
+  -- (google, github, ...) would keep that identity's stale address; there is no
+  -- 'provider = email' row for it to update.
+  update auth.identities
+     set identity_data = jsonb_set(identity_data, '{email}', to_jsonb(addr)),
+         updated_at = now()
+   where user_id = p_id and provider = 'email';
+end $$;
+
+-- Revoke from PUBLIC and anon both -- see record_health's revoke above for why PUBLIC
+-- alone leaves anon's separate default grant standing.
+revoke execute on function public.admin_user_list() from public, anon;
+revoke execute on function public.admin_set_user_email(uuid, text) from public, anon;
+grant execute on function public.admin_user_list() to authenticated;
+grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
+
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
--- and unguessable, but treat uploads as shareable). 10 MB client cap.
+-- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
+-- attachments_read below stops API listing/reading by a disabled user, but NOT fetching a
+-- URL they already hold -- the bucket is public, so a bare GET on the object URL never
+-- touches this policy.
 insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
 on conflict (id) do nothing;
 
+-- Gated the same way as the entity tables: a disabled user must not read or upload files
+-- just because the storage policies live apart from the do-block loops above.
 drop policy if exists attachments_read on storage.objects;
 create policy attachments_read on storage.objects
-  for select to authenticated using (bucket_id = 'attachments');
+  for select to authenticated using (bucket_id = 'attachments' and public.is_active());
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
-  for insert to authenticated with check (bucket_id = 'attachments');
+  for insert to authenticated with check (bucket_id = 'attachments' and public.is_active());
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
-  for delete to authenticated using (bucket_id = 'attachments');
+  for delete to authenticated using (bucket_id = 'attachments' and public.is_active());

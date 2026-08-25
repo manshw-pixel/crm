@@ -1,6 +1,6 @@
 // The signup path and role assignment — handle_new_user() in supabase-setup.sql.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, roleOf, signUpFresh } from "./fixtures.mjs";
+import { sessions, roleOf, signUpFresh, newClient, PASSWORD } from "./fixtures.mjs";
 
 test("the first signup becomes an admin", async () => {
   const { data } = await sessions.admin.auth.getUser();
@@ -46,4 +46,131 @@ test("one of two admins can be demoted", async () => {
   const { error: demote } = await sessions.admin.from("profiles").update({ role: "user" }).eq("id", second.id);
   assert(!demote, `demoting one of two admins should be allowed, got: ${demote && demote.message}`);
   assert(await roleOf(second.id) === "user", "the demotion did not take effect");
+});
+
+// guard_admin_count() now also fires on `disabled` (widened from `update of role`), and
+// carries a second guard: an admin cannot disable themselves, even with others still active.
+test("disabling the last admin is refused", async () => {
+  const { data } = await sessions.admin.auth.getUser();
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", data.user.id);
+  assert(error, "disabling the only admin should raise");
+  // The self-disable guard fires first for the sole admin (they're disabling themselves),
+  // so either message is a correct refusal here.
+  assert(/yourself|at least one admin/i.test(error.message),
+    `expected a refusal, got: ${error.message}`);
+});
+
+test("an admin cannot disable themselves even when another admin exists", async () => {
+  const second = await signUpFresh("admin2b@test.local");
+  const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
+  assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
+
+  const { data } = await sessions.admin.auth.getUser();
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", data.user.id);
+  assert(error, "expected self-disable to be refused");
+  assert(/yourself/i.test(error.message), `unexpected message: ${error && error.message}`);
+});
+
+test("one of two admins can be disabled by the other", async () => {
+  const second = await signUpFresh("admin3@test.local");
+  const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
+  assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
+
+  const { error } = await sessions.admin.from("profiles").update({ disabled: true }).eq("id", second.id);
+  assert(!error, `expected the disable to succeed, got: ${error && error.message}`);
+});
+
+// admin_user_list() / admin_set_user_email() -- Task 3. profiles has no email column;
+// these definer functions are the only path an admin has to auth.users addresses.
+
+test("admin_user_list returns every user with their email", async () => {
+  const { error, data } = await sessions.admin.rpc("admin_user_list");
+  assert(!error, `admin_user_list failed: ${error && error.message}`);
+  const emails = (data || []).map(r => r.email);
+  // Proves the definer join actually reaches auth.users -- not just that SOME rows came
+  // back. The suite shares state across files, so this asserts membership, not equality.
+  assert(emails.includes("admin@test.local"), `admin@test.local missing from ${JSON.stringify(emails)}`);
+  assert(emails.includes("user@test.local"), `user@test.local missing from ${JSON.stringify(emails)}`);
+});
+
+test("a non-admin cannot call admin_user_list", async () => {
+  // The permitting case is proven above by sessions.admin against the same function --
+  // this is the positive discrimination the refusal is measured against.
+  const { error } = await sessions.user.rpc("admin_user_list");
+  assert(error, "expected admin_user_list to refuse a non-admin");
+});
+
+test("an admin can change a user's email, and a non-admin cannot", async () => {
+  const target = await signUpFresh("email-target1@test.local");
+  const newAddr = "email-target1-new@test.local";
+
+  // Non-admin refusal, checked BEFORE the admin succeeds, so a later success can't be
+  // mistaken for evidence the refusal was ever real.
+  const { error: refused } = await sessions.user.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(refused, "expected admin_set_user_email to refuse a non-admin");
+
+  const { error: ok } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(!ok, `expected the admin's change to succeed, got: ${ok && ok.message}`);
+});
+
+test("admin_set_user_email rejects a duplicate address", async () => {
+  const a = await signUpFresh("dup-a@test.local");
+  const b = await signUpFresh("dup-b@test.local");
+  const takenAddr = "dup-a-taken@test.local";
+
+  // Prove the permitting case first: admin CAN move a's address to a fresh one.
+  const { error: setup } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: a.id, p_email: takenAddr });
+  assert(!setup, `setup rename for a failed: ${setup && setup.message}`);
+
+  const { error } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: b.id, p_email: takenAddr });
+  assert(error, "expected a duplicate email to be refused");
+  assert(/already in use/i.test(error.message), `unexpected message: ${error.message}`);
+});
+
+test("admin_set_user_email rejects a malformed address", async () => {
+  const target = await signUpFresh("malformed-target@test.local");
+  const { error } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: "not-an-email" });
+  assert(error, "expected a malformed email to be refused");
+});
+
+// Task 3's other tests above only check that the RPC call itself returns without error --
+// none of them attempt to sign in. That leaves an open question spec §6 flags explicitly:
+// admin_set_user_email() updates BOTH auth.users.email and
+// auth.identities.identity_data->>'email' on the theory that GoTrue's password sign-in
+// reads the identity, not just the user row, and that touching only one would leave the
+// user unable to authenticate with EITHER address. This test is the only place that
+// theory gets checked against a real GoTrue instance rather than assumed correct because
+// the SQL update didn't error.
+//
+// A throwaway account is used (not sessions.admin/sessions.user) because those two are
+// shared by every other file in the suite and this test permanently changes its account's
+// address; a fresh account isolates the blast radius to itself.
+test("after an email change the new address signs in and the old one does not", async () => {
+  const target = await signUpFresh("gotrue-move-src@test.local");
+  const newAddr = "gotrue-move-dst@test.local";
+
+  const { error: rpcErr } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(!rpcErr, `admin_set_user_email failed outright: ${rpcErr && rpcErr.message}`);
+
+  // Outcome 2 in the task brief: the identity update didn't take, so GoTrue still checks
+  // password sign-in against the old identity_data and rejects the new address.
+  const good = await newClient().auth.signInWithPassword({ email: newAddr, password: PASSWORD });
+  assert(!good.error && good.data.session,
+    "FAILURE MODE: new address rejected -- admin_set_user_email did not make the new "
+    + `address usable for sign-in (auth.identities likely still holds the old email). `
+    + `Sign-in error: ${good.error && good.error.message}`);
+
+  // Outcome 3 in the task brief: auth.users.email moved but the stale identity_data still
+  // matches, so GoTrue happily signs the old address back in.
+  const bad = await newClient().auth.signInWithPassword({ email: "gotrue-move-src@test.local", password: PASSWORD });
+  assert(bad.error,
+    "FAILURE MODE: old address still signs in -- admin_set_user_email left "
+    + "auth.identities pointing at the old email even though auth.users.email moved. "
+    + `Sign-in for the old address unexpectedly succeeded (session: ${!!bad.data?.session}).`);
 });

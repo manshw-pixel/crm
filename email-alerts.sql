@@ -92,7 +92,7 @@ language sql security definer set search_path = public, auth as $$
   select p.id, p.name, u.email::text, (p.role = 'admin')
   from profiles p
   join auth.users u on u.id = p.id
-  where u.email is not null;
+  where u.email is not null and not p.disabled;
 $$;
 
 -- Accounts whose `csm` matches no profile name, or is blank. account.csm is FREE TEXT

@@ -79,6 +79,50 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
 - In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
 
+## Disabling a user
+
+Admins can disable a colleague from **Settings → Users** instead of deleting their
+account outright — their profile and history stay in place, but their access stops.
+
+**Rolling this out to an existing project.** This feature shipped by changing
+`supabase-setup.sql` itself, not by adding a new file. To pick it up, re-run
+`supabase-setup.sql` **whole, top to bottom**, in the Supabase SQL editor — the same
+step as section 2, just done again — **then re-run `email-alerts.sql`, in that order**,
+if you've also installed the email digests (section 7 below). This run **rewrites the
+live RLS policies**, it does not merely add to them. Do not run only part of the file:
+the Supabase SQL editor runs the whole paste as one transaction, so a failure partway
+through rolls the whole run back rather than leaving policies half-applied — but you
+still want to finish it top to bottom rather than relying on that safety net. Ordering
+against `email-alerts.sql` matters for a different reason: that file's `alert_recipients()`
+function is `language sql`, which Postgres validates against the schema at creation time,
+so running it before `supabase-setup.sql` adds the `disabled` column fails immediately with
+`column p.disabled does not exist`. You do **not** need to re-run
+`email-alerts-schedule.sql` for this change — its last statement fires a real send to
+your team's real inboxes, so only run it when you actually mean to (re)install the cron
+schedule.
+
+**What "disabled" actually blocks.** A disabled user loses read/write access to every
+entity through the database's row-level security rules the moment you flip the switch,
+and they're signed out of the open app with an "Your access has been removed" screen the
+next time it talks to the server. What disabling does **not** do is block sign-in itself:
+Supabase's auth service (GoTrue) will still hand a disabled user a valid session token if
+they try to log in again, because RLS only governs access to data, not authentication.
+Don't describe this feature anywhere as preventing sign-in — it doesn't. If you ever need
+a hard sign-in block, that requires calling GoTrue's admin API with the project's
+`service_role` secret, which this app does not do.
+
+One more wrinkle: a user disabled **while already signed in** keeps a stale copy of their
+own profile in the browser until something forces a refresh (a reload, a new query), so
+they may not see the ejection screen right away. That's a cosmetic delay only — RLS is
+already denying their queries from the instant you disable them, so they have no real
+access regardless of what their screen still shows.
+
+**Changing a user's email.** An admin can also change a colleague's email address from
+**Settings → Users**, next to the disable control. This bypasses Supabase's normal
+confirm-the-new-address flow entirely — the address takes effect immediately and becomes
+their sign-in address the moment it's saved, with no confirmation email sent to either the
+old or new address.
+
 ## Optional: email alerts
 
 Each person gets a digest covering **their own accounts only**: renewals due within 30

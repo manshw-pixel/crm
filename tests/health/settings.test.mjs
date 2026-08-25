@@ -14,3 +14,45 @@ test("Settings shows Health playbook editor with Yellow & Red sections", async (
   assert(/Yellow/.test(txt) && /Red/.test(txt), "band sections missing");
   await browser.close();
 });
+
+test("Users card shows each user's email and a disable control", async () => {
+  const { page, browser } = await launch(
+    `window.__seedUsers = [
+       { id: "u1", name: "Test User", role: "admin", disabled: false, email: "admin@test.dev" },
+       { id: "u2", name: "Priya", role: "user", disabled: false, email: "priya@test.dev" }
+     ];`);
+  await page.click('text=Settings');
+  const txt = await rootText(page);
+  assert(/priya@test\.dev/.test(txt), "user email should be listed");
+  // Scoped to the per-row control itself, not the static footer copy (which also
+  // contains the word "disable") -- deleting the button must fail this assertion.
+  await page.waitForSelector("[data-user-disable-btn]", { timeout: 10000 });
+  const disableBtnCount = await page.evaluate(() => document.querySelectorAll("[data-user-disable-btn]").length);
+  assert(disableBtnCount > 0, "disable control missing");
+  await browser.close();
+});
+
+test("a disabled user is marked as such and offers re-enable", async () => {
+  const { page, browser } = await launch(
+    `window.__seedUsers = [
+       { id: "u1", name: "Test User", role: "admin", disabled: false, email: "admin@test.dev" },
+       { id: "u2", name: "Priya", role: "user", disabled: true, email: "priya@test.dev" }
+     ];`);
+  await page.click('text=Settings');
+  await page.waitForSelector("[data-user-disabled-badge]", { timeout: 10000 });
+  const badgeText = await page.evaluate(() => document.querySelector("[data-user-disabled-badge]")?.textContent || "");
+  assert(/disabled/i.test(badgeText), "disabled badge missing");
+  const enableBtnCount = await page.evaluate(() => document.querySelectorAll("[data-user-enable-btn]").length);
+  assert(enableBtnCount > 0, "re-enable control missing");
+  await browser.close();
+});
+
+test("a disabled user is ejected instead of seeing the app", async () => {
+  const { page, browser } = await launch(
+    `window.__seedProfile = { id: "u1", name: "Test User", role: "user", disabled: true };`);
+  const txt = await rootText(page);
+  assert(/access/i.test(txt) && /removed/i.test(txt),
+    `expected an access-removed message, got: ${txt.slice(0, 200)}`);
+  assert(!/Dashboard/.test(txt), "a disabled user must not reach the app shell");
+  await browser.close();
+});

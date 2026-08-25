@@ -1,5 +1,5 @@
 import { test, assert } from "./framework.mjs";
-import { launch, seedAccount } from "./harness.mjs";
+import { launch, seedAccount, rootText } from "./harness.mjs";
 
 const A = seedAccount({ id: "a1", name: "Alpha", csm: "Priya", tier: "Mid" });
 const B = seedAccount({ id: "a2", name: "Beta", csm: "Priya", tier: "SMB" });
@@ -507,5 +507,37 @@ test("deleting a single account offers an undo that restores it with its childre
   assert(res.contacts.join() === "c1,c2", `undo should restore contacts, got ${JSON.stringify(res.contacts)}`);
   assert(res.tasks.join() === "k1,k2", `undo should restore tasks, got ${JSON.stringify(res.tasks)}`);
   assert(res.activities === 1 && res.opps === 1, `undo should restore activities and opportunities, got ${res.activities}/${res.opps}`);
+  await browser.close();
+});
+
+// A1 is already assigned to Priya, who is disabled. The bulk CSM picker must not offer her
+// as a NEW value (crm.html ~2210), but her name must still show up as A1's current CSM in
+// the account list row (crm.html ~2612) -- the fix must not hide her from the app, only
+// from being *chosen*.
+// st.team is loaded from the "profiles" table (crm.html ~408), NOT a "team" row set --
+// seeding under __seedRows.team would silently seed nothing and the picker would fall
+// back to just the signed-in user, which is what actually happened the first time this
+// test was written (it passed even with the fix reverted, for the wrong reason).
+const disabledTeamSeed = `window.__seedRows = { accounts: [${JSON.stringify(seedAccount({ id: "a1", name: "Alpha", csm: "Priya" }))}].map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [
+  { id: "u1", name: "Test User", role: "admin", disabled: false },
+  { id: "u2", name: "Priya", role: "user", disabled: true }
+] };`;
+
+test("bulk Reassign CSM excludes a disabled teammate, but the account list still shows them as the current CSM", async () => {
+  const { page, browser } = await launch(disabledTeamSeed);
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1);
+  await page.click('button[title="Accounts"]');
+  await page.waitForSelector('[data-select="a1"]');
+  // the account row itself must still display the disabled CSM's name -- this fix is about
+  // the bulk picker's choices, not about erasing the disabled user from the app.
+  const txt = await rootText(page);
+  assert(/Priya/.test(txt), "account row should still show its current CSM even though that CSM is disabled");
+  await page.click('[data-select="a1"]');
+  await page.click('text=Reassign CSM');
+  await page.waitForSelector('[data-bulkdialog]');
+  const options = await page.evaluate(() =>
+    [...document.querySelector('[data-bulkdialog] select').options].map(o => o.value));
+  assert(!options.includes("Priya"), `disabled teammate should not be offered in the bulk CSM picker, got ${JSON.stringify(options)}`);
+  assert(options.includes("Test User"), `active teammate should still be offered, got ${JSON.stringify(options)}`);
   await browser.close();
 });
