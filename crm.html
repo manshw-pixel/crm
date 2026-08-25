@@ -1065,6 +1065,7 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
 const DOC_CATEGORIES = ["Contract", "PO", "Advisory", "QBR", "Others"];
 const DOC_CATEGORY_PLURAL = { "Contract": "Contracts", "PO": "POs", "Advisory": "Advisories", "QBR": "QBRs", "Others": "Others" };
 const EXPIRY_WARN_DAYS = 60;
+const EXPIRED_GRACE_DAYS = 30;              // how long an already-expired contract keeps alerting
 function DocumentForm({ acct, dispatch, user, onDone, existing }) {
   const fileRef = useRef(null);
   const [category, setCategory] = useState(existing ? existing.category : "");
@@ -3819,21 +3820,34 @@ function App({ user }) {
   const renewalsDue = active
     .filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 30; })
     .sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate));
-  // notification bell: account renewals (≤30d) + expiring Contract documents (≤EXPIRY_WARN_DAYS or expired)
+  // notification bell: account renewals (≤30d) + Contract documents expiring within EXPIRY_WARN_DAYS
+  // or expired within the last EXPIRED_GRACE_DAYS + health drops (≤30d). Every source is windowed on
+  // both sides, so alerts age out on their own rather than piling up in the bell forever.
   const notifKey = "notifRead_" + user.name;
   const [notifRead, setNotifRead] = useState(() => { try { return new Set(JSON.parse(localStorage.getItem(notifKey) || "[]")); } catch { return new Set(); } });
-  const markNotifRead = id => setNotifRead(prev => { const n = new Set(prev); n.add(id); try { localStorage.setItem(notifKey, JSON.stringify([...n])); } catch {} return n; });
+  const [showRead, setShowRead] = useState(false);
   const alerts = [
     ...renewalsDue.map(a => ({ id: `renewal-${a.id}-${a.renewalDate}`, accountId: a.id, name: a.name, sub: "Account renewal", date: a.renewalDate, days: daysUntil(a.renewalDate) })),
     ...active.flatMap(a => (a.documents || [])
-      .filter(d => d.category === "Contract" && d.expiryDate && daysUntil(d.expiryDate) <= EXPIRY_WARN_DAYS)
+      .filter(d => { if (d.category !== "Contract" || !d.expiryDate) return false;
+        const days = daysUntil(d.expiryDate); return days <= EXPIRY_WARN_DAYS && days >= -EXPIRED_GRACE_DAYS; })
       .map(d => ({ id: `contract-${a.id}-${d.id}-${d.expiryDate}`, accountId: a.id, name: a.name, sub: `Contract: ${d.title || d.name}`, date: d.expiryDate, days: daysUntil(d.expiryDate) }))),
     ...scored.flatMap(a => (a.healthEvents || [])
       .filter(e => BAND_RANK[e.to] > BAND_RANK[e.from] && daysSince(e.date) <= 30)
       .map(e => ({ id: `health-${a.id}-${e.date}-${e.to}`, accountId: a.id, name: a.name,
         sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
   ].sort((x, y) => x.days - y.days);
+  const alertIds = new Set(alerts.map(a => a.id));
+  // Prune on write: ids for alerts that have aged out would otherwise accumulate in localStorage
+  // forever. Dropping them also means a renewed contract (new expiryDate ⇒ new id) resurfaces unread.
+  const markNotifRead = id => setNotifRead(prev => {
+    const n = new Set([...prev, id].filter(x => x === id || alertIds.has(x)));
+    try { localStorage.setItem(notifKey, JSON.stringify([...n])); } catch {}
+    return n;
+  });
   const unreadCount = alerts.filter(a => !notifRead.has(a.id)).length;
+  const readCount = alerts.length - unreadCount;
+  const shownAlerts = showRead ? alerts : alerts.filter(a => !notifRead.has(a.id));
   return (
     <div className="flex min-h-screen">
       <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${collapsed ? "w-14" : "w-52"}`}>
@@ -3885,8 +3899,10 @@ function App({ user }) {
                 <span className="text-xs font-semibold text-slate-700">Renewals, contracts &amp; health</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
               </div>
-              {alerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">Nothing due soon. 🎉</div>}
-              {alerts.map(a => { const read = notifRead.has(a.id); return (
+              {shownAlerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">
+                {alerts.length === 0 ? "Nothing due soon. 🎉" : "All caught up. 🎉"}
+              </div>}
+              {shownAlerts.map(a => { const read = notifRead.has(a.id); return (
                 <button key={a.id} onClick={() => { markNotifRead(a.id); setNotifOpen(false); openAccount(a.accountId); }}
                   className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
                   <span className="flex min-w-0 items-center gap-2">
@@ -3902,6 +3918,14 @@ function App({ user }) {
                   </span>
                 </button>
               ); })}
+              {readCount > 0 && (
+                <div className="mt-1 border-t border-slate-100 px-2 pt-1.5">
+                  <button className="text-[11px] font-semibold text-slate-500 hover:text-slate-800 hover:underline"
+                    onClick={() => setShowRead(s => !s)}>
+                    {showRead ? "Hide read" : `Show ${readCount} read`}
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
