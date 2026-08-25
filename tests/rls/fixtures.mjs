@@ -21,7 +21,10 @@ export const ANON_KEY = process.env.SUPABASE_ANON_KEY
 const SETUP_SQL = fileURLToPath(new URL("../../supabase-setup.sql", import.meta.url));
 const ALERTS_SQL = fileURLToPath(new URL("../../email-alerts.sql", import.meta.url));
 
-const newClient = () => createClient(API_URL, ANON_KEY, {
+// Exported so a test can attempt a sign-in with a client that never had a session on it in
+// the first place -- sessions.admin/sessions.user already have their own tokens cached and
+// aren't suitable for probing a DIFFERENT address's credentials.
+export const newClient = () => createClient(API_URL, ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 

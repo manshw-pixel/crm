@@ -1,6 +1,6 @@
 // The signup path and role assignment — handle_new_user() in supabase-setup.sql.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, roleOf, signUpFresh } from "./fixtures.mjs";
+import { sessions, roleOf, signUpFresh, newClient, PASSWORD } from "./fixtures.mjs";
 
 test("the first signup becomes an admin", async () => {
   const { data } = await sessions.admin.auth.getUser();
@@ -136,4 +136,41 @@ test("admin_set_user_email rejects a malformed address", async () => {
   const { error } = await sessions.admin.rpc("admin_set_user_email",
     { p_id: target.id, p_email: "not-an-email" });
   assert(error, "expected a malformed email to be refused");
+});
+
+// Task 3's other tests above only check that the RPC call itself returns without error --
+// none of them attempt to sign in. That leaves an open question spec §6 flags explicitly:
+// admin_set_user_email() updates BOTH auth.users.email and
+// auth.identities.identity_data->>'email' on the theory that GoTrue's password sign-in
+// reads the identity, not just the user row, and that touching only one would leave the
+// user unable to authenticate with EITHER address. This test is the only place that
+// theory gets checked against a real GoTrue instance rather than assumed correct because
+// the SQL update didn't error.
+//
+// A throwaway account is used (not sessions.admin/sessions.user) because those two are
+// shared by every other file in the suite and this test permanently changes its account's
+// address; a fresh account isolates the blast radius to itself.
+test("after an email change the new address signs in and the old one does not", async () => {
+  const target = await signUpFresh("gotrue-move-src@test.local");
+  const newAddr = "gotrue-move-dst@test.local";
+
+  const { error: rpcErr } = await sessions.admin.rpc("admin_set_user_email",
+    { p_id: target.id, p_email: newAddr });
+  assert(!rpcErr, `admin_set_user_email failed outright: ${rpcErr && rpcErr.message}`);
+
+  // Outcome 2 in the task brief: the identity update didn't take, so GoTrue still checks
+  // password sign-in against the old identity_data and rejects the new address.
+  const good = await newClient().auth.signInWithPassword({ email: newAddr, password: PASSWORD });
+  assert(!good.error && good.data.session,
+    "FAILURE MODE: new address rejected -- admin_set_user_email did not make the new "
+    + `address usable for sign-in (auth.identities likely still holds the old email). `
+    + `Sign-in error: ${good.error && good.error.message}`);
+
+  // Outcome 3 in the task brief: auth.users.email moved but the stale identity_data still
+  // matches, so GoTrue happily signs the old address back in.
+  const bad = await newClient().auth.signInWithPassword({ email: "gotrue-move-src@test.local", password: PASSWORD });
+  assert(bad.error,
+    "FAILURE MODE: old address still signs in -- admin_set_user_email left "
+    + "auth.identities pointing at the old email even though auth.users.email moved. "
+    + `Sign-in for the old address unexpectedly succeeded (session: ${!!bad.data?.session}).`);
 });
