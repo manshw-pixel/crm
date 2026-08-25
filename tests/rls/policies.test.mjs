@@ -220,7 +220,14 @@ test("re-enabling a user restores access", async () => {
 
 test("a disabled user cannot read settings", async () => {
   const victim = await signUpFresh("disable-victim-settings@test.local");
-  await sessions.admin.from("settings").insert({ id: 1, data: { rates: { INR: 0.012 } } });
+  // upsert, not insert: an earlier test in this file ("an admin can write settings")
+  // already created row id=1, and a plain insert against that existing row would fail
+  // with a duplicate-key error the original version of this test never checked --
+  // the read below would then pass only because that OTHER test happened to run first,
+  // not because this seed worked. Upsert makes the seed self-sufficient regardless of
+  // test order, and the error is checked so a real seeding failure is not silently hidden.
+  const seed = await sessions.admin.from("settings").upsert({ id: 1, data: { rates: { INR: 0.012 } } });
+  assert(!seed.error, `seeding settings failed: ${seed.error && seed.error.message}`);
 
   const before = await victim.client.from("settings").select("id");
   assert(!before.error && before.data.length === 1,
@@ -236,7 +243,14 @@ test("a disabled user cannot read settings", async () => {
 test("a disabled user cannot read health_snapshots", async () => {
   const victim = await signUpFresh("disable-victim-health@test.local");
   await seedRow("accounts", "rls-disable-health-acct");
-  await sessions.admin.from("health_snapshots").insert({ account_id: "rls-disable-health-acct", score: 80 });
+  // health_snapshots has NO insert policy -- see supabase-setup.sql: every write funnels
+  // through record_health(), a SECURITY DEFINER function. A raw admin insert against the
+  // table is denied by RLS and returns no error via PostgREST, which is exactly how the
+  // first version of this test passed while seeding nothing (CI caught it: "before" read
+  // back 0 rows). Seed it the only way the table can actually be written -- call
+  // record_health() as the still-active victim.
+  const seed = await victim.client.rpc("record_health", { p_scores: [{ accountId: "rls-disable-health-acct", score: 80 }] });
+  assert(!seed.error, `seeding health_snapshots via record_health failed: ${seed.error && seed.error.message}`);
 
   const before = await victim.client.from("health_snapshots").select("account_id").eq("account_id", "rls-disable-health-acct");
   assert(!before.error && before.data.length === 1,
