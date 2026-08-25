@@ -67,6 +67,9 @@ const MOCK = `window.__sbFactory = () => {
     from: fromImpl,
     rpc: (fn, args) => {
       (window.__rpcCalls = window.__rpcCalls || []).push({ fn, args });
+      if (fn === "admin_user_list") {
+        return Promise.resolve({ data: window.__seedUsers || [], error: null });
+      }
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
       }

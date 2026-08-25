@@ -3385,14 +3385,22 @@ function UsersCard({ me }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
   const [v, setV] = useState({ name: "", email: "", pass: "", role: "user" });
-  const load = () => sb.from("profiles").select("id,name,role,created_at").order("created_at").then(({ data, error }) => error ? setErr(error.message) : setUsers(data || []));
+  const load = () => sb.rpc("admin_user_list").then(({ data, error }) =>
+    error ? setErr(error.message) : setUsers(data || []));
   useEffect(() => { load(); }, []);
   const setRole = async (u, role) => {
     setErr(""); setMsg("");
     const { error } = await sb.from("profiles").update({ role }).eq("id", u.id);
     if (error) setErr(error.message); else load();
   };
-  const [editing, setEditing] = useState(null); // {id, name}
+  const [confirmDisable, setConfirmDisable] = useState(null); // the user pending disable
+  const applyDisabled = async (u, disabled) => {
+    setErr(""); setMsg("");
+    const { error } = await sb.from("profiles").update({ disabled }).eq("id", u.id);
+    if (error) setErr(error.message);
+    else { setMsg(`${u.name} ${disabled ? "disabled — their access is revoked" : "re-enabled"}.`); load(); }
+  };
+  const [editing, setEditing] = useState(null); // {id, name, email}
   const renameEverywhere = async (oldName, newName) => {
     // keep account CSM assignments and task owners in sync with the new name
     for (const [t, key] of [["accounts", "csm"], ["tasks", "owner"]]) {
@@ -3410,14 +3418,22 @@ function UsersCard({ me }) {
     const newName = editing.name.trim();
     setErr(""); setMsg("");
     if (!newName) return setErr("Name cannot be empty.");
-    if (newName === u.name) return setEditing(null);
+    if (!editing.email.trim()) return setErr("Email cannot be empty.");
+    if (newName === u.name && editing.email.trim().toLowerCase() === (u.email || "").toLowerCase()) return setEditing(null);
     if (users.some(x => x.id !== u.id && x.name === newName)) return setErr("That name is already taken.");
     setBusy(true);
     try {
-      const { error } = await sb.from("profiles").update({ name: newName }).eq("id", u.id);
-      if (error) throw error;
-      await renameEverywhere(u.name, newName);
-      setMsg(`Renamed ${u.name} → ${newName}; their accounts and tasks were updated too.`);
+      if (newName !== u.name) {
+        const { error } = await sb.from("profiles").update({ name: newName }).eq("id", u.id);
+        if (error) throw error;
+        await renameEverywhere(u.name, newName);
+      }
+      if (editing.email.trim().toLowerCase() !== (u.email || "").toLowerCase()) {
+        const { error } = await sb.rpc("admin_set_user_email",
+          { p_id: u.id, p_email: editing.email.trim() });
+        if (error) throw error;
+      }
+      setMsg(`Updated ${u.name}${newName !== u.name ? ` → ${newName}; their accounts and tasks were updated too` : ""}.`);
       setEditing(null); load();
     } catch (ex) { setErr(ex.message); }
     setBusy(false);
@@ -3445,23 +3461,32 @@ function UsersCard({ me }) {
   return (
     <Card title={`Users (${users.length})`}>
       {users.map(u => (
-        <div key={u.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+        <div key={u.id} className={`flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0 ${u.disabled ? "opacity-60" : ""}`}>
           {editing && editing.id === u.id ? (
-            <span className="flex flex-1 items-center gap-2">
+            <span className="flex flex-1 flex-wrap items-center gap-2">
               <Input autoFocus value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
                 onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); saveRename(u); } if (e.key === "Escape") setEditing(null); }} className="w-44 !py-0.5" />
+              <Input type="email" value={editing.email} onChange={e => setEditing({ ...editing, email: e.target.value })}
+                onKeyDown={e => { if (e.key === "Enter") { e.preventDefault(); saveRename(u); } if (e.key === "Escape") setEditing(null); }} className="w-52 !py-0.5" />
               <button className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => saveRename(u)}>{busy ? "…" : "save"}</button>
               <button className="text-xs text-slate-500 hover:underline" onClick={() => setEditing(null)}>cancel</button>
             </span>
           ) : (
-            <span className="flex-1">{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}
-              <button title="Rename user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name }); }}>✎</button>
+            <span className="flex-1">
+              <div>{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}
+                {u.disabled && <span className="ml-2 rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-600">disabled</span>}
+                <button title="Edit user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name, email: u.email || "" }); }}>✎</button>
+              </div>
+              <div className="text-xs text-slate-500">{u.email}</div>
             </span>
           )}
           <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
           {u.id !== me.id && (u.role === "user"
             ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
             : <button className="text-xs text-rose-500 hover:underline" onClick={() => setRole(u, "user")}>demote</button>)}
+          {u.id !== me.id && (u.disabled
+            ? <button className="text-xs text-emerald-600 hover:underline" onClick={() => applyDisabled(u, false)}>enable</button>
+            : <button className="text-xs text-rose-500 hover:underline" onClick={() => setConfirmDisable(u)}>disable</button>)}
         </div>
       ))}
       <form onSubmit={addUser} className="mt-3 flex flex-wrap items-center gap-2">
@@ -3473,7 +3498,13 @@ function UsersCard({ me }) {
       </form>
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
       {msg && <div className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
-      <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
+      <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). Disabling a user removes their access immediately; re-enable them any time. To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
+      {confirmDisable && <ConfirmDialog
+        title={`Disable ${confirmDisable.name}?`}
+        body="They lose access to every account, task and file immediately — even if they are signed in right now. You can re-enable them at any time."
+        confirmLabel="Disable"
+        onConfirm={async () => { await applyDisabled(confirmDisable, true); setConfirmDisable(null); }}
+        onClose={() => setConfirmDisable(null)} />}
     </Card>
   );
 }
