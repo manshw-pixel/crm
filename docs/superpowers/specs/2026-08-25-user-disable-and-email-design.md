@@ -138,6 +138,15 @@ change an email, then **actually sign in with the new address and confirm the ol
 fails**. If identities need updating too, `admin_set_user_email` updates both. Treat this
 test as the feature, not as coverage of it.
 
+**RESOLVED (CI run 32829044090, 2026-08-25).** `admin_set_user_email` updates both
+`auth.users.email` and `auth.identities.identity_data->>'email'`, and against real GoTrue
+the new address signs in while the old one is refused — `PASS after an email change the new
+address signs in and the old one does not`. The dual update stands. Note what this run does
+*not* establish: whether updating `auth.users` alone would have sufficed was never tested in
+isolation, so do not "simplify" the identities update away on the theory that it is
+redundant. It was written to prevent a lockout, and the passing test is evidence the pair
+works, not that either half is unnecessary.
+
 ### 7. UI
 
 In `UsersCard`, per row: the email beside the name, a `disable` / `enable` action next to
