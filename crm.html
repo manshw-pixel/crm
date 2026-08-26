@@ -3699,6 +3699,14 @@ function App({ user }) {
     setView("Accounts"); setAcctId(null);
     setAcctFilter({ risk: "All", showChurned: false, onlyChurned: false, billing: "All", qbrDue: false, ...(filter || {}), t: Date.now() });
   };
+  // Picking "Accounts" from the sidebar (or its keyboard shortcut) means "show me
+  // everything", not "show me whatever dashboard card I last clicked". Unlike a card,
+  // this clears every filter key including the typed `q` and any tier/csm/renew choice.
+  const resetAccounts = () => {
+    setView("Accounts"); setAcctId(null);
+    setAcctFilter({ q: "", tier: "All", risk: "All", csm: "All", renew: "All",
+      billing: "All", showChurned: false, onlyChurned: false, qbrDue: false, t: Date.now() });
+  };
   const searchRef = useRef();
   const dispatch = useCallback(action => setSt(prev => {
     const next = reducer(prev, action);
@@ -3747,9 +3755,9 @@ function App({ user }) {
     const h = e => {
       if (paletteOpen) return; // palette modal owns the keyboard while open
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
-      if (e.key === "/") { e.preventDefault(); setView("Accounts"); setAcctId(null); setTimeout(() => searchRef.current?.focus(), 50); }
+      if (e.key === "/") { e.preventDefault(); resetAccounts(); setTimeout(() => searchRef.current?.focus(), 50); }
       const i = "12345".indexOf(e.key);
-      if (i >= 0 && i < views.length) { setView(views[i]); setAcctId(null); }
+      if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else { setView(views[i]); setAcctId(null); } }
       if (e.key === "Escape") setAcctId(null);
     };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
@@ -3914,7 +3922,7 @@ function App({ user }) {
         <nav aria-label="Main" className={`flex-1 space-y-0.5 ${collapsed ? "px-2" : "px-3"}`}>
           {views.map(v => (
             <button key={v} title={v} aria-label={v} aria-current={view === v ? "page" : undefined}
-              onClick={() => { setView(v); setAcctId(null); }}
+              onClick={() => { if (v === "Accounts") resetAccounts(); else { setView(v); setAcctId(null); } }}
               className={`flex w-full items-center rounded-lg py-2 text-sm font-medium ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} ${view === v ? "bg-indigo-50 font-semibold text-indigo-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
               {NAV_ICONS[v]}{!collapsed && <span className="flex-1 text-left">{v}</span>}
             </button>
