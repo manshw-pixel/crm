@@ -70,6 +70,16 @@ const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.leng
 // before the app boots. It is never set in production, so the real client is what ships.
 // (This replaced a regex-over-source-text swap in harness.mjs, which could not survive
 // JSX compilation -- see docs/superpowers/specs/2026-08-17-build-step-design.md.)
+// Read at module scope, BEFORE the client is constructed: detectSessionInUrl consumes
+// the `#access_token=...&type=recovery` fragment and wipes it from the address bar, so by
+// the time React renders there is nothing left to tell a recovery link apart from an
+// ordinary sign-in. Miss this and a reset link just silently logs you in with no way to
+// set a new password -- which is exactly what happened before this existed.
+const IS_RECOVERY = typeof location !== "undefined" && /[#&]type=recovery/.test(location.hash || "");
+// Where a reset/invite mail should send people back to. Passed explicitly on every call:
+// with no redirectTo, GoTrue falls back to the project's Site URL, which shipped as the
+// default http://localhost:3000 and sent every reset link to a dead address.
+const authRedirect = () => location.href.split("#")[0].split("?")[0];
 const sb = window.__sbFactory ? window.__sbFactory()
   : CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
@@ -3346,7 +3356,7 @@ function AuthScreen() {
     e.preventDefault(); setErr(""); setMsg(""); setBusy(true);
     try {
       if (mode === "reset") {
-        const { error } = await sb.auth.resetPasswordForEmail(email);
+        const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo: authRedirect() });
         if (error) throw error;
         setMsg("Password-reset email sent (check spam too).");
         setMode("signin");
@@ -3378,6 +3388,42 @@ function AuthScreen() {
             : <button type="button" className="hover:underline" onClick={() => { setMode("signin"); setErr(""); setMsg(""); }}>Back to sign in</button>}
         </div>
         <p className="mt-3 text-[11px] leading-4 text-slate-500">Accounts are created by your administrator (Settings → Users). Ask them for access if you don't have a login yet.</p>
+        <Copyright />
+      </form>
+    </div>
+  );
+}
+function NewPasswordScreen({ onDone }) {
+  const [pass, setPass] = useState(""); const [confirm, setConfirm] = useState("");
+  const [err, setErr] = useState(""); const [busy, setBusy] = useState(false);
+  const submit = async e => {
+    e.preventDefault(); setErr("");
+    if (pass !== confirm) return setErr("The two passwords do not match.");
+    setBusy(true);
+    try {
+      const { error } = await sb.auth.updateUser({ password: pass });
+      if (error) throw error;
+      onDone();
+    } catch (ex) { setErr(ex.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <form onSubmit={submit} className="nm w-full max-w-sm p-8">
+        <h1 className="text-xl font-bold tracking-tight">One<span className="text-indigo-600">Vio</span></h1>
+        <p className="mb-4 mt-1 text-xs text-slate-700">Choose a new password for your account.</p>
+        <label className="mb-2 block text-xs font-semibold text-slate-700">New password
+          <Input type="password" required minLength={6} value={pass} onChange={e => { setPass(e.target.value); setErr(""); }} className="mt-1" autoFocus /></label>
+        <label className="mb-2 block text-xs font-semibold text-slate-700">Confirm new password
+          <Input type="password" required minLength={6} value={confirm} onChange={e => { setConfirm(e.target.value); setErr(""); }} className="mt-1" /></label>
+        {err && <div className="mb-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
+        <button type="submit" disabled={busy} className="grad mt-3 w-full py-2.5 text-sm font-bold text-white disabled:opacity-50">
+          {busy ? "…" : "Set password"}</button>
+        {/* The recovery session is a real session -- someone who followed the link but did
+            not mean to change anything must be able to leave without being stuck here. */}
+        <div className="mt-3 text-xs text-indigo-600">
+          <button type="button" className="hover:underline" onClick={onDone}>Skip for now</button>
+        </div>
         <Copyright />
       </form>
     </div>
@@ -3466,7 +3512,7 @@ function UsersCard({ me }) {
     try {
       // separate throwaway client so creating the user does NOT switch our own session
       const tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-      const { data, error } = await tmp.auth.signUp({ email: v.email.trim(), password: v.pass, options: { data: { name: v.name.trim() } } });
+      const { data, error } = await tmp.auth.signUp({ email: v.email.trim(), password: v.pass, options: { data: { name: v.name.trim() }, emailRedirectTo: authRedirect() } });
       if (error) throw error;
       if (v.role === "admin" && data.user) {
         const { error: e2 } = await sb.from("profiles").update({ role: "admin" }).eq("id", data.user.id);
@@ -4009,6 +4055,7 @@ function Root() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [recovering, setRecovering] = useState(IS_RECOVERY);
   useEffect(() => {
     if (!CONFIGURED) return;
     sb.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
@@ -4026,6 +4073,10 @@ function Root() {
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
   if (!session) return <AuthScreen />;
+  // Ahead of the profile load on purpose: setting a new password must not depend on the
+  // profiles row resolving, and a disabled user has no business getting this far anyway
+  // (the disabled gate below still runs once they are done here).
+  if (recovering) return <NewPasswordScreen onDone={() => setRecovering(false)} />;
   if (!profile) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading profile…</div>;
   // The RLS policies are the real boundary -- a disabled user's queries already return
   // nothing. This is the humane surface on top: say what happened instead of rendering an
