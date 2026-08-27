@@ -1845,7 +1845,11 @@ function AmBookCard({ book, openAccount }) {
 }
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
-  const amBook = useMemo(() => amBookMovement(allAccounts, st.settings.rates), [allAccounts, st.settings.rates]);
+  // `today` is in the deps so the card re-bases itself when the year turns, even in a
+  // session that was left open over New Year -- without it the memo would hold last
+  // year's cohorts and opening balances until something else forced a recompute.
+  const today = iso(Date.now());
+  const amBook = useMemo(() => amBookMovement(allAccounts, st.settings.rates, today), [allAccounts, st.settings.rates, today]);
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
   const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));

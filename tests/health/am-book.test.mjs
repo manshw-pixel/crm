@@ -217,3 +217,50 @@ test("a scheduled handover shows an ARR figure only under Today, never under 1 J
     `movement columns must stay empty for a pending handover, got ${JSON.stringify(cells)}`);
   await browser.close();
 });
+
+/* ------------------------------ year roll-over ------------------------------ */
+// The card must re-base itself every 1 January with no code change: this year's intake
+// becomes next year's existing book, and the opening balance moves to the new close.
+
+test("an account that moved to AM this year counts as owned-before once the year turns", async () => {
+  const book = [scored({ id: "moved", name: "Moved Co", arr: 150000, transitionDate: "2026-06-01",
+    arrEvents: [{ id: "e1", date: "2026-07-01", delta: 50000, kind: "expansion", source: "adjustment" }] })];
+  const { page, browser } = await boot(book);
+
+  const y2026 = await call(page, book, "2026-08-27");
+  assert(y2026.year === 2026 && y2026.priorClose === "2025-12-31", `wrong 2026 framing: ${JSON.stringify(y2026.year)}`);
+  assert(ids(y2026.moved).join() === "moved", "in 2026 it belongs to the intake cohort");
+  assert(y2026.owned.accounts.length === 0, "in 2026 it is not yet part of the established book");
+  assert(y2026.moved.totals.expansion === 50000, `the 2026 expansion should count: ${y2026.moved.totals.expansion}`);
+
+  const y2027 = await call(page, book, "2027-03-15");
+  assert(y2027.year === 2027 && y2027.priorClose === "2026-12-31", `wrong 2027 framing: ${JSON.stringify(y2027.priorClose)}`);
+  assert(ids(y2027.owned).join() === "moved", "in 2027 it has become part of the established book");
+  assert(y2027.moved.accounts.length === 0, "in 2027 it is no longer new intake");
+  // last year's expansion is now baked into the opening balance, not reported as movement
+  assert(y2027.owned.totals.expansion === 0, `2026 movement leaked into 2027: ${y2027.owned.totals.expansion}`);
+  assert(y2027.owned.totals.opening === 150000, `2027 should open at the 2026 close: ${y2027.owned.totals.opening}`);
+  await browser.close();
+});
+
+test("a handover still in the future this year is AM-owned once that year has passed", async () => {
+  const book = [scored({ id: "later", name: "Later Co", arr: 90000, transitionDate: "2026-11-01" })];
+  const { page, browser } = await boot(book);
+  const y2026 = await call(page, book, "2026-08-27");
+  assert(ids(y2026.scheduled).join() === "later", "before the date it is a scheduled handover");
+  const y2027 = await call(page, book, "2027-01-02");
+  assert(ids(y2027.owned).join() === "later", "after the year turns it is part of the established book");
+  assert(y2027.scheduled.accounts.length === 0, "it must not still be listed as pending");
+  await browser.close();
+});
+
+test("the card labels name the current year rather than a hardcoded one", async () => {
+  const book = [scored({ id: "old", name: "Oldbook Co", arr: 500000, transitionDate: "2024-01-01" })];
+  const { page, browser } = await launch(seedWithUser(book));
+  await page.waitForSelector("[data-am-book]");
+  const year = new Date().getFullYear();
+  const txt = await page.textContent("[data-am-book]");
+  assert(txt.includes(`Owned before ${year}`), `expected the live year in the label, got: ${txt.slice(0, 120)}`);
+  assert(txt.includes(`Moved to AM in ${year}`), `expected the live year in the label, got: ${txt.slice(0, 120)}`);
+  await browser.close();
+});
