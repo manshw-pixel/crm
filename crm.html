@@ -1552,6 +1552,69 @@ function accountRetention(account, rates, now = iso(Date.now())) {
     isNew: false, baselineKey };
 }
 
+/* --------------------------- AM book by handover --------------------------- */
+// The AM book split by when each account was handed over from sales, with this year's
+// ARR movement per cohort. Cohorts come from `transitionDate`; the money is the SAME
+// ledger replay arrAsOf performs, so this card and Analytics cannot drift apart.
+//
+// The year opens at the prior 31 December close, so `opening` here is the balance on
+// 1 January and a movement "in the year" is anything dated after that close. Both
+// cohorts share that baseline, which is what lets their openings be added together.
+function amBookMovement(accounts, rates, now = iso(Date.now())) {
+  const today = String(now).slice(0, 10);
+  const priorClose = `${+today.slice(0, 4) - 1}-12-31`;
+  const inYear = when => { const d = String(when || "").slice(0, 10); return d > priorClose && d <= today; };
+
+  const movementOf = a => {
+    let expansion = 0, reduction = 0;
+    const add = usd => { if (usd > 0) expansion += usd; else reduction -= usd; };
+    (a.renewals || []).forEach(r => {
+      if (inYear(r.completedOn)) add(toUSD(r.arr - r.prevArr, r.currency || a.currency, rates));
+    });
+    (a.arrEvents || []).forEach(ev => {
+      // A currency restatement is not revenue movement -- skipped explicitly rather than
+      // relying on its delta being 0, matching arrAsOf and retentionStats.
+      if (ev.kind === "redenomination") return;
+      if (inYear(ev.date)) add(toUSD(ev.delta, ev.currency || a.currency, rates));
+    });
+    // CHURN_ACCOUNT writes no arrEvent and leaves `arr` alone, so the loss has to be
+    // booked here or the cohort would never show the revenue leaving.
+    if (a.churn && inYear(a.churn.date)) {
+      add(-toUSD(a.churn.arr, a.churn.currency || a.currency, rates));
+    }
+    return { expansion: Math.round(expansion), reduction: Math.round(reduction) };
+  };
+
+  const rowOf = a => {
+    const opening = arrAsOf(a, priorClose, rates);
+    const current = Math.round(toUSD(a.churn ? 0 : a.arr, a.currency, rates));
+    return { id: a.id, name: a.name, transitionDate: a.transitionDate || null,
+      opening, current, ...movementOf(a) };
+  };
+
+  const sectionOf = rows => ({
+    accounts: rows,
+    totals: rows.reduce((t, r) => ({
+      count: t.count + 1, opening: t.opening + r.opening, expansion: t.expansion + r.expansion,
+      reduction: t.reduction + r.reduction, current: t.current + r.current,
+    }), { count: 0, opening: 0, expansion: 0, reduction: 0, current: 0 }),
+  });
+
+  const owned = [], moved = [], scheduled = [];
+  accounts.forEach(a => {
+    const t = String(a.transitionDate || "").slice(0, 10);
+    // No date, or a handover still in the future: not AM's book yet. A churned account is
+    // never going to be handed over, so it is left out of the pending list entirely.
+    if (!t || t > today) { if (!a.churn) scheduled.push(rowOf(a)); return; }
+    (t <= priorClose ? owned : moved).push(rowOf(a));
+  });
+  const byARR = (x, y) => y.current - x.current;
+  return { year: +today.slice(0, 4), priorClose,
+    owned: sectionOf(owned.sort(byARR)),
+    moved: sectionOf(moved.sort(byARR)),
+    scheduled: sectionOf(scheduled.sort(byARR)) };
+}
+
 /* ---------------------------- cohort retention ---------------------------- */
 const monthsBetween = (a, b) => (new Date(b).getFullYear() - new Date(a).getFullYear()) * 12 + (new Date(b).getMonth() - new Date(a).getMonth());
 const quarterKey = d => { // ISO strings parsed textually (timezone-safe); Dates read in local time
@@ -1731,8 +1794,58 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
 }
 
 const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stalled: 0.1 };
+// The AM book card. Collapsed it shows one totals row per handover cohort; expanded it
+// shows the accounts behind each. Deliberately NOT filtered by the dashboard's mine/all
+// scope toggle -- this is a book-level reconciliation, not a personal work list.
+function AmBookCard({ book, openAccount }) {
+  const [open, setOpen] = useState(false);
+  const money = n => fmtMoney(n);
+  const GRID = "grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(5rem,7rem))] items-center gap-x-6";
+  const SECTIONS = [
+    ["owned", `Owned before ${book.year}`],
+    ["moved", `Moved to AM in ${book.year}`],
+    ["scheduled", "Scheduled handover"],
+  ];
+  // Section 3 holds accounts that are not AM's book yet, so year movement on them would
+  // be misleading -- it shows the ARR waiting to move across and nothing else.
+  const Row = ({ label, r, pending, onClick, indent }) => (
+    <div onClick={onClick} role={onClick ? "button" : undefined}
+      className={`${GRID} py-1 text-sm ${indent ? "pl-4 text-slate-600" : "font-semibold text-slate-800"} ${onClick ? "cursor-pointer rounded hover:bg-slate-50" : ""}`}>
+      <span className="truncate">{label}</span>
+      <span className="text-right tabular-nums">{pending ? "—" : money(r.opening)}</span>
+      <span className="text-right tabular-nums text-emerald-600">{pending ? "—" : (r.expansion ? "+" + money(r.expansion) : "—")}</span>
+      <span className="text-right tabular-nums text-rose-600">{pending ? "—" : (r.reduction ? "-" + money(r.reduction) : "—")}</span>
+      <span className="text-right tabular-nums">{money(r.current)}</span>
+    </div>
+  );
+  return (
+    <Card title="AM book by handover" className="!p-3"
+      right={<button data-am-book-toggle onClick={() => setOpen(o => !o)}
+        className="text-xs text-slate-500 hover:text-slate-800">{open ? "▾ Hide accounts" : "▸ Show accounts"}</button>}>
+      <div data-am-book>
+        <div className={`${GRID} border-b border-slate-200 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-500`}>
+          <span></span><span className="text-right">1 Jan</span><span className="text-right">Expansion</span>
+          <span className="text-right">Reduction</span><span className="text-right">Today</span>
+        </div>
+        {SECTIONS.map(([key, label]) => {
+          const sec = book[key], pending = key === "scheduled";
+          return (
+            <div key={key} className="mt-2">
+              <Row label={`${label} (${sec.totals.count})`} r={sec.totals} pending={pending} />
+              {open && sec.accounts.length === 0 && <div className="pl-4 py-1 text-xs text-slate-400">None.</div>}
+              {open && sec.accounts.map(r => (
+                <Row key={r.id} indent onClick={() => openAccount(r.id)} label={r.name} pending={pending} r={r} />
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
+  const amBook = useMemo(() => amBookMovement(allAccounts, st.settings.rates), [allAccounts, st.settings.rates]);
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
   const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));
@@ -1883,6 +1996,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>
       </div>
+      <AmBookCard book={amBook} openAccount={openAccount} />
       <Card title="Recently declined" className="!p-3">
         <div className="max-h-48 overflow-y-auto pr-1">
         {declines.length === 0 && <div className="text-sm text-slate-500">No recent declines. 🎉</div>}
@@ -4104,7 +4218,7 @@ function Root() {
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
-  lastCompletedDecember, arrAsOf, accountRetention };
+  lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
 </script>
 </body>
