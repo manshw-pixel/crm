@@ -855,6 +855,26 @@ function TrendLine({ label, points, months, fmt, w = 150, h = 28 }) {
     </div>
   );
 }
+/* Roll monthly snapshots up to calendar quarters. Each metric is the average of the
+   months present in that quarter (nulls ignored), so a part-way quarter still plots. */
+function quarterlySnaps(snaps) {
+  const order = [], byQ = new Map();
+  (snaps || []).forEach(s => {
+    const [y, m] = String(s.month || "").split("-").map(Number);
+    if (!y || !m) return;
+    const q = `${y}-Q${Math.floor((m - 1) / 3) + 1}`;
+    if (!byQ.has(q)) { byQ.set(q, []); order.push(q); }
+    byQ.get(q).push(s);
+  });
+  const avg = (list, key) => {
+    const nums = list.map(s => s[key]).filter(v => v !== null && v !== undefined && !isNaN(+v)).map(Number);
+    return nums.length ? nums.reduce((a, b) => a + b, 0) / nums.length : null;
+  };
+  return order.map(q => {
+    const list = byQ.get(q);
+    return { quarter: q, months: list.length, totalARR: avg(list, "totalARR"), nrr: avg(list, "nrr"), grr: avg(list, "grr") };
+  });
+}
 /* full line chart: gridlines, axis labels, hover tooltip (snapshots are monthly) */
 function LineChart({ title, points, months, fmt, color = "#6366f1", w = 340, h = 160 }) {
   const [hov, setHov] = useState(null);
@@ -1876,6 +1896,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const pipeTotal = openOpps.reduce((s, o) => s + o.valueUSD, 0);
   const pipeWeighted = openOpps.reduce((s, o) => s + o.valueUSD * (OPP_STAGE_WEIGHT[o.stage] ?? 0.2), 0);
   const snaps = st.settings.snapshots || [];
+  const qSnaps = useMemo(() => quarterlySnaps(snaps), [snaps]);
   // per-person open-task rollup (whole team, regardless of scope)
   const byOwner = {};
   st.tasks.filter(t => t.status !== "Done").forEach(t => {
@@ -2019,9 +2040,12 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       </Card>
       {snaps.length >= 2 && <Card title="Trends & health mix" className="!p-3">
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <LineChart title="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
-          <LineChart title="NRR" points={snaps.map(s => s.nrr)} months={snaps.map(s => s.month)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#10b981" />
-          <LineChart title="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#f59e0b" />
+          {qSnaps.length < 2 && <div className="text-sm text-slate-500 md:col-span-2 xl:col-span-3">ARR, NRR and GRR are shown by quarter (average of the months in it) — the lines appear once a second quarter has snapshots.</div>}
+          {qSnaps.length >= 2 && <>
+          <LineChart title="Total ARR (USD) · quarterly avg" points={qSnaps.map(s => s.totalARR)} months={qSnaps.map(s => s.quarter)} fmt={fmtMoney} />
+          <LineChart title="NRR · quarterly avg" points={qSnaps.map(s => s.nrr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#10b981" />
+          <LineChart title="GRR · quarterly avg" points={qSnaps.map(s => s.grr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#f59e0b" />
+          </>}
           <StackedBars months={snaps.map(s => s.month)} series={[
             { label: "Green", values: snaps.map(s => s.Green || 0), color: RISK_HEX.Green },
             { label: "Yellow", values: snaps.map(s => s.Yellow || 0), color: RISK_HEX.Yellow },
