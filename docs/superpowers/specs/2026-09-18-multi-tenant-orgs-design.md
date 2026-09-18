@@ -69,7 +69,7 @@ create table org_alert_prefs (
 |---|---|
 | `profiles` | add `org_id uuid null references orgs(id)`, `platform_admin boolean not null default false` |
 | `accounts`, `contacts`, `activities`, `tasks`, `opportunities` | add `org_id uuid not null references orgs(id)`; primary key becomes `(org_id, id)` |
-| `settings` | drop the `id = 1` check; add `org_id uuid not null unique references orgs(id)`; `id` becomes a plain serial |
+| `settings` | drop the `id` column and its `id = 1` check; `org_id uuid primary key default current_org() references orgs(id)` |
 | `health_snapshots` | add `org_id uuid not null`; primary key becomes `(org_id, account_id, day)` |
 | `alert_config` | keep `api_key`, `from_email`, `from_name`, `api_base` in row 1; the three preference columns are left in place but ignored (dropping them would break the idempotent re-run of email-alerts.sql) |
 | `email_log` | add `org_id uuid null` for filtering only |
@@ -79,7 +79,11 @@ Composite keys matter: entity ids are 8-character random strings from `uid()` in
 browser, and the demo seed uses ids like `a1`. Two orgs seeded with the demo would
 collide on a global primary key.
 
-### Migration (`supabase-multitenant.sql`, idempotent)
+### Migration (inside `supabase-setup.sql`, idempotent)
+
+This repo has no migrations folder: `supabase-setup.sql` is re-run in the SQL editor and
+every change in it is idempotent (the `disabled` column is the pattern). The multi-tenant
+change follows that convention rather than adding a separate file. Steps, in order:
 
 1. Create the three new tables.
 2. Insert the default org if `orgs` is empty, name taken from an `-- EDIT ME` literal.
@@ -126,8 +130,8 @@ caller is a platform admin. `guard_admin_count` counts admins **within the row's
 `current_org()`. No update or delete from the browser; `handle_new_user` marks
 acceptance as definer.
 
-`orgs`: select for platform admins, plus a `my_org_name()` helper so the header can show
-the org name without opening the table to everyone.
+`orgs`: select for members of that org (`id = current_org()`) or platform admins, so the
+sidebar can read the current org's name. No writes from the browser.
 
 `org_alert_prefs`: select for active users of that org, update for org admins.
 
@@ -183,13 +187,14 @@ bucket stays public, the existing accepted trade-off; this change does not widen
   name, first admin name, email and temporary password. Submit calls `create_org`, then
   the same throwaway sign-up used by the Users screen, so the admin exists immediately.
   Switching calls `switch_org`, then reloads the store.
-- **Header.** When the signed-in user is a platform admin, the header shows the current
-  org name from `my_org_name()`.
+- **Sidebar.** When the signed-in user is a platform admin, the sidebar footer shows the
+  current org name, read from `orgs`.
 - **No-workspace screen.** A signed-in user whose profile has `org_id null` sees "Your
   account is not attached to a workspace yet. Ask your administrator." and a sign-out
   button, in place of "Loading profile…".
-- **Alert preferences.** The existing alert-settings controls read and write
-  `org_alert_prefs`.
+- **Alert preferences.** There is no alert-preferences UI today (the values were SQL-only
+  in `alert_config`), so per-org rows in `org_alert_prefs` stay SQL-edited for now. A UI
+  is a later change.
 
 ## Testing
 
@@ -221,9 +226,10 @@ row survives, and the app's load query returns the same data as before.
 ## Rollout
 
 1. Merge and deploy the app.
-2. Run `supabase-multitenant.sql` in the SQL editor with the two `EDIT ME` literals filled.
-3. Re-run `email-alerts.sql` (idempotent) to install the per-org `send_alerts`.
-4. Sign in, confirm the header shows the default org, create the first client.
+2. Re-run `supabase-setup.sql` in the SQL editor with the default-org `EDIT ME` name set.
+3. Re-run `email-alerts.sql` (idempotent) to install `org_alert_prefs` and the per-org `send_alerts`.
+4. Set `platform_admin = true` on your own profile by SQL (the only way to mint one).
+5. Sign in, confirm the sidebar shows the default org, create the first client.
 
 ## Out of scope
 
