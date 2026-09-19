@@ -3,7 +3,7 @@
 // `public`, `anon` AND `authenticated` -- the closing tests at the bottom of this file
 // prove that revocation holds for both published API roles.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount, seedTask, seedActivity } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, seedTask, seedActivity, ORG_A } from "./fixtures.mjs";
 
 // record_health() is defined in supabase-setup.sql, not email-alerts.sql, but its tests live
 // here with the alert suite: the snapshots exist only to feed the health-drop alert, and
@@ -910,9 +910,9 @@ test("record_health sweeps snapshots past 90 days but keeps snapshots inside the
   await seedAccount("h-retain", { name: "Retention Account" });
   // System-wide for health_snapshots for the same reason as the error_log sweep above.
   await sql(`delete from health_snapshots`);
-  await sql(`insert into health_snapshots (account_id, day, score)
-             values ('h-retain', current_date - interval '91 days', 40),
-                    ('h-retain', current_date - interval '89 days', 55)`);
+  await sql(`insert into health_snapshots (org_id, account_id, day, score)
+             values ($1, 'h-retain', current_date - interval '91 days', 40),
+                    ($1, 'h-retain', current_date - interval '89 days', 55)`, [ORG_A]);
   // Any record_health call sweeps -- a distinct day (today) so the upsert-within-a-day
   // behaviour tested elsewhere doesn't collide with the two seeded rows.
   const { error } = await sessions.admin.rpc("record_health",

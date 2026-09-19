@@ -1,15 +1,10 @@
 // The signup path and role assignment -- handle_new_user() in supabase-setup.sql. A sign-up
 // joins an org ONLY through a pending invite; there is no "first user becomes admin" rule.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, signUpFresh, roleOf, orgOf, seedAccount, newClient, PASSWORD, ORG_A, ORG_B } from "./fixtures.mjs";
+import { sessions, sql, signUpFresh, roleOf, orgOf, seedAccount, invitedFresh, newClient, PASSWORD, ORG_A, ORG_B } from "./fixtures.mjs";
 
-// Invite into org A first: an uninvited sign-up has no org, and guard_admin_count counts
-// admins per org, so an org-less "second admin" would not be a second admin of anything.
-async function invitedFresh(email, org = ORG_A) {
-  await sql(`insert into invites (email, org_id, role) values ($1, $2, 'user')`, [email, org]);
-  return signUpFresh(email);
-}
-
+// invitedFresh: guard_admin_count counts admins per org, so an org-less "second admin"
+// would not be a second admin of anything.
 test("a sign-up matching an admin invite lands in that org as admin", async () => {
   await sql(`insert into invites (email, org_id, role) values ('inv-admin@test.local', $1, 'admin')`, [ORG_B]);
   const { id } = await signUpFresh("inv-admin@test.local", "Invited Admin");

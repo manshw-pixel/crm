@@ -190,6 +190,13 @@ export async function signUpFresh(email, name = "Fresh User") {
   return signUp(email || `fresh${++fresh}@test.local`, name);
 }
 
+// A fresh sign-up that lands in `org` as a plain user. An uninvited sign-up has no org and
+// reads nothing, so any test whose precondition is "this user CAN do X" must use this.
+export async function invitedFresh(email, org = ORG_A) {
+  await sql(`insert into invites (email, org_id, role) values ($1, $2, 'user')`, [email, org]);
+  return signUpFresh(email);
+}
+
 // Read by SQL: an org admin's session can no longer see another org's profiles.
 export async function roleOf(id) {
   const [row] = await sql(`select role from profiles where id = $1`, [id]);
