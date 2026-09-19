@@ -78,7 +78,7 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
   admin invites them by email), or by being the platform admin created during setup below.
   Public sign-up with no invite creates a login that sees nothing until an admin attaches it.
 - Invited colleagues start as **user** (no Settings access) unless invited as admin.
-- In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
+- In **Settings → Users** you can promote colleagues to admin (any number per org; the last admin can never be demoted or disabled — the database enforces it).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
 
 ## Clients (multi-tenant)
@@ -86,19 +86,24 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
 OneVio hosts several client companies in one install. Each client is an **org**; users
 belong to exactly one org and see only its data.
 
-**First-time upgrade of an existing install**
-1. Open `supabase-setup.sql` and set the two `EDIT ME` literals:
+**First-time upgrade of an existing install: one maintenance window, in this order**
+1. Make sure the platform-admin login already exists (an existing user, or have that person
+   sign up first). Then open `supabase-setup.sql` and set the two `EDIT ME` literals:
    - Line 20, `insert into public.orgs (id, name) values (..., 'My Company')` — the default
      org's name. Every row and user that existed before multi-tenancy is stamped onto this
      org, so nothing changes visibly for your current team.
-   - Line 58, `where ... lower(email) = lower('you@yourcompany.com')` — the platform admin's
-     sign-in email. This line is a no-op until that account has actually signed up; re-run
-     the file after they sign in once to pick it up.
+   - Line 62, `where ... lower(email) = lower('you@yourcompany.com')` — the platform admin's
+     sign-in email. It is a no-op until that account exists (re-run the file once it does).
+     It also puts the account in the default org if it has no org yet.
    Both are idempotent: change and re-run the whole file any time.
 2. Run `supabase-setup.sql`, then `email-alerts.sql`, in the SQL editor, in that order. Both
    are safe to re-run.
-3. Sign in as the platform-admin account once (so the row exists), then re-run
-   `supabase-setup.sql` to flip `platform_admin = true` on it.
+3. Deploy the new app **immediately** afterwards, and tell users to reload.
+
+   The app is down between steps 2 and 3, so keep that gap to minutes. Neither piece can go
+   first safely: the new app reads `profiles.org_id`, which does not exist before the SQL
+   runs ("Could not load your profile" for everyone), and the old app reads `settings` by an
+   `id` column the SQL drops and uploads files to paths the new storage policies refuse.
 
 **Onboarding a client**
 Settings → Platform (visible only to the platform admin) → fill in client name, the admin's
