@@ -466,3 +466,133 @@ test("create_org: an admin address whose login is in another workspace is refuse
   const invs = await sql(`select 1 from invites where email = 'owned.elsewhere@test.local'`);
   assert(invs.length === 0, "a refused create_org left an invite behind");
 });
+
+// ---------- Final review C1: an org admin must not be able to take over the platform admin ----------
+// switch_org puts the platform admin's profile inside a client org, where that org's admins
+// pass profiles_update_admin and the org check in admin_set_user_email. Every refusal below
+// is read back by SQL, and each test carries a control proving the org B admin CAN act on
+// its own users, so a denial is the guard's and not a vacuous policy.
+async function platformId() {
+  const [p] = await sql(`select id from auth.users where email = 'platform@test.local'`);
+  return p.id;
+}
+async function platformIntoB() {
+  await sql(`update profiles set org_id = $1 where id = $2`, [ORG_B, await platformId()]);
+}
+
+test("C1: an org B admin cannot change the email of a platform admin switched into org B", async () => {
+  try {
+    await platformIntoB();
+    const pid = await platformId();
+    const { error } = await sessions.adminB.rpc("admin_set_user_email", { p_id: pid, p_email: "attacker@evil.test" });
+    assert(error && /platform admin/i.test(error.message), `expected platform-admin refusal, got ${error && error.message}`);
+    const [u] = await sql(`select email from auth.users where id = $1`, [pid]);
+    assert(u.email === "platform@test.local", `TAKEOVER: platform admin's email became ${u.email}`);
+    const [i] = await sql(`select identity_data->>'email' as e from auth.identities where user_id = $1 and provider = 'email'`, [pid]);
+    assert(!i || i.e === "platform@test.local", `identity email changed to ${i && i.e}`);
+    // Control: the same admin CAN change its own org's user (then it is put back by SQL).
+    const [ub] = await sql(`select id from auth.users where email = 'userb@test.local'`);
+    const { error: ok } = await sessions.adminB.rpc("admin_set_user_email", { p_id: ub.id, p_email: "userb.c1@test.local" });
+    assert(!ok, `control: ${ok && ok.message}`);
+    const [ubAfter] = await sql(`select email from auth.users where id = $1`, [ub.id]);
+    assert(ubAfter.email === "userb.c1@test.local", "control: org B admin could not change its own user's email (vacuous?)");
+    await sql(`update auth.users set email = 'userb@test.local' where id = $1`, [ub.id]);
+    await sql(`update auth.identities set identity_data = jsonb_set(identity_data, '{email}', '"userb@test.local"')
+               where user_id = $1 and provider = 'email'`, [ub.id]);
+  } finally { await restorePlatform(); }
+});
+
+test("C1: an org B admin cannot disable or re-role a platform admin switched into org B", async () => {
+  try {
+    await platformIntoB();
+    const pid = await platformId();
+    const { error: d } = await sessions.adminB.from("profiles").update({ disabled: true }).eq("id", pid);
+    assert(d && /platform admin/i.test(d.message), `expected guard refusal on disable, got ${d && d.message}`);
+    const { error: r } = await sessions.adminB.from("profiles").update({ role: "admin" }).eq("id", pid);
+    assert(r && /platform admin/i.test(r.message), `expected guard refusal on role, got ${r && r.message}`);
+    const { error: o } = await sessions.adminB.from("profiles").update({ org_id: null }).eq("id", pid);
+    assert(o, "org B admin moved the platform admin out of the org");
+    const [p] = await sql(`select disabled, role, org_id, platform_admin from profiles where id = $1`, [pid]);
+    assert(!p.disabled && p.role === "user" && p.org_id === ORG_B && p.platform_admin,
+      `platform admin's row was changed: ${JSON.stringify(p)}`);
+    // Control: the same admin can still write an ordinary org B row.
+    const [ub] = await sql(`select p.id, p.name from profiles p join auth.users u on u.id = p.id where u.email = 'userb@test.local'`);
+    const { error: ok } = await sessions.adminB.from("profiles").update({ name: "Plain B (edited)" }).eq("id", ub.id);
+    assert(!ok, ok && ok.message);
+    const [after] = await sql(`select name from profiles where id = $1`, [ub.id]);
+    assert(after.name === "Plain B (edited)", "control: org B admin could not edit its own user (vacuous?)");
+    await sql(`update profiles set name = $1 where id = $2`, [ub.name, ub.id]);
+  } finally { await restorePlatform(); }
+});
+
+test("C1: admin_user_list hides a switched-in platform admin from org B's admin", async () => {
+  try {
+    await platformIntoB();
+    const { data, error } = await sessions.adminB.rpc("admin_user_list");
+    assert(!error, error && error.message);
+    const emails = data.map(r => r.email);
+    assert(emails.includes("userb@test.local"), `control: org B's own user missing: ${emails}`);
+    assert(!emails.includes("platform@test.local"), "admin_user_list exposed the platform admin to an org admin");
+  } finally { await restorePlatform(); }
+});
+
+test("C1: invite_user cannot attach an org-less platform-admin login", async () => {
+  const { id } = await signUpFresh("orgless.platform@test.local");
+  await sql(`update profiles set platform_admin = true where id = $1`, [id]);
+  try {
+    const { error } = await sessions.adminB.rpc("invite_user", { p_email: "orgless.platform@test.local", p_role: "user" });
+    assert(error && /platform admin/i.test(error.message), `expected refusal, got ${error && error.message}`);
+    assert((await orgOf(id)) === null, "an org admin pulled a platform admin into their org");
+    const rows = await sql(`select 1 from invites where email = 'orgless.platform@test.local'`);
+    assert(rows.length === 0, "a refused attach left an invite behind");
+  } finally { await sql(`update profiles set platform_admin = false where id = $1`, [id]); }
+});
+
+test("C1: invite_user cannot attach a disabled org-less login", async () => {
+  const { id } = await signUpFresh("orgless.disabled@test.local");
+  await sql(`update profiles set disabled = true where id = $1`, [id]);
+  const { error } = await sessions.admin.rpc("invite_user", { p_email: "orgless.disabled@test.local", p_role: "user" });
+  assert(error && /disabled/i.test(error.message), `expected refusal, got ${error && error.message}`);
+  assert((await orgOf(id)) === null, "a disabled login was attached");
+  const rows = await sql(`select 1 from invites where email = 'orgless.disabled@test.local'`);
+  assert(rows.length === 0, "a refused attach left an invite behind");
+});
+
+test("C1: create_org cannot make a platform-admin or disabled login the new org's admin", async () => {
+  const { id: pa } = await signUpFresh("orgless.pa2@test.local");
+  await sql(`update profiles set platform_admin = true where id = $1`, [pa]);
+  const { id: dis } = await signUpFresh("orgless.dis2@test.local");
+  await sql(`update profiles set disabled = true where id = $1`, [dis]);
+  try {
+    const { error: e1 } = await sessions.platform.rpc("create_org", { p_name: "Client PA", p_admin_email: "orgless.pa2@test.local" });
+    assert(e1 && /platform admin/i.test(e1.message), `expected refusal, got ${e1 && e1.message}`);
+    const { error: e2 } = await sessions.platform.rpc("create_org", { p_name: "Client DIS", p_admin_email: "orgless.dis2@test.local" });
+    assert(e2 && /disabled/i.test(e2.message), `expected refusal, got ${e2 && e2.message}`);
+    assert((await orgOf(pa)) === null && (await orgOf(dis)) === null, "a refused login was attached");
+    const orgs = await sql(`select 1 from orgs where name in ('Client PA', 'Client DIS')`);
+    assert(orgs.length === 0, "a refused create_org left an org behind");
+    const invs = await sql(`select 1 from invites where email in ('orgless.pa2@test.local', 'orgless.dis2@test.local')`);
+    assert(invs.length === 0, "a refused create_org left an invite behind");
+  } finally { await sql(`update profiles set platform_admin = false where id = $1`, [pa]); }
+});
+
+test("C1 control: a platform admin still updates its own row, and switch_org still works", async () => {
+  try {
+    const pid = await platformId();
+    // profiles_update_admin needs an org admin; make it one by SQL (org A keeps its other admin).
+    await sql(`update profiles set role = 'admin' where id = $1`, [pid]);
+    const { error } = await sessions.platform.from("profiles").update({ role: "user", name: "Platform Self" }).eq("id", pid);
+    assert(!error, error && error.message);
+    const [p] = await sql(`select role, name from profiles where id = $1`, [pid]);
+    assert(p.role === "user" && p.name === "Platform Self", `self-update did not land: ${JSON.stringify(p)}`);
+    const { error: sw } = await sessions.platform.rpc("switch_org", { p_org_id: ORG_B });
+    assert(!sw, sw && sw.message);
+    assert((await orgOf(pid)) === ORG_B, "switch_org did not move the platform admin");
+    const { error: back } = await sessions.platform.rpc("switch_org", { p_org_id: ORG_A });
+    assert(!back, back && back.message);
+    assert((await orgOf(pid)) === ORG_A, "switch_org did not move the platform admin back");
+  } finally {
+    await sql(`update profiles set name = 'Platform Owner' where id = (select id from auth.users where email = 'platform@test.local')`);
+    await restorePlatform();
+  }
+});

@@ -52,9 +52,13 @@ alter table public.profiles
   add column if not exists platform_admin boolean not null default false;
 
 -- EDIT ME: the platform admin's sign-in email. A no-op until that account exists (and on
--- the placeholder); re-run this file after that person has signed up.
-update public.profiles set platform_admin = true
-  where not platform_admin
+-- the placeholder); re-run this file after that person has signed up. A login created after
+-- the upgrade matched no invite and so has no org; placing it in the default org here keeps
+-- it off the "no workspace" screen (it can switch_org anywhere from there). Runs as SQL, so
+-- guard_profile_org's operator branch lets it through.
+update public.profiles set platform_admin = true,
+       org_id = coalesce(org_id, '00000000-0000-0000-0000-000000000001')
+  where (not platform_admin or org_id is null)
     and id = (select id from auth.users where lower(email) = lower('you@yourcompany.com'));   -- EDIT ME
 
 create table if not exists public.invites (
@@ -212,21 +216,39 @@ create trigger guard_admin_count
   before insert or update of role, disabled on public.profiles
   for each row execute function public.guard_admin_count();
 
--- ---------- org column immutability ----------
+-- ---------- org column immutability and the platform admin's row ----------
 -- profiles_update_admin lets an org admin edit rows in their org; this trigger is what
 -- stops that admin (or a user editing their own row) from moving anyone to another org
--- or minting a platform admin. SQL-editor and cron contexts have no auth.uid() and are
--- exempt: that is how this file's own backfill and switch_org's owner context run.
+-- or minting a platform admin. It also protects the platform admin's own row: switch_org
+-- places that profile inside a client org, where the client's admins would otherwise pass
+-- profiles_update_admin and could disable it, demote it or move it. So a row with
+-- platform_admin = true can have its role, disabled flag or org changed only by a caller
+-- who is a platform admin (itself included). Its email lives in auth.users and is guarded
+-- by admin_set_user_email's own check.
+-- switch_org is NOT exempt: it runs with auth.uid() set, and passes because its caller is
+-- a platform admin.
 create or replace function public.guard_profile_org()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
+  -- Operator contexts only: the SQL editor, pg_cron and service_role have no auth.uid().
+  -- No browser request reaches this branch -- every authenticated request (definer RPCs
+  -- included) carries the caller's sub, and anon has no update path to profiles. This is
+  -- how this file's own backfill and the platform-admin EDIT ME update run.
   if auth.uid() is null then return new; end if;
-  -- invite_user() attaching an existing org-less login sets this transaction-local flag
+  if old.platform_admin
+     and (new.role is distinct from old.role
+          or new.disabled is distinct from old.disabled
+          or new.org_id is distinct from old.org_id)
+     and not public.is_platform_admin() then
+    raise exception 'Only a platform admin can change a platform admin''s role, status or org';
+  end if;
+  -- attach_orgless_login() (invite_user, create_org) sets this transaction-local flag
   -- itself. A client cannot: set_config is not exposed through the API, and the flag is
-  -- only honoured for a row that had NO org (it can never move someone between orgs) and
-  -- never for the platform flag.
+  -- only honoured for a row that had NO org (it can never move someone between orgs),
+  -- never for a platform admin or a disabled login, and never for the platform flag.
   if current_setting('app.invite_attach', true) = 'on'
-     and old.org_id is null and new.platform_admin is not distinct from old.platform_admin then
+     and old.org_id is null and not old.platform_admin and not old.disabled
+     and new.platform_admin is not distinct from old.platform_admin then
     return new;
   end if;
   if (new.org_id is distinct from old.org_id or new.platform_admin is distinct from old.platform_admin)
@@ -237,7 +259,7 @@ begin
 end $$;
 drop trigger if exists guard_profile_org on public.profiles;
 create trigger guard_profile_org
-  before update of org_id, platform_admin on public.profiles
+  before update of org_id, platform_admin, role, disabled on public.profiles
   for each row execute function public.guard_profile_org();
 
 -- ---------- row-level security ----------
@@ -416,8 +438,7 @@ declare
 begin
   -- Explicit, not incidental. An RLS-denied DELETE raises nothing and simply affects zero
   -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
-  -- four child tables, whose delete policy is `using (true)`, failing only later at the
-  -- settings upsert. The spec calls this operation admin-gated; this makes that true.
+  -- four child tables, failing only later at the settings upsert. The spec calls this operation admin-gated; this makes that true.
   if not public.is_admin() then
     raise exception 'replace_all: admin only';
   end if;
@@ -732,6 +753,9 @@ begin
     select p.id, p.name, p.role, p.disabled, u.email::text
     from profiles p join auth.users u on u.id = p.id
     where p.org_id = public.current_org()
+      -- A platform admin who has switched into this org is not one of its users: hide the
+      -- operator (and its address) from the org's own admins.
+      and (not p.platform_admin or public.is_platform_admin())
     order by p.created_at;
 end $$;
 
@@ -746,6 +770,12 @@ begin
   -- Definer bypasses RLS: without this an org admin could rewrite ANY tenant's login.
   if not exists (select 1 from profiles where id = p_id and org_id = public.current_org()) then
     raise exception 'admin_set_user_email: user is not in your org';
+  end if;
+  -- An org admin must never rewrite the operator's login (then reset its password and sign
+  -- in as platform admin). The profiles guard cannot see this: the address is in auth.users.
+  if exists (select 1 from profiles where id = p_id and platform_admin)
+     and not public.is_platform_admin() then
+    raise exception 'admin_set_user_email: only a platform admin can change a platform admin''s email';
   end if;
   if not public.valid_email(addr) then
     raise exception 'admin_set_user_email: % is not a valid email address', p_email;
@@ -791,6 +821,33 @@ grant execute on function public.admin_user_list() to authenticated;
 grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
 
 -- ---------- onboarding: invites and orgs ----------
+-- Internal: the one attach path for an existing org-less login, shared by invite_user and
+-- create_org. Refuses a platform admin (only SQL may place the operator) and a disabled
+-- login (re-enabling is a deliberate admin act, not a side effect of an invite). Raising
+-- here aborts the caller's whole transaction, so no invite or org row is left behind.
+-- Not callable from the API (revoked below); its only callers are definer functions,
+-- which run as the owner.
+create or replace function public.attach_orgless_login(p_caller text, p_addr text, p_id uuid, p_org uuid, p_role text)
+returns void language plpgsql security definer set search_path = public as $$
+declare
+  prof record;
+begin
+  select org_id, platform_admin, disabled into prof from profiles where id = p_id for update;
+  if not found or prof.org_id is not null then
+    raise exception '%: % is not an org-less login', p_caller, p_addr;
+  end if;
+  if prof.platform_admin then
+    raise exception '%: % is a platform admin and cannot be added to a workspace', p_caller, p_addr;
+  end if;
+  if prof.disabled then
+    raise exception '%: % is a disabled login and cannot be added to a workspace', p_caller, p_addr;
+  end if;
+  perform set_config('app.invite_attach', 'on', true);
+  update profiles set org_id = p_org, role = p_role where id = p_id;
+  perform set_config('app.invite_attach', 'off', true);
+end $$;
+revoke execute on function public.attach_orgless_login(text, text, uuid, uuid, text) from public, anon, authenticated;
+
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.
@@ -827,9 +884,7 @@ begin
     elsif existing.org_id is not null then
       raise exception 'invite_user: % already belongs to another workspace', addr;
     end if;
-    perform set_config('app.invite_attach', 'on', true);
-    update profiles set org_id = public.current_org(), role = p_role where id = existing.id;
-    perform set_config('app.invite_attach', 'off', true);
+    perform public.attach_orgless_login('invite_user', addr, existing.id, public.current_org(), p_role);
     insert into invites (email, org_id, role, created_by, accepted_at)
     values (addr, public.current_org(), p_role, auth.uid(), now())
     on conflict (email, org_id) do update
@@ -888,9 +943,7 @@ begin
     execute 'insert into org_alert_prefs (org_id) values ($1) on conflict (org_id) do nothing' using new_id;
   end if;
   if existing_id is not null then
-    perform set_config('app.invite_attach', 'on', true);
-    update profiles set org_id = new_id, role = 'admin' where id = existing_id;
-    perform set_config('app.invite_attach', 'off', true);
+    perform public.attach_orgless_login('create_org', addr, existing_id, new_id, 'admin');
     insert into invites (email, org_id, role, created_by, accepted_at) values (addr, new_id, 'admin', auth.uid(), now());
   else
     insert into invites (email, org_id, role, created_by) values (addr, new_id, 'admin', auth.uid());
