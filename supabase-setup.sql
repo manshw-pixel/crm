@@ -67,6 +67,12 @@ create table if not exists public.invites (
   primary key (email, org_id)
 );
 alter table public.invites enable row level security;
+-- At most ONE open invite per address across all orgs. Without this, handle_new_user had to
+-- pick among several orgs' invites, and any org admin could re-invite someone else's pending
+-- owner to capture their sign-up. Blocks invite_user, create_org and the invites_insert
+-- policy path alike.
+create unique index if not exists invites_one_open_per_email
+  on public.invites (lower(email)) where accepted_at is null;
 
 -- ---------- helper: which org is this request for? ----------
 -- The single source of tenancy. Every policy and every org-stamping RPC reads this.
@@ -161,8 +167,8 @@ declare
   inv invites;
 begin
   select * into inv from invites
-   where email = lower(trim(new.email)) and accepted_at is null
-   order by created_at desc limit 1;
+   where lower(email) = lower(trim(new.email)) and accepted_at is null;
+  -- invites_one_open_per_email guarantees at most one row: no tiebreak needed.
   insert into profiles (id, name, role, org_id)
   values (
     new.id,
@@ -796,6 +802,10 @@ begin
   if not public.valid_email(addr) then
     raise exception 'invite_user: % is not a valid email address', p_email;
   end if;
+  if exists (select 1 from invites where lower(email) = addr and accepted_at is null
+             and org_id <> public.current_org()) then
+    raise exception 'invite_user: % already has an open invite to another workspace', addr;
+  end if;
   insert into invites (email, org_id, role, created_by)
   values (addr, public.current_org(), p_role, auth.uid())
   on conflict (email, org_id) do update
@@ -816,6 +826,14 @@ begin
   end if;
   if not public.valid_email(addr) then
     raise exception 'create_org: % is not a valid email address', p_admin_email;
+  end if;
+  -- A retry must error, not duplicate. Both checks run before any insert; and the whole body
+  -- is one transaction, so a later failure leaves no half-created org behind.
+  if exists (select 1 from orgs where lower(trim(name)) = lower(trim(p_name))) then
+    raise exception 'create_org: an org named % already exists', trim(p_name);
+  end if;
+  if exists (select 1 from invites where lower(email) = addr and accepted_at is null) then
+    raise exception 'create_org: % already has an open invite', addr;
   end if;
   insert into orgs (name) values (trim(p_name)) returning id into new_id;
   insert into settings (org_id, data) values (new_id, '{}'::jsonb);

@@ -2,7 +2,7 @@
 // the same test, so a policy that returns nothing to anyone would fail loudly rather than
 // pass vacuously (the lesson of the anon-key incident in fixtures.mjs).
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount, valueOf, ORG_A, ORG_B } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, valueOf, orgOf, signUpFresh, ORG_A, ORG_B } from "./fixtures.mjs";
 
 const TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 
@@ -352,4 +352,52 @@ test("list_orgs: platform admin gets every org with a user count; others are ref
   assert(deniedU && /platform admin/i.test(deniedU.message), "a plain user listed all orgs");
   const { error: deniedN } = await sessions.anon.rpc("list_orgs");
   assert(deniedN, "anon listed all orgs");
+});
+
+// ---------- Task 3 fix round 1: one open invite per address (I1), idempotent create_org (I2) ----------
+test("invite_user: another org's admin cannot take over an address with an open invite", async () => {
+  const { error: seed } = await sessions.admin.rpc("invite_user", { p_email: "held-a@test.local", p_role: "user" });
+  assert(!seed, seed && seed.message);
+  const before = await sql(`select org_id, role, created_at::text as c from invites where email = 'held-a@test.local'`);
+  const { error } = await sessions.adminB.rpc("invite_user", { p_email: "Held-A@test.local", p_role: "admin" });
+  assert(error && /open invite/i.test(error.message), `expected open-invite refusal, got ${error && error.message}`);
+  const { error: c } = await sessions.adminB.rpc("invite_user", { p_email: "owner@clientc.com", p_role: "admin" });
+  assert(c && /open invite/i.test(c.message), `Client C's owner invite was not protected: ${c && c.message}`);
+  const after = await sql(`select org_id, role, created_at::text as c from invites where email = 'held-a@test.local'`);
+  assert(JSON.stringify(after) === JSON.stringify(before) && after.length === 1 && after[0].org_id === ORG_A,
+    `org A's invite changed: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`);
+  const owner = await sql(`select o.name from invites i join orgs o on o.id = i.org_id where i.email = 'owner@clientc.com'`);
+  assert(owner.length === 1 && owner[0].name === "Client C", `Client C's invite changed: ${JSON.stringify(owner)}`);
+  // A same-org re-invite may still change the role.
+  const { error: same } = await sessions.admin.rpc("invite_user", { p_email: "held-a@test.local", p_role: "admin" });
+  assert(!same, same && same.message);
+  const [r] = await sql(`select role from invites where email = 'held-a@test.local' and org_id = $1`, [ORG_A]);
+  assert(r.role === "admin", "same-org re-invite did not update the role");
+});
+
+test("invites_insert: an org B admin cannot insert a second open invite for a held address", async () => {
+  const { error } = await sessions.adminB.from("invites").insert({ email: "held-a@test.local", org_id: ORG_B, role: "admin" });
+  assert(error, "a direct insert created a second open invite");
+  const rows = await sql(`select org_id from invites where lower(email) = 'held-a@test.local'`);
+  assert(rows.length === 1 && rows[0].org_id === ORG_A, `invites now ${JSON.stringify(rows)}`);
+});
+
+test("create_org: a retry with the same name errors and makes one org; the owner signs up into it", async () => {
+  const args = { p_name: "Client D", p_admin_email: "owner@clientd.com" };
+  const { data: orgId, error } = await sessions.platform.rpc("create_org", args);
+  assert(!error, error && error.message);
+  const { error: again } = await sessions.platform.rpc("create_org", args);
+  assert(again && /already exists/i.test(again.message), `expected duplicate refusal, got ${again && again.message}`);
+  const { error: cased } = await sessions.platform.rpc("create_org", { p_name: " client d ", p_admin_email: "other@clientd.com" });
+  assert(cased && /already exists/i.test(cased.message), `expected case-insensitive refusal, got ${cased && cased.message}`);
+  const { error: held } = await sessions.platform.rpc("create_org", { p_name: "Client D2", p_admin_email: "owner@clientd.com" });
+  assert(held && /open invite/i.test(held.message), `expected open-invite refusal, got ${held && held.message}`);
+  const orgs = await sql(`select id from orgs where lower(name) in ('client d', 'client d2')`);
+  assert(orgs.length === 1 && orgs[0].id === orgId, `expected exactly one Client D org, got ${JSON.stringify(orgs)}`);
+  const invs = await sql(`select org_id from invites where email in ('owner@clientd.com', 'other@clientd.com')`);
+  assert(invs.length === 1 && invs[0].org_id === orgId, `invites ${JSON.stringify(invs)}`);
+  const { id } = await signUpFresh("owner@clientd.com", "Owner D");
+  assert(await orgOf(id) === orgId, "the owner did not land in the org create_org made");
+  const [p] = await sql(`select role from profiles where id = $1`, [id]);
+  assert(p.role === "admin", `owner should be admin, got ${p.role}`);
 });
