@@ -1,7 +1,7 @@
 // Admin-gated operations. REMEMBER: a denied delete or update returns NO error — the row
 // simply does not change. Every denial is verified by reading back as admin.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, seedRow, stillExists, valueOf, roleOf, invitedFresh } from "./fixtures.mjs";
+import { sessions, seedRow, stillExists, valueOf, roleOf, invitedFresh, sql, ORG_A } from "./fixtures.mjs";
 
 test("a plain user cannot delete an account", async () => {
   await seedRow("accounts", "rls-del-1");
@@ -19,18 +19,19 @@ test("an admin can delete an account", async () => {
   assert(!(await stillExists("accounts", "rls-del-2")), "the admin's delete did not take effect");
 });
 
-// settings.id is `int primary key check (id = 1)` — a single-row table. Both tests below
-// therefore target id 1, not a namespaced string id. They still cannot collide: the plain
-// user's insert is denied, so no row exists when the admin's insert runs.
+// settings is one row per org, keyed by org_id (default current_org()). The client sends
+// no key at all: upsert resolves on the primary key, so the row lands in the caller's org.
 test("a plain user cannot write settings", async () => {
-  const { error } = await sessions.user.from("settings").insert({ id: 1, data: { rates: { INR: 99 } } });
-  assert(error, "settings_write should reject a plain user's insert");
+  const { error } = await sessions.user.from("settings").upsert({ data: { rates: { INR: 99 } } });
+  assert(error, "settings_write should reject a plain user's write");
   assert(error.code === "42501", `expected an RLS violation (42501), got ${error.code}: ${error.message}`);
 });
 
 test("an admin can write settings", async () => {
-  const { error } = await sessions.admin.from("settings").insert({ id: 1, data: { rates: { INR: 0.012 } } });
+  const { error } = await sessions.admin.from("settings").upsert({ data: { rates: { INR: 0.012 } } });
   assert(!error, `admin settings write failed: ${error && error.message}`);
+  const [row] = await sql(`select data from settings where org_id = $1`, [ORG_A]);
+  assert(row && row.data.rates.INR === 0.012, `the admin's write did not land in org A: ${JSON.stringify(row)}`);
 });
 
 test("a plain user cannot change another user's role", async () => {
@@ -104,7 +105,10 @@ test("every authenticated user can read every profile (documents finding F4)", a
 test("an anonymous client can read nothing", async () => {
   await seedRow("accounts", "rls-anon-1");
   for (const t of ["accounts", "contacts", "activities", "tasks", "opportunities", "profiles", "settings"]) {
-    const { data } = await sessions.anon.from(t).select("id");
+    // "*", not "id": settings has no id column, and an unknown-column error would read as
+    // "no rows" here and pass for the wrong reason.
+    const { data, error } = await sessions.anon.from(t).select("*");
+    assert(!error, `${t}: anonymous read errored (${error && error.message}); the assertion below would be vacuous`);
     assert((data || []).length === 0,
       `${t}: an anonymous client read ${(data || []).length} row(s) — it must read none`);
   }
@@ -221,21 +225,21 @@ test("re-enabling a user restores access", async () => {
 test("a disabled user cannot read settings", async () => {
   const victim = await invitedFresh("disable-victim-settings@test.local");
   // upsert, not insert: an earlier test in this file ("an admin can write settings")
-  // already created row id=1, and a plain insert against that existing row would fail
+  // already created org A's row, and a plain insert against that existing row would fail
   // with a duplicate-key error the original version of this test never checked --
   // the read below would then pass only because that OTHER test happened to run first,
   // not because this seed worked. Upsert makes the seed self-sufficient regardless of
   // test order, and the error is checked so a real seeding failure is not silently hidden.
-  const seed = await sessions.admin.from("settings").upsert({ id: 1, data: { rates: { INR: 0.012 } } });
+  const seed = await sessions.admin.from("settings").upsert({ data: { rates: { INR: 0.012 } } });
   assert(!seed.error, `seeding settings failed: ${seed.error && seed.error.message}`);
 
-  const before = await victim.client.from("settings").select("id");
+  const before = await victim.client.from("settings").select("org_id");
   assert(!before.error && before.data.length === 1,
     `victim should read settings before being disabled, got ${JSON.stringify(before)}`);
 
   await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
 
-  const after = await victim.client.from("settings").select("id");
+  const after = await victim.client.from("settings").select("org_id");
   assert(!after.error && after.data.length === 0,
     `disabled user should read 0 settings rows, got ${JSON.stringify(after)}`);
 });

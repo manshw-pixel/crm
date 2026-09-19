@@ -5,6 +5,7 @@ import { bootstrap } from "./fixtures.mjs";
 
 import "./auth.test.mjs";
 import "./policies.test.mjs";
+import "./orgs.test.mjs";
 import "./merge.test.mjs";
 import "./storage.test.mjs";
 import "./replace.test.mjs";
