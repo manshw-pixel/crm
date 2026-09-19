@@ -1,7 +1,7 @@
 // Admin-gated operations. REMEMBER: a denied delete or update returns NO error — the row
 // simply does not change. Every denial is verified by reading back as admin.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, seedRow, stillExists, valueOf, roleOf, signUpFresh } from "./fixtures.mjs";
+import { sessions, seedRow, stillExists, valueOf, roleOf, invitedFresh, sql, ORG_A } from "./fixtures.mjs";
 
 test("a plain user cannot delete an account", async () => {
   await seedRow("accounts", "rls-del-1");
@@ -19,18 +19,19 @@ test("an admin can delete an account", async () => {
   assert(!(await stillExists("accounts", "rls-del-2")), "the admin's delete did not take effect");
 });
 
-// settings.id is `int primary key check (id = 1)` — a single-row table. Both tests below
-// therefore target id 1, not a namespaced string id. They still cannot collide: the plain
-// user's insert is denied, so no row exists when the admin's insert runs.
+// settings is one row per org, keyed by org_id (default current_org()). The client sends
+// no key at all: upsert resolves on the primary key, so the row lands in the caller's org.
 test("a plain user cannot write settings", async () => {
-  const { error } = await sessions.user.from("settings").insert({ id: 1, data: { rates: { INR: 99 } } });
-  assert(error, "settings_write should reject a plain user's insert");
+  const { error } = await sessions.user.from("settings").upsert({ data: { rates: { INR: 99 } } });
+  assert(error, "settings_write should reject a plain user's write");
   assert(error.code === "42501", `expected an RLS violation (42501), got ${error.code}: ${error.message}`);
 });
 
 test("an admin can write settings", async () => {
-  const { error } = await sessions.admin.from("settings").insert({ id: 1, data: { rates: { INR: 0.012 } } });
+  const { error } = await sessions.admin.from("settings").upsert({ data: { rates: { INR: 0.012 } } });
   assert(!error, `admin settings write failed: ${error && error.message}`);
+  const [row] = await sql(`select data from settings where org_id = $1`, [ORG_A]);
+  assert(row && row.data.rates.INR === 0.012, `the admin's write did not land in org A: ${JSON.stringify(row)}`);
 });
 
 test("a plain user cannot change another user's role", async () => {
@@ -104,7 +105,10 @@ test("every authenticated user can read every profile (documents finding F4)", a
 test("an anonymous client can read nothing", async () => {
   await seedRow("accounts", "rls-anon-1");
   for (const t of ["accounts", "contacts", "activities", "tasks", "opportunities", "profiles", "settings"]) {
-    const { data } = await sessions.anon.from(t).select("id");
+    // "*", not "id": settings has no id column, and an unknown-column error would read as
+    // "no rows" here and pass for the wrong reason.
+    const { data, error } = await sessions.anon.from(t).select("*");
+    assert(!error, `${t}: anonymous read errored (${error && error.message}); the assertion below would be vacuous`);
     assert((data || []).length === 0,
       `${t}: an anonymous client read ${(data || []).length} row(s) — it must read none`);
   }
@@ -135,7 +139,7 @@ test("an anonymous client cannot update or delete", async () => {
 // suite (including tests that run after this file).
 
 test("a disabled user reads nothing from the business tables", async () => {
-  const victim = await signUpFresh("disable-victim1@test.local");
+  const victim = await invitedFresh("disable-victim1@test.local");
   await seedRow("accounts", "rls-disable-1");
 
   // Prove the session WORKS before disabling. Without this the assertion below passes
@@ -153,7 +157,7 @@ test("a disabled user reads nothing from the business tables", async () => {
 });
 
 test("a disabled user cannot insert", async () => {
-  const victim = await signUpFresh("disable-victim2@test.local");
+  const victim = await invitedFresh("disable-victim2@test.local");
   const pre = await victim.client.from("accounts").insert({ id: "rls-disable-pre", data: { name: "Pre" } });
   assert(!pre.error, `victim should insert before being disabled, got: ${pre.error && pre.error.message}`);
 
@@ -165,7 +169,7 @@ test("a disabled user cannot insert", async () => {
 });
 
 test("a disabled user can still read their OWN profile, and no other", async () => {
-  const victim = await signUpFresh("disable-victim3@test.local");
+  const victim = await invitedFresh("disable-victim3@test.local");
   await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
 
   // Root() needs this row to tell the user they have been disabled. Deny it and they
@@ -180,7 +184,7 @@ test("a disabled user can still read their OWN profile, and no other", async () 
 });
 
 test("a disabled admin loses admin powers", async () => {
-  const second = await signUpFresh("disable-admin1@test.local");
+  const second = await invitedFresh("disable-admin1@test.local");
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
 
@@ -204,7 +208,7 @@ test("a disabled admin loses admin powers", async () => {
 });
 
 test("re-enabling a user restores access", async () => {
-  const victim = await signUpFresh("disable-admin2@test.local");
+  const victim = await invitedFresh("disable-admin2@test.local");
   await seedRow("accounts", "rls-disable-reenable");
   await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
   const { error: reEnableErr } = await sessions.admin.from("profiles").update({ disabled: false }).eq("id", victim.id);
@@ -219,29 +223,29 @@ test("re-enabling a user restores access", async () => {
 // absence-only assertion proves nothing (see rls-anon-key-vacuity in the project memory).
 
 test("a disabled user cannot read settings", async () => {
-  const victim = await signUpFresh("disable-victim-settings@test.local");
+  const victim = await invitedFresh("disable-victim-settings@test.local");
   // upsert, not insert: an earlier test in this file ("an admin can write settings")
-  // already created row id=1, and a plain insert against that existing row would fail
+  // already created org A's row, and a plain insert against that existing row would fail
   // with a duplicate-key error the original version of this test never checked --
   // the read below would then pass only because that OTHER test happened to run first,
   // not because this seed worked. Upsert makes the seed self-sufficient regardless of
   // test order, and the error is checked so a real seeding failure is not silently hidden.
-  const seed = await sessions.admin.from("settings").upsert({ id: 1, data: { rates: { INR: 0.012 } } });
+  const seed = await sessions.admin.from("settings").upsert({ data: { rates: { INR: 0.012 } } });
   assert(!seed.error, `seeding settings failed: ${seed.error && seed.error.message}`);
 
-  const before = await victim.client.from("settings").select("id");
+  const before = await victim.client.from("settings").select("org_id");
   assert(!before.error && before.data.length === 1,
     `victim should read settings before being disabled, got ${JSON.stringify(before)}`);
 
   await sessions.admin.from("profiles").update({ disabled: true }).eq("id", victim.id);
 
-  const after = await victim.client.from("settings").select("id");
+  const after = await victim.client.from("settings").select("org_id");
   assert(!after.error && after.data.length === 0,
     `disabled user should read 0 settings rows, got ${JSON.stringify(after)}`);
 });
 
 test("a disabled user cannot read health_snapshots", async () => {
-  const victim = await signUpFresh("disable-victim-health@test.local");
+  const victim = await invitedFresh("disable-victim-health@test.local");
   await seedRow("accounts", "rls-disable-health-acct");
   // health_snapshots has NO insert policy -- see supabase-setup.sql: every write funnels
   // through record_health(), a SECURITY DEFINER function. A raw admin insert against the
@@ -267,7 +271,7 @@ test("a disabled user cannot read health_snapshots", async () => {
 // health_snapshots_select above does nothing to stop a disabled user calling this RPC
 // directly -- this is the assertion whose absence hid that bug (see final-fix-report).
 test("record_health is refused for a disabled user", async () => {
-  const victim = await signUpFresh("disable-victim-record@test.local");
+  const victim = await invitedFresh("disable-victim-record@test.local");
   await seedRow("accounts", "rls-disable-record-acct");
 
   const before = await victim.client.rpc("record_health", { p_scores: [{ accountId: "rls-disable-record-acct", score: 55 }] });

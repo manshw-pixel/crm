@@ -10,7 +10,7 @@ import { rel, scored } from "./money-fixture.mjs";
 // needs the profile row too.
 const seedOf = accounts => `window.__seedRows = { accounts: ${JSON.stringify(accounts)}.map(d => ({ id: d.id, data: d })),`
   + ` contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [],`
-  + ` profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+  + ` profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 const BOOK = [
   scored({ id: "grew", name: "Grew Co", arr: 120000, startDate: "2024-01-01",

@@ -3,7 +3,7 @@ import { launch } from "./harness.mjs";
 
 const SEED = `window.__seedRows = { accounts: [], contacts: [], activities: [], tasks: [],
   opportunities: [], team: [], settings: [],
-  profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+  profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 let page, browser;
 const boot = async () => { if (!page) ({ page, browser } = await launch(SEED)); };

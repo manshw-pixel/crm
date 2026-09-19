@@ -98,6 +98,9 @@ const toUSD = (n, cur, rates) => (cur === "USD" || !cur) ? n : n * (rates?.[cur]
 const fmtMoney = (n, cur = "USD") => (CUR_SYM[cur] || "$") + (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : Math.round(n));
 const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const uid = () => Math.random().toString(36).slice(2, 10);
+// The signed-in user's org, set by Root() once the profile loads. Only uploadFiles needs it
+// on the client: every other org decision is made by RLS and the org-stamping RPCs.
+let CURRENT_ORG = null;
 
 /* ------------------------------- QBR cadence ------------------------------- */
 const QBR_FREQS = ["None", "Quarterly", "Semi-annual", "Annual"];
@@ -414,7 +417,7 @@ const writeQueue = (() => {
 async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
-    sb.from("settings").select("data").eq("id", 1),
+    sb.from("settings").select("data"),
     sb.from("profiles").select("id,name,role,disabled"),
   ]);
   const bad = res.find(r => r.error);
@@ -1059,9 +1062,12 @@ function ToastProvider({ children }) {
 const MAX_FILE_MB = 10;
 async function uploadFiles(fileList, accountId) {
   const out = [];
+  // Storage policies only accept paths under the caller's org. Legacy un-prefixed links
+  // stay readable, so existing documents are never rewritten.
+  if (!CURRENT_ORG) throw new Error("No workspace: cannot upload");
   for (const f of Array.from(fileList || [])) {
     if (f.size > MAX_FILE_MB * 1024 * 1024) throw new Error(`${f.name} is over ${MAX_FILE_MB} MB`);
-    const path = `${accountId}/${Date.now()}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
+    const path = `${CURRENT_ORG}/${accountId}/${Date.now()}-${f.name.replace(/[^\w.\-]+/g, "_")}`;
     const { error } = await sb.storage.from("attachments").upload(path, f);
     if (error) throw new Error(`${f.name}: ${error.message}`);
     const { data } = sb.storage.from("attachments").getPublicUrl(path);
@@ -3453,6 +3459,7 @@ function Settings({ st, dispatch, user, scored }) {
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
       <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
+      {user.platform_admin && <PlatformCard me={user} />}
       <UsersCard me={user} />
       {user.role === "admin" && <ErrorLogCard />}
       <Card title="Data">
@@ -3578,6 +3585,88 @@ function NewPasswordScreen({ onDone }) {
     </div>
   );
 }
+// Creates a login without touching our own session: a throwaway client, so signing the new
+// user up does NOT switch who is signed in here. Shared by every "add a user" surface.
+async function signUpUser({ email, pass, name }) {
+  const tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+  const { data, error } = await tmp.auth.signUp({ email: email.trim(), password: pass, options: { data: { name: name.trim() }, emailRedirectTo: authRedirect() } });
+  if (error) throw error;
+  // With email confirmation on, GoTrue answers an ALREADY-registered address with a fake
+  // user and no error; the tell is an empty identities array. Report it, never "added".
+  const status = data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0 ? "exists"
+    : !data.session && data.user && !data.user.email_confirmed_at ? "pending" : "created";
+  return { ...data, status };
+}
+// The admin-facing sentence for a signUpUser() status, shared by every "add a user" surface.
+const signUpMessage = (name, role, status) =>
+  status === "exists" ? `${name}'s email already has a login, so no new login was created. Ask them to sign in; if they still see "not attached to a workspace", tell your platform admin.`
+  : status === "pending" ? `${name} added as ${role}. A confirmation email was sent: they must click its link before they can sign in with the temporary password.`
+  : `${name} added as ${role}. Share the email + temporary password with them (they can change it via "Forgot password?").`;
+/* Platform admin only: the list of client orgs, a "new client" form and "switch into".
+   Switching is a full reload on purpose: the store, realtime channels, CURRENT_ORG and every
+   memo in App are built for one org; re-deriving them in place is more code than it is worth. */
+function PlatformCard({ me }) {
+  const [orgs, setOrgs] = useState([]);
+  const [v, setV] = useState({ name: "", adminName: "", email: "", pass: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = () => sb.rpc("list_orgs").then(({ data, error }) => error ? setErr(error.message) : setOrgs(data || []));
+  useEffect(() => { load(); }, []);
+  const createClient = async e => {
+    e.preventDefault(); setErr(""); setMsg("");
+    if (!v.name.trim() || !v.adminName.trim() || !v.email.trim()) return setErr("Client name, admin name and admin email are required.");
+    if (v.pass.length < 6) return setErr("Temporary password must be at least 6 characters.");
+    setBusy(true);
+    try {
+      // create_org refuses a duplicate name, an address with an open invite and a login in
+      // another workspace; its message goes to the user as-is. It attaches an org-less login.
+      const { error } = await sb.rpc("create_org", { p_name: v.name.trim(), p_admin_email: v.email.trim() });
+      if (error) throw error;
+      // Otherwise it left an admin invite, which handle_new_user applies to this sign-up.
+      // 'exists' can then only mean the org-less login create_org already attached.
+      const { status } = await signUpUser({ email: v.email, pass: v.pass, name: v.adminName });
+      setMsg(`${v.name.trim()} created. ` + (status === "exists"
+        ? `Existing login added to it as admin: ${v.adminName.trim()} signs in with their current password.`
+        : signUpMessage(v.adminName.trim(), "admin", status)));
+      setV({ name: "", adminName: "", email: "", pass: "" });
+    } catch (ex) { setErr(ex.message); }
+    load();
+    setBusy(false);
+  };
+  const switchTo = async o => {
+    setErr(""); setMsg("");
+    const { error } = await sb.rpc("switch_org", { p_org_id: o.id });
+    if (error) return setErr(error.message);
+    // window.__reload is a test seam: the health suite counts the reload instead of taking it.
+    (window.__reload || (() => location.reload()))();
+  };
+  return (
+    <Card title={`Platform · clients (${orgs.length})`}>
+      <div data-platform-card>
+        {orgs.map(o => (
+          <div key={o.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+            <span className="flex-1">
+              <div>{o.name}{o.id === me.org_id && <span className="text-xs text-slate-500"> (current)</span>}</div>
+              <div className="text-xs text-slate-500">{o.users} user{o.users === 1 ? "" : "s"} · since {String(o.created_at).slice(0, 10)}</div>
+            </span>
+            {o.id !== me.org_id && <button data-switch-org={o.id} className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => switchTo(o)}>Switch into</button>}
+          </div>
+        ))}
+        <form onSubmit={createClient} className="mt-3 grid gap-2 sm:grid-cols-2">
+          <Input placeholder="Client name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} />
+          <Input placeholder="Admin name" value={v.adminName} onChange={e => setV({ ...v, adminName: e.target.value })} />
+          <Input type="email" placeholder="Admin email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} />
+          <Input type="password" placeholder="Temporary password" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} />
+          <div className="sm:col-span-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "…" : "Create client"}</Btn></div>
+        </form>
+        {err && <div className="mt-2 text-xs text-rose-600">{err}</div>}
+        {msg && <div className="mt-2 text-xs text-emerald-700">{msg}</div>}
+        <p className="mt-2 text-xs text-slate-500">Each client is a separate workspace: its users see only its accounts. Switch into a client to work as its admin; switch back here when done.</p>
+      </div>
+    </Card>
+  );
+}
 function UsersCard({ me }) {
   const [users, setUsers] = useState([]);
   const [err, setErr] = useState("");
@@ -3659,15 +3748,18 @@ function UsersCard({ me }) {
     if (v.pass.length < 6) return setErr("Temporary password must be at least 6 characters.");
     setBusy(true);
     try {
-      // separate throwaway client so creating the user does NOT switch our own session
-      const tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
-      const { data, error } = await tmp.auth.signUp({ email: v.email.trim(), password: v.pass, options: { data: { name: v.name.trim() }, emailRedirectTo: authRedirect() } });
-      if (error) throw error;
-      if (v.role === "admin" && data.user) {
-        const { error: e2 } = await sb.from("profiles").update({ role: "admin" }).eq("id", data.user.id);
-        if (e2) throw e2;
+      // The invite is what attaches the sign-up to THIS org (handle_new_user matches it
+      // by email). Sign-up without it would create an org-less user who sees nothing.
+      // The invite also carries the role, so no follow-up role update is needed.
+      const { data: invited, error: invErr } = await sb.rpc("invite_user", { p_email: v.email.trim(), p_role: v.role });
+      if (invErr) throw invErr;
+      // 'attached': the address already had a login with no workspace, and invite_user put
+      // it straight into this one. Signing up again would only hit "already registered".
+      if (invited === "attached") setMsg("Existing login added to this workspace.");
+      else {
+        const { status } = await signUpUser({ email: v.email, pass: v.pass, name: v.name });
+        setMsg(signUpMessage(v.name.trim(), v.role, status));
       }
-      setMsg(`${v.name.trim()} added as ${v.role}. Share the email + temporary password with them (they can change it via "Forgot password?"). If email confirmation is enabled in Supabase, they must click the confirmation link first.`);
       setV({ name: "", email: "", pass: "", role: "user" });
       load();
     } catch (ex) { setErr(ex.message); }
@@ -3713,7 +3805,7 @@ function UsersCard({ me }) {
       </form>
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
       {msg && <div className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
-      <p className="mt-2 text-xs text-slate-500">Add any number of users or admins — this is the only way to get a login (self-sign-up is disabled). At least one admin always remains (enforced by the database). Disabling a user removes their access immediately; re-enable them any time. To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
+      <p className="mt-2 text-xs text-slate-500">Adding a user sends an invite into this workspace and creates their login; a sign-up without an invite is not attached to any workspace. At least one admin always remains (enforced by the database). Disabling a user removes their access immediately; re-enable them any time. To remove someone entirely: Supabase dashboard → Authentication → Users.</p>
       {confirmDisable && <ConfirmDialog
         title={`Disable ${confirmDisable.name}?`}
         body="They lose access to every account, task and file immediately — even if they are signed in right now — except any file link they already hold, which keeps working. You can re-enable them at any time."
@@ -3876,6 +3968,12 @@ class ViewBoundary extends React.Component {
 
 function App({ user }) {
   const toast = useToast();
+  // Platform admins can switch between workspaces, so they are shown which one they are in.
+  const [orgName, setOrgName] = useState("");
+  useEffect(() => {
+    if (!user.platform_admin || !user.org_id) return;
+    sb.from("orgs").select("name").eq("id", user.org_id).single().then(({ data }) => data && setOrgName(data.name));
+  }, [user.org_id, user.platform_admin]);
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
@@ -4125,6 +4223,7 @@ function App({ user }) {
         </nav>
         <div className={`border-t border-slate-200 ${collapsed ? "p-2" : "p-4"}`}>
           {!collapsed && <>
+            {user.platform_admin && <div data-current-org className="mb-1 truncate rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-700" title="You are viewing this workspace as platform admin">{orgName || "…"}</div>}
             <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
             <div className="text-xs text-slate-500">{user.role}{loaded ? "" : " · loading…"}</div>
           </>}
@@ -4213,11 +4312,11 @@ function Root() {
   }, []);
   useEffect(() => {
     if (!session) { setProfile(null); return; }
-    sb.from("profiles").select("id,name,role,disabled").eq("id", session.user.id).single()
+    sb.from("profiles").select("id,name,role,disabled,org_id,platform_admin").eq("id", session.user.id).single()
       // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
       // wraps App, so window.__toast is genuinely undefined here and alert is the only
       // channel left. Deliberately kept.
-      .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : setProfile(data));
+      .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : (CURRENT_ORG = data.org_id, setProfile(data)));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
@@ -4235,6 +4334,15 @@ function Root() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
       <p className="font-semibold text-slate-900">Your access has been removed.</p>
       <p>Ask an administrator to re-enable your account.</p>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+    </div>
+  );
+  // Sign-ups that matched no invite land here. RLS already returns them nothing; this
+  // says why instead of rendering an empty app.
+  if (!profile.org_id) return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
+      <p className="font-semibold text-slate-900">Your account is not attached to a workspace yet.</p>
+      <p>Ask your administrator to invite {profile.name ? "you" : "this email"}.</p>
       <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
     </div>
   );

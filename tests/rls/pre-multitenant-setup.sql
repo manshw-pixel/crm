@@ -1,0 +1,590 @@
+-- FROZEN COPY of supabase-setup.sql as of 2026-09-18, BEFORE multi-tenancy. Used only by
+-- tests/rls/migration.test.mjs to prove the live file migrates a single-org database. Never edit.
+-- ============================================================
+-- CS CRM — Supabase setup
+-- Paste this whole file into Supabase: SQL Editor -> New query -> Run.
+-- Safe to re-run (idempotent).
+-- ============================================================
+
+-- ---------- tables ----------
+create table if not exists public.profiles (
+  id uuid primary key references auth.users(id) on delete cascade,
+  name text not null default 'CSM',
+  role text not null default 'user' check (role in ('admin','user')),
+  created_at timestamptz not null default now()
+);
+
+-- Disabling is the reversible alternative to deleting a user: a delete would orphan the
+-- free-text `csm` / `owner` references that renameEverywhere() exists to keep in sync.
+alter table public.profiles
+  add column if not exists disabled boolean not null default false;
+
+create table if not exists public.settings (
+  id int primary key check (id = 1),
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamptz not null default now()
+);
+
+do $$
+declare t text;
+begin
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    execute format('create table if not exists public.%I (
+      id text primary key,
+      data jsonb not null,
+      updated_at timestamptz not null default now()
+    )', t);
+  end loop;
+end $$;
+
+-- ---------- helper: is the current user an admin? ----------
+create or replace function public.is_admin()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not disabled) $$;
+
+-- ---------- helper: is the current user active (not disabled)? ----------
+-- Gates every policy below. This is what makes disabling take effect on a LIVE session:
+-- the user keeps a valid JWT, but their next query matches no rows. Anything enforced only
+-- in the client would be a label the browser is trusted to honour, which it is not.
+create or replace function public.is_active()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and not disabled) $$;
+
+-- ---------- signup trigger: auto-create profile; first user = admin ----------
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  insert into profiles (id, name, role)
+  values (
+    new.id,
+    coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
+    case when not exists (select 1 from profiles) then 'admin' else 'user' end
+  ) on conflict (id) do nothing;
+  return new;
+end $$;
+
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ---------- admin guard: any number of admins, but never zero ----------
+create or replace function public.guard_admin_count()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op = 'UPDATE' and new.disabled and not old.disabled and new.id = auth.uid() then
+    raise exception 'You cannot disable yourself';
+  end if;
+  -- One predicate for both routes to zero admins: demotion (role change) and disabling.
+  -- The original guard watched only role, so an admin could disable their way to an app
+  -- nobody can administer -- the same failure it was written to prevent.
+  if tg_op = 'UPDATE'
+     and old.role = 'admin' and not old.disabled
+     and (new.role <> 'admin' or new.disabled)
+     and (select count(*) from profiles
+            where role = 'admin' and not disabled and id <> old.id) = 0 then
+    raise exception 'At least one admin must remain';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists guard_admin_count on public.profiles;
+create trigger guard_admin_count
+  before insert or update of role, disabled on public.profiles
+  for each row execute function public.guard_admin_count();
+
+-- ---------- row-level security ----------
+alter table public.profiles enable row level security;
+alter table public.settings enable row level security;
+alter table public.accounts enable row level security;
+alter table public.contacts enable row level security;
+alter table public.activities enable row level security;
+alter table public.tasks enable row level security;
+alter table public.opportunities enable row level security;
+
+-- profiles: everyone signed-in reads; only admins change roles/names of others
+-- A disabled user must still read their OWN row (and only it), so Root() can tell them
+-- their access was removed. Gate it flatly and their profile fetch errors instead, leaving
+-- them stuck on "Loading profile…" -- the opposite of a clean sign-out.
+drop policy if exists profiles_select on public.profiles;
+create policy profiles_select on public.profiles for select to authenticated
+  using (public.is_active() or id = auth.uid());
+drop policy if exists profiles_update_admin on public.profiles;
+create policy profiles_update_admin on public.profiles for update to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+-- settings: read all, write admin
+drop policy if exists settings_select on public.settings;
+create policy settings_select on public.settings for select to authenticated using (public.is_active());
+drop policy if exists settings_write on public.settings;
+create policy settings_write on public.settings for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+-- entity tables: read/insert/update for all signed-in users
+do $$
+declare t text;
+begin
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    execute format('drop policy if exists %1$s_select on public.%1$I', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (public.is_active())', t);
+    execute format('drop policy if exists %1$s_insert on public.%1$I', t);
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (public.is_active())', t);
+    execute format('drop policy if exists %1$s_update on public.%1$I', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (public.is_active()) with check (public.is_active())', t);
+  end loop;
+end $$;
+
+-- deletes: accounts admin-only; child tables any signed-in user
+drop policy if exists accounts_delete on public.accounts;
+create policy accounts_delete on public.accounts for delete to authenticated using (public.is_admin());
+do $$
+declare t text;
+begin
+  foreach t in array array['contacts','activities','tasks','opportunities'] loop
+    execute format('drop policy if exists %1$s_delete on public.%1$I', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (public.is_active())', t);
+  end loop;
+end $$;
+
+-- ---------- durable writes: field-level merge ----------
+-- Replaces the whole-blob upsert, under which two people editing different fields of one
+-- account silently reverted each other with no error raised (D2 in the durability spec).
+--
+-- The merge must be computed INSIDE the upsert statement, not read-modify-written around
+-- it: two overlapping calls under READ COMMITTED would otherwise both read the same base
+-- row and the second would write its stale result over the first -- reintroducing, in a
+-- few-millisecond window, exactly the lost update this function exists to prevent.
+create or replace function public.merge_patch(base jsonb, patch jsonb, appends jsonb)
+returns jsonb language plpgsql immutable security invoker set search_path = public as $$
+declare
+  k text;
+  merged jsonb;
+begin
+  -- `||` is a SHALLOW merge, which is exactly the field-level semantics wanted here: only
+  -- the keys present in `patch` move. diffRow sends nested objects whole for this reason.
+  merged := coalesce(base, '{}'::jsonb) || coalesce(patch, '{}'::jsonb);
+  for k in select jsonb_object_keys(coalesce(appends, '{}'::jsonb)) loop
+    merged := jsonb_set(merged, array[k],
+      public.append_dedup(coalesce(merged -> k, '[]'::jsonb), appends -> k, k));
+  end loop;
+  return merged;
+end $$;
+
+-- SECURITY INVOKER IS LOAD-BEARING AND MUST NOT BE CHANGED. This function is a general
+-- "write anything into any row" primitive; as `security definer` it would run as its owner
+-- and bypass every policy above -- settings_write and the admin gate included -- turning a
+-- durability fix into privilege escalation. Invoker means the caller's own policies still
+-- apply, so the guarantees tests/rls pins continue to hold through the RPC.
+create or replace function public.merge_row(tbl text, row_id text, patch jsonb, appends jsonb)
+returns void language plpgsql security invoker set search_path = public as $$
+begin
+  -- Allow-list, not interpolation: `tbl` arrives from the browser. Anything else is a
+  -- reachable path to profiles (role escalation) or to crafted SQL.
+  if tbl not in ('accounts','contacts','activities','tasks','opportunities','settings') then
+    raise exception 'merge_row: table % is not writable through this function', tbl;
+  end if;
+
+  if tbl = 'settings' then
+    insert into settings (id, data, updated_at)
+      values (1, public.merge_patch('{}'::jsonb, patch, appends), now())
+      on conflict (id) do update
+        set data = public.merge_patch(settings.data, patch, appends), updated_at = now();
+  else
+    execute format(
+      'insert into public.%1$I (id, data, updated_at)
+         values ($1, public.merge_patch(''{}''::jsonb, $2, $3), now())
+       on conflict (id) do update
+         set data = public.merge_patch(public.%1$I.data, $2, $3), updated_at = now()', tbl)
+      using row_id, patch, appends;
+  end if;
+end $$;
+
+-- Concatenate `incoming` onto `base`, skipping entries already present. Dedupe is what
+-- makes a RETRIED write safe to replay: the queue cannot know whether a timed-out request
+-- landed, so applying it twice must equal applying it once.
+--   arrEvents -> by element id (every entry has one; this is the audit record that matters)
+--   everything else -> by whole-element equality
+-- Accepted trade-off, from the spec: two genuinely distinct `history` snapshots with the
+-- same day and score collapse into one. That is a sparkline point, not an audit record.
+create or replace function public.append_dedup(base jsonb, incoming jsonb, field text)
+returns jsonb language plpgsql immutable security invoker set search_path = public as $$
+declare
+  item jsonb;
+  acc jsonb := coalesce(base, '[]'::jsonb);
+begin
+  -- A JSON scalar (e.g. a stray null) in `acc` would make jsonb_array_elements(acc) raise
+  -- below and fail this write forever. Treat anything that isn't already an array as empty.
+  if jsonb_typeof(acc) <> 'array' then
+    acc := '[]'::jsonb;
+  end if;
+  for item in select * from jsonb_array_elements(coalesce(incoming, '[]'::jsonb)) loop
+    if field = 'arrEvents' and item ? 'id' then
+      if not exists (select 1 from jsonb_array_elements(acc) e where e ->> 'id' = item ->> 'id') then
+        acc := acc || jsonb_build_array(item);
+      end if;
+    elsif not exists (select 1 from jsonb_array_elements(acc) e where e = item) then
+      acc := acc || jsonb_build_array(item);
+    end if;
+  end loop;
+  return acc;
+end $$;
+
+-- ---------- durable writes: atomic bulk replace ----------
+-- This function runs inside the CALLER's single transaction, so the deletes and the inserts
+-- below commit together or roll back together -- there is no window in between. The old
+-- client-side version deleted five tables in a loop and then inserted; any failure in
+-- between -- a dropped connection, one bad row in an imported file -- left the whole team
+-- with an empty database and no backup (D3). The import path was the worst, because it
+-- validated only `s.accounts && s.settings` before destroying live data.
+-- security invoker, as above: the admin gate is accounts_delete / settings_write, and it
+-- must keep applying to the caller.
+create or replace function public.replace_all(payload jsonb)
+returns void language plpgsql security invoker set search_path = public as $$
+declare
+  t text;
+  items jsonb;
+begin
+  -- Explicit, not incidental. An RLS-denied DELETE raises nothing and simply affects zero
+  -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
+  -- four child tables, whose delete policy is `using (true)`, failing only later at the
+  -- settings upsert. The spec calls this operation admin-gated; this makes that true.
+  if not public.is_admin() then
+    raise exception 'replace_all: admin only';
+  end if;
+
+  -- Defence in depth: a null/omitted payload would otherwise sail through every `coalesce`
+  -- below, emptying all five tables and resetting settings to `{}` -- and still return
+  -- success, since there is nothing for the row-id check to reject.
+  if payload is null then
+    raise exception 'replace_all: no payload';
+  end if;
+
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    -- `where true` is not noise: Supabase enables a guard that REJECTS an unqualified
+    -- DELETE outright ('DELETE requires a WHERE clause'), so a bare `delete from t` aborts
+    -- the whole replace. The old client-side loop satisfied this incidentally with
+    -- .neq('id', ''); this states it deliberately.
+    execute format('delete from public.%I where true', t);
+  end loop;
+
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    items := coalesce(payload -> t, '[]'::jsonb);
+    -- Reject a row with no id explicitly: `id text primary key` would raise on the null
+    -- anyway, but naming the table makes the failure legible in the toast.
+    if exists (select 1 from jsonb_array_elements(items) e where e ->> 'id' is null) then
+      raise exception 'replace_all: every % row needs an id', t;
+    end if;
+    execute format(
+      'insert into public.%I (id, data, updated_at)
+       select e ->> ''id'', e, now() from jsonb_array_elements($1) e', t) using items;
+  end loop;
+
+  insert into settings (id, data, updated_at)
+    values (1, coalesce(payload -> 'settings', '{}'::jsonb), now())
+    on conflict (id) do update set data = excluded.data, updated_at = now();
+end $$;
+
+-- ---------- error log ----------
+-- The app had no error reporting at all: ViewBoundary console.errored into a console
+-- nobody watches, dbError raised a toast that scrolls away, and the write queue's give-up
+-- path told only the user whose save had just failed.
+create table if not exists public.error_log (
+  -- The fingerprint IS the identity: the same bug collapses to one row whether it fires
+  -- once or ten thousand times, so "is this getting worse?" is answered by reading `count`
+  -- rather than by counting rows.
+  fingerprint text primary key,
+  level       text not null check (level in ('crash','write_failed','load_failed','retry')),
+  message     text not null,
+  stack       text,
+  -- Context only: the view, table, action and error code. NEVER row data -- this app's
+  -- subject matter is customer revenue, and copying it into a second table with different
+  -- access rules would be a privacy regression dressed up as an improvement.
+  context     jsonb not null default '{}'::jsonb,
+  user_id     uuid,
+  app_version text,
+  user_agent  text,
+  count       int not null default 1,
+  first_seen  timestamptz not null default now(),
+  last_seen   timestamptz not null default now()
+);
+
+alter table public.error_log enable row level security;
+
+-- insert: ANY authenticated user. Errors happen to non-admins, and a user who cannot
+-- report is a user you never hear about. This is deliberately the most permissive policy
+-- in the file: a signed-in user can write rows an admin reads. Accepted knowingly --
+-- restricting it would blind the log to exactly the people worth hearing from, and
+-- fingerprint collapsing turns a flood into one row with a high count rather than many rows.
+drop policy if exists error_log_insert on public.error_log;
+create policy error_log_insert on public.error_log for insert to authenticated with check (true);
+
+-- select: admins only. Error messages quote application data.
+drop policy if exists error_log_select on public.error_log;
+create policy error_log_select on public.error_log for select to authenticated using (public.is_admin());
+
+-- NO update and NO delete policy, deliberately. log_error owns every mutation, so nobody
+-- can edit or delete a record -- including its count -- to erase their own errors.
+
+-- Records one occurrence. The count is incremented INSIDE the statement rather than by a
+-- client read-then-write, which would be the same lost update merge_row was rewritten to
+-- remove. Reporting is the worst place to reintroduce it: it runs when the app is already
+-- unhealthy, and concurrent failures are correlated, not independent -- one flaky network
+-- breaks every open tab at once.
+-- SECURITY DEFINER here, unlike every other function in this file, and deliberately.
+-- `insert ... on conflict do update` requires UPDATE and SELECT policies for the caller,
+-- and any UPDATE policy wide enough to let this bump `count` would also let a client
+-- rewrite `message` and zero the count -- destroying the evidence the log exists to keep.
+-- Definer is safe HERE specifically because this function returns void, touches one
+-- hard-coded table, accepts no table name from the caller, reads nothing back, and can
+-- only ever increment `count`. The admin-only select policy still governs every client
+-- read of the table. The auth.uid() check below replaces the insert policy definer bypasses.
+-- `create or replace` CANNOT rename an input parameter ("cannot change name of input
+-- parameter"), so an existing log_error must be dropped before the create below. Harmless
+-- on a fresh database, required on one that already has the earlier version.
+drop function if exists public.log_error(text, text, text, text, jsonb, text, text);
+
+-- Parameters are prefixed p_ because every one of them shares a name with a column of
+-- error_log. Unprefixed, plpgsql cannot tell the parameter from the column and the whole
+-- statement fails at RUNTIME with 'column reference "fingerprint" is ambiguous' -- which no
+-- amount of reading caught; only executing it did.
+create or replace function public.log_error(
+  p_fingerprint text, p_level text, p_message text, p_stack text,
+  p_context jsonb, p_app_version text, p_user_agent text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  -- definer bypasses the insert policy that used to deny anon, so the check that policy
+  -- was performing has to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'log_error: sign in required';
+  end if;
+  -- Deliberately NOT gated on is_active(), unlike record_health below: a disabled user who
+  -- cannot report an error is a user whose failures we never hear about.
+
+  insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
+  values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
+          auth.uid(), p_app_version, p_user_agent)
+  on conflict (fingerprint) do update set
+    count = error_log.count + 1,
+    last_seen = now(),
+    -- keep the most recent occurrence's detail
+    level = excluded.level,
+    message = excluded.message,
+    stack = excluded.stack,
+    context = excluded.context;
+
+  -- Retention, run inline rather than on a schedule. email-alerts-schedule.sql now installs
+  -- pg_cron, so "this project has no scheduler" is no longer true -- but the inline sweep
+  -- is kept deliberately: it runs exactly when rows are added, needs no second moving
+  -- part, and works on a stack where the alert layer was never installed. The WHERE is not
+  -- optional -- Supabase rejects an unqualified DELETE.
+  delete from error_log where last_seen < now() - interval '30 days';
+end $$;
+
+-- Revoke from PUBLIC **and** from anon -- both are needed, and neither substitutes for the
+-- other. PUBLIC: Postgres grants EXECUTE to PUBLIC by default on every new function and
+-- `create or replace` preserves it, so anon would keep inheriting execute through PUBLIC.
+-- anon: on Supabase, functions created in schema `public` by `postgres` ALSO pick up an
+-- explicit grant to anon and authenticated from the project's default privileges, which
+-- `revoke ... from public` does not touch. Revoking only PUBLIC leaves that direct grant
+-- standing and anon still reaches the body.
+--
+-- An earlier comment here warned that naming `anon` breaks an install where the role does
+-- not exist. That concern is real for portable SQL, but not for this file: it targets
+-- Supabase, where anon and authenticated are created by the platform before any user SQL
+-- runs, and the RLS harness re-establishes both roles and those default privileges
+-- (tests/rls/fixtures.mjs) before applying this file.
+revoke execute on function public.log_error(text, text, text, text, jsonb, text, text) from public, anon;
+grant execute on function public.log_error(text, text, text, text, jsonb, text, text) to authenticated;
+
+-- ---------- realtime ----------
+do $$
+declare t text;
+begin
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities','settings','profiles'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    exception when duplicate_object then null;
+    end;
+  end loop;
+end $$;
+
+-- ---------- health snapshots ----------
+-- A daily per-account score, written by the APP. Health is computed in JavaScript from
+-- admin-tunable weights; reimplementing that formula in SQL would create a second source
+-- of truth that drifts the moment someone tunes a weight. So SQL never scores anything --
+-- it only ever compares two numbers that the app stored.
+--
+-- Unlike ARR, health has no event ledger and CANNOT be reconstructed backwards. This table
+-- only ever knows what it was told, starting the day it ships.
+create table if not exists public.health_snapshots (
+  account_id text not null,
+  day        date not null default current_date,
+  score      int  not null check (score between 0 and 100),
+  primary key (account_id, day)
+);
+
+alter table public.health_snapshots enable row level security;
+
+-- select: any authenticated, active user. Scores are already visible in the app to everyone
+-- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
+drop policy if exists health_snapshots_select on public.health_snapshots;
+create policy health_snapshots_select on public.health_snapshots
+  for select to authenticated using (public.is_active());
+
+-- NO insert/update/delete policy, deliberately: every mutation funnels through
+-- record_health(), which validates the shape of `score` and checks that `accountId` names a
+-- real account before it inserts. RLS keeps direct writes out of the API roles, so those two
+-- checks cannot be bypassed by anon or authenticated -- service_role and the table owner
+-- bypass RLS entirely, as they do everywhere else in this schema.
+--
+-- Scope this honestly -- it is NOT an authorization boundary. Any authenticated user of this
+-- internal CRM can already edit accounts directly, and record_health() is open to every
+-- authenticated user, so a signed-in user CAN overwrite today's score for an account they
+-- can see. What the funnel actually buys is integrity: no malformed scores, and no snapshot
+-- rows for accounts that do not exist.
+--
+-- That accountId check holds at WRITE time only -- health_snapshots has no foreign key on
+-- account_id, so deleting an account later does not cascade and its snapshots are orphaned.
+
+create or replace function public.record_health(p_scores jsonb)
+returns int language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  -- definer bypasses RLS, so the check the missing insert policy would have performed has
+  -- to be made explicitly here instead.
+  if auth.uid() is null then
+    raise exception 'record_health: sign in required';
+  end if;
+  -- record_health is SECURITY DEFINER, so it bypasses RLS entirely -- gating every policy
+  -- on is_active() (health_snapshots_select included) does nothing to stop a disabled user
+  -- from calling this RPC directly. A disabled user still holds a valid JWT (spec S3), so
+  -- that check has to be repeated here explicitly. Do NOT delete this while "simplifying" --
+  -- health_snapshots cannot be reconstructed backwards, so a disabled user overwriting it
+  -- destroys data with no way to recover it.
+  if not public.is_active() then
+    raise exception 'record_health: no access';
+  end if;
+
+  insert into health_snapshots (account_id, day, score)
+  select e->>'accountId', current_date,
+         least(100, greatest(0, (e->>'score')::numeric::int))
+  from jsonb_array_elements(coalesce(p_scores, '[]'::jsonb)) e
+  where e->>'accountId' is not null
+    and e->>'score' ~ '^-?[0-9]+(\.[0-9]+)?$'
+    -- An unknown accountId is DROPPED, not raised on: the app sends one batch for every
+    -- account on screen, and an account deleted between render and write must not cost the
+    -- rest of the batch its snapshot. Without this, health_snapshots can be stuffed with
+    -- rows referencing accounts that never existed.
+    and exists (select 1 from accounts a where a.id = e->>'accountId')
+  on conflict (account_id, day) do update set score = excluded.score;
+
+  get diagnostics n = row_count;
+
+  -- health_snapshots has no scheduled sweep, so it grows at accounts x days forever without
+  -- this. Retain 90 days, not 30 like error_log: drop detection needs more history than the
+  -- error log to tell a genuine decline from a one-day dip. Inline for the same reason as
+  -- log_error's sweep -- runs exactly when rows are added, no second moving part. The WHERE
+  -- is not optional -- Supabase rejects an unqualified DELETE.
+  delete from health_snapshots where day < current_date - interval '90 days';
+
+  return n;
+end $$;
+
+-- Revoke from PUBLIC **and** anon, for the same reason as log_error above: PUBLIC carries
+-- Postgres's default EXECUTE, and Supabase's default privileges add a separate explicit
+-- grant to anon that revoking PUBLIC leaves standing. Without the second role named here,
+-- an anonymous caller still reaches the body and is stopped only by the `sign in required`
+-- raise inside it -- a check, not a grant.
+revoke execute on function public.record_health(jsonb) from public, anon;
+grant execute on function public.record_health(jsonb) to authenticated;
+
+-- ---------- admin user management ----------
+-- profiles has no email column; addresses live in auth.users, which the browser cannot
+-- read. Definer rights are what make this join possible at all -- the same reason
+-- alert_recipients() in email-alerts.sql is a definer function.
+create or replace function public.admin_user_list()
+returns table(id uuid, name text, role text, disabled boolean, email text)
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  -- A definer function runs as its owner and bypasses RLS, so it must assert its own
+  -- authorisation. Relying on the caller's policies here would expose every address.
+  if not public.is_admin() then
+    raise exception 'admin_user_list: admin only';
+  end if;
+  return query
+    select p.id, p.name, p.role, p.disabled, u.email::text
+    from profiles p join auth.users u on u.id = p.id
+    order by p.created_at;
+end $$;
+
+create or replace function public.admin_set_user_email(p_id uuid, p_email text)
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare
+  addr text := lower(trim(p_email));
+begin
+  if not public.is_admin() then
+    raise exception 'admin_set_user_email: admin only';
+  end if;
+  if addr !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+    raise exception 'admin_set_user_email: % is not a valid email address', p_email;
+  end if;
+  if exists (select 1 from auth.users where lower(email) = addr and id <> p_id) then
+    raise exception 'admin_set_user_email: % is already in use', addr;
+  end if;
+  if not exists (select 1 from profiles where id = p_id) then
+    raise exception 'admin_set_user_email: no such user';
+  end if;
+
+  update auth.users
+     set email = addr,
+         -- Bypassing GoTrue's confirm-change flow is a deliberate decision (spec §6).
+         -- Leaving a pending change behind would let a stale confirmation link later
+         -- overwrite the address an admin just set.
+         email_change = '',
+         email_change_token_new = '',
+         email_change_token_current = '',
+         email_change_confirm_status = 0,
+         email_confirmed_at = coalesce(email_confirmed_at, now()),
+         updated_at = now()
+   where id = p_id;
+
+  -- GoTrue ALSO keeps the address inside auth.identities.identity_data, and resolves
+  -- some sign-in paths through it. Updating only auth.users can leave the identity
+  -- stale, which is how a user ends up unable to log in with EITHER address. Task 4
+  -- proves which behaviour is real; keep both in step regardless.
+  -- This function assumes the 'email' provider -- a user signed in via an OAuth identity
+  -- (google, github, ...) would keep that identity's stale address; there is no
+  -- 'provider = email' row for it to update.
+  update auth.identities
+     set identity_data = jsonb_set(identity_data, '{email}', to_jsonb(addr)),
+         updated_at = now()
+   where user_id = p_id and provider = 'email';
+end $$;
+
+-- Revoke from PUBLIC and anon both -- see record_health's revoke above for why PUBLIC
+-- alone leaves anon's separate default grant standing.
+revoke execute on function public.admin_user_list() from public, anon;
+revoke execute on function public.admin_set_user_email(uuid, text) from public, anon;
+grant execute on function public.admin_user_list() to authenticated;
+grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
+
+-- ---------- attachments (Supabase Storage) ----------
+-- Public bucket: anyone with a file's URL can view it (links are long
+-- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
+-- attachments_read below stops API listing/reading by a disabled user, but NOT fetching a
+-- URL they already hold -- the bucket is public, so a bare GET on the object URL never
+-- touches this policy.
+insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
+on conflict (id) do nothing;
+
+-- Gated the same way as the entity tables: a disabled user must not read or upload files
+-- just because the storage policies live apart from the do-block loops above.
+drop policy if exists attachments_read on storage.objects;
+create policy attachments_read on storage.objects
+  for select to authenticated using (bucket_id = 'attachments' and public.is_active());
+drop policy if exists attachments_insert on storage.objects;
+create policy attachments_insert on storage.objects
+  for insert to authenticated with check (bucket_id = 'attachments' and public.is_active());
+drop policy if exists attachments_delete on storage.objects;
+create policy attachments_delete on storage.objects
+  for delete to authenticated using (bucket_id = 'attachments' and public.is_active());

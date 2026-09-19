@@ -5,11 +5,13 @@ import { bootstrap } from "./fixtures.mjs";
 
 import "./auth.test.mjs";
 import "./policies.test.mjs";
+import "./orgs.test.mjs";
 import "./merge.test.mjs";
 import "./storage.test.mjs";
 import "./replace.test.mjs";
 import "./errorlog.test.mjs";
 import "./emailalerts.test.mjs";
+import "./migration.test.mjs";   // LAST: rebuilds the stack from the old schema
 
 try {
   await bootstrap();

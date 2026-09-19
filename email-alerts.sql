@@ -53,6 +53,34 @@ values (1,
 -- send_alerts()'s refusal message says the same thing, so the two cannot drift apart.
 on conflict (id) do nothing;
 
+-- ---------- per-org preferences ----------
+-- The Brevo key and sender above are PLATFORM config: one sender mails on every client's
+-- behalf. What each org may choose is which digests it gets and the health-drop sensitivity.
+-- The three matching columns still on alert_config are legacy and no longer read.
+-- An org with NO row here gets no digests at all: send_alerts loops over this table.
+-- create_org (supabase-setup.sql) inserts a row for every new org, guarded because that
+-- file runs before this one on a fresh stack.
+create table if not exists public.org_alert_prefs (
+  org_id uuid primary key references public.orgs(id) on delete cascade,
+  enabled_kinds text[] not null default array['renewals','overdue_tasks','qbr_nudge'],
+  health_drop_points int not null default 10,
+  health_drop_window_days int not null default 7
+);
+alter table public.org_alert_prefs enable row level security;
+drop policy if exists org_alert_prefs_select on public.org_alert_prefs;
+create policy org_alert_prefs_select on public.org_alert_prefs for select to authenticated
+  using (public.is_active() and org_id = public.current_org());
+drop policy if exists org_alert_prefs_update on public.org_alert_prefs;
+create policy org_alert_prefs_update on public.org_alert_prefs for update to authenticated
+  using (public.is_admin() and org_id = public.current_org())
+  with check (public.is_admin() and org_id = public.current_org());
+-- one row per existing org, copying the legacy values from alert_config row 1 the first time
+insert into public.org_alert_prefs (org_id, enabled_kinds, health_drop_points, health_drop_window_days)
+select o.id, c.enabled_kinds, c.health_drop_points, c.health_drop_window_days
+  from public.orgs o cross join public.alert_config c
+ where c.id = 1
+on conflict (org_id) do nothing;
+
 -- ---------- send log ----------
 -- Mirrors error_log's policy shape. Stores WHO was mailed and HOW MANY rows -- never
 -- account names, ARR figures or row contents. This app's subject matter is customer
@@ -77,44 +105,68 @@ create table if not exists public.email_log (
 
 alter table public.email_log enable row level security;
 
+-- The org the digest was sent for. Rows logged before multi-tenancy belong to the default
+-- org, so they are backfilled ONLY in the run that adds the column (the profiles pattern in
+-- supabase-setup.sql): a later re-run must never re-stamp anything.
+do $$ begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'email_log' and column_name = 'org_id') then
+    alter table public.email_log add column org_id uuid references public.orgs(id) on delete cascade;
+    update public.email_log set org_id = '00000000-0000-0000-0000-000000000001';
+  end if;
+end $$;
+
+-- Scoped to the caller's org: recipient addresses are another tenant's staff list.
 drop policy if exists email_log_select on public.email_log;
 create policy email_log_select on public.email_log
-  for select to authenticated using (public.is_admin());
+  for select to authenticated using (public.is_admin() and org_id = public.current_org());
 
 -- NO insert/update/delete policy: the dispatcher (security definer) owns every write.
 
 -- ---------- recipients ----------
 -- profiles has no email column; addresses live in auth.users, which the browser cannot
 -- read. Definer rights are what make this join possible at all.
-create or replace function public.alert_recipients()
+--
+-- Every builder below takes the org as its FIRST argument and filters every profiles /
+-- accounts / tasks / activities predicate by it. Postgres overloads by signature, so the
+-- pre-org versions are dropped first; otherwise a re-run would leave both, and the old
+-- unscoped one would still be callable by the scheduler.
+drop function if exists public.alert_recipients();
+drop function if exists public.unrouted_csms();
+drop function if exists public.alert_renewals(text, boolean);
+drop function if exists public.alert_overdue_tasks(text, boolean);
+drop function if exists public.alert_qbr_nudge(text, boolean);
+
+create or replace function public.alert_recipients(p_org uuid)
 returns table(profile_id uuid, person text, email text, admin boolean)
 language sql security definer set search_path = public, auth as $$
   select p.id, p.name, u.email::text, (p.role = 'admin')
   from profiles p
   join auth.users u on u.id = p.id
-  where u.email is not null and not p.disabled;
+  where u.email is not null and not p.disabled and p.org_id = p_org;
 $$;
 
 -- Accounts whose `csm` matches no profile name, or is blank. account.csm is FREE TEXT
 -- matched by string equality against profiles.name, so a rename or a typo silently
 -- produces a book that emails nobody. Returning them makes that visible: the dispatcher
 -- puts them in the admin digest and fingerprints them into error_log.
-create or replace function public.unrouted_csms()
+create or replace function public.unrouted_csms(p_org uuid)
 returns table(csm text, accounts int)
 language sql security definer set search_path = public as $$
   select coalesce(nullif(trim(a.data->>'csm'), ''), '(unassigned)') as csm,
          count(*)::int
   from accounts a
-  where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+  where a.org_id = p_org
+    and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and not exists (
       select 1 from profiles p
-      where p.name = trim(a.data->>'csm')
+      where p.name = trim(a.data->>'csm') and p.org_id = p_org
     )
   group by 1;
 $$;
 
-revoke execute on function public.alert_recipients() from public;
-revoke execute on function public.unrouted_csms()   from public;
+revoke execute on function public.alert_recipients(uuid) from public;
+revoke execute on function public.unrouted_csms(uuid)   from public;
 
 -- A regex-passing string is not necessarily a real date ('2026-13-45' matches
 -- ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ but has no 13th month), and the regex + nullif guards below
@@ -141,7 +193,7 @@ revoke execute on function public.safe_date(text) from public;
 -- That is what lets the suite prove the logic without sending a single email.
 
 create or replace function public.alert_renewals(
-  p_csm text, p_include_unowned boolean default false)
+  p_org uuid, p_csm text, p_include_unowned boolean default false)
 returns table(account_id text, account_name text, renewal_date date, days_left int)
 language sql security definer set search_path = public as $$
   select a.id,
@@ -149,7 +201,8 @@ language sql security definer set search_path = public as $$
          safe_date(a.data->>'renewalDate'),
          (safe_date(a.data->>'renewalDate') - current_date)::int
   from accounts a
-  where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+  where a.org_id = p_org
+    and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     -- The nullif+regex guard rejects blanks and non-date-shaped strings up front, cheaply.
     -- It is NOT a guarantee, though: '2026-13-45' matches the shape and still fails to cast
     -- (no 13th month exists), so the value still runs through safe_date(), which returns
@@ -161,15 +214,15 @@ language sql security definer set search_path = public as $$
     and safe_date(a.data->>'renewalDate') between current_date and current_date + 30
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
-                select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
 $$;
 
-revoke execute on function public.alert_renewals(text, boolean) from public;
+revoke execute on function public.alert_renewals(uuid, text, boolean) from public;
 
 -- Tasks carry no assignee of their own, so ownership is inherited from the account.
 create or replace function public.alert_overdue_tasks(
-  p_csm text, p_include_unowned boolean default false)
+  p_org uuid, p_csm text, p_include_unowned boolean default false)
 returns table(task_id text, title text, due_date date, days_overdue int,
               account_id text, account_name text)
 language sql security definer set search_path = public as $$
@@ -180,8 +233,9 @@ language sql security definer set search_path = public as $$
          a.id,
          a.data->>'name'
   from tasks t
-  join accounts a on a.id = t.data->>'accountId'
-  where coalesce(t.data->>'status', '') <> 'Done'
+  join accounts a on a.org_id = t.org_id and a.id = t.data->>'accountId'
+  where t.org_id = p_org
+    and coalesce(t.data->>'status', '') <> 'Done'
     -- See alert_renewals and safe_date above: the regex is a cheap first filter, not a
     -- guarantee -- safe_date() is what actually excludes an invalid date without raising.
     and nullif(t.data->>'due', '') is not null
@@ -190,24 +244,25 @@ language sql security definer set search_path = public as $$
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
-                select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
 $$;
 
-revoke execute on function public.alert_overdue_tasks(text, boolean) from public;
+revoke execute on function public.alert_overdue_tasks(uuid, text, boolean) from public;
 
 -- Two sections in one email. The 'unlogged' half is an INFERENCE, not a fact: a past QBR
 -- date with no QBR activity near it usually means the meeting happened and was never
 -- written down, but it can equally mean the meeting slipped. The rendered email must say
 -- so in those words -- phrased as an accusation it will be resented, and rightly.
 create or replace function public.alert_qbr_nudge(
-  p_csm text, p_include_unowned boolean default false)
+  p_org uuid, p_csm text, p_include_unowned boolean default false)
 returns table(account_id text, account_name text, next_qbr date, days_left int, section text)
 language sql security definer set search_path = public as $$
   with mine as (
     select a.id, a.data->>'name' as nm, safe_date(a.data->>'nextQbrDate') as nq
     from accounts a
-    where coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    where a.org_id = p_org
+      and coalesce(a.data->>'contractStatus', '') <> 'Churned'
       and coalesce(a.data->>'qbrFrequency', 'None') <> 'None'
       -- See alert_renewals and safe_date above: the regex is a cheap first filter, not a
       -- guarantee -- safe_date() is what actually excludes an invalid date without raising.
@@ -216,7 +271,7 @@ language sql security definer set search_path = public as $$
       and safe_date(a.data->>'nextQbrDate') is not null
       and ( trim(a.data->>'csm') = p_csm
             or (p_include_unowned and not exists (
-                  select 1 from profiles p where p.name = trim(a.data->>'csm'))) )
+                  select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   )
   select id, nm, nq, (nq - current_date)::int, 'due'
   from mine
@@ -227,7 +282,8 @@ language sql security definer set search_path = public as $$
   where m.nq < current_date
     and not exists (
       select 1 from activities v
-      where v.data->>'accountId' = m.id
+      where v.org_id = p_org
+        and v.data->>'accountId' = m.id
         and v.data->>'type' = 'QBR'
         and nullif(v.data->>'date', '') is not null
         and v.data->>'date' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
@@ -236,7 +292,7 @@ language sql security definer set search_path = public as $$
   order by 3 asc;
 $$;
 
-revoke execute on function public.alert_qbr_nudge(text, boolean) from public;
+revoke execute on function public.alert_qbr_nudge(uuid, text, boolean) from public;
 
 -- ---------- the network seam ----------
 -- The ONLY place this system talks to the outside world. It exists as its own function so
@@ -284,6 +340,7 @@ create or replace function public.send_alerts(p_kind text)
 returns text language plpgsql security definer set search_path = public as $$
 declare
   cfg        alert_config;
+  o          record;
   r          record;
   rows_html  text;
   n_rows     int;
@@ -312,16 +369,21 @@ begin
   if p_kind not in ('renewals', 'overdue_tasks', 'qbr_nudge') then
     return format('unknown alert kind: %s', p_kind);
   end if;
-  if not (p_kind = any(cfg.enabled_kinds)) then
-    return format('%s is disabled in alert_config.enabled_kinds', p_kind);
-  end if;
+  -- One pass per org. The key and sender are platform-wide; whether this kind goes out is
+  -- each org's own choice (org_alert_prefs.enabled_kinds). An org with no prefs row is not
+  -- in this loop at all, and an org with no recipients (a freshly created org whose admin
+  -- has not signed up yet) runs an empty inner loop: neither case sends, logs or errors.
+  for o in select p.org_id, p.enabled_kinds from org_alert_prefs p order by p.org_id loop
+  continue when not (p_kind = any(o.enabled_kinds));
 
   -- Unmatched CSM names, rendered into the admin digest so the failure is visible to a
-  -- human rather than only to whoever thinks to read a table.
+  -- human rather than only to whoever thinks to read a table. Per org: another tenant's
+  -- unrouted accounts are none of this org's business.
+  unrouted := null;
   select string_agg(format('<li>%s — %s account(s)</li>', html_escape(csm), accounts), '')
-    into unrouted from unrouted_csms();
+    into unrouted from unrouted_csms(o.org_id);
 
-  for r in select * from alert_recipients() loop
+  for r in select * from alert_recipients(o.org_id) loop
     -- Per-recipient guard: a bad date is now excluded rather than raised (see safe_date
     -- above), but this loop still has no business trusting every account's free-text JSON
     -- to be well-formed forever -- alert_post, subject formatting, or anything else in this
@@ -339,7 +401,7 @@ begin
         html_escape(account_name), to_char(renewal_date, 'DD Mon YYYY'),
         case when days_left <= 7 then '#e11d48' else '#d97706' end, days_left), '')
         into n_rows, rows_html
-        from alert_renewals(r.person, r.admin);
+        from alert_renewals(o.org_id, r.person, r.admin);
       subject := format('[OneVio] %s renewal(s) due within 30 days', n_rows);
 
     elsif p_kind = 'overdue_tasks' then
@@ -349,7 +411,7 @@ begin
         || '<td style="padding:6px 12px;border-bottom:1px solid #eee;text-align:right;color:#e11d48"><b>%s day(s)</b></td></tr>',
         html_escape(account_name), html_escape(title), days_overdue), '')
         into n_rows, rows_html
-        from alert_overdue_tasks(r.person, r.admin);
+        from alert_overdue_tasks(o.org_id, r.person, r.admin);
       subject := format('[OneVio] %s overdue task(s)', n_rows);
 
     elsif p_kind = 'qbr_nudge' then
@@ -365,7 +427,7 @@ begin
         html_escape(case when section = 'due' then 'due to be scheduled'
              else 'may have happened without being logged' end)), '')
         into n_rows, rows_html
-        from alert_qbr_nudge(r.person, r.admin);
+        from alert_qbr_nudge(o.org_id, r.person, r.admin);
       subject := format('[OneVio] %s account(s) need a review scheduled or logged', n_rows);
     end if;
     -- No `else` here: p_kind was already validated against the three known kinds above,
@@ -380,7 +442,7 @@ begin
     -- or a manual re-run takes this branch and sends nothing. Claim the slot BEFORE
     -- posting, so a crash between the two cannot produce a second email.
     begin
-      insert into email_log (kind, recipient, row_count) values (p_kind, r.email, n_rows);
+      insert into email_log (kind, recipient, row_count, org_id) values (p_kind, r.email, n_rows, o.org_id);
     exception when unique_violation then
       continue;
     end;
@@ -420,9 +482,10 @@ begin
         'email-digest-build-failed',
         'write_failed',
         format('building %s digest for %s failed: %s', p_kind, r.email, sqlerrm),
-        jsonb_build_object('kind', p_kind, 'recipient', r.email));
+        jsonb_build_object('kind', p_kind, 'recipient', r.email, 'org_id', o.org_id));
     end;
   end loop;
+  end loop;  -- orgs
 
   -- A failed digest must never read the same as a quiet no-op: append the failure count
   -- whenever one is nonzero, so the result text in the SQL Editor (the operator's only
@@ -483,7 +546,7 @@ begin
   -- counted twice. Anchoring to error_log.last_seen for this fingerprint means each sweep
   -- only ever looks at failures settled since the escalation it itself just wrote, so a
   -- given failure is counted exactly once no matter how the cron cadence lines up.
-  select last_seen into escalation_since from error_log where fingerprint = 'email-send-failed';
+  select last_seen into escalation_since from error_log where fingerprint = 'email-send-failed' and org_id is null;
   escalation_since := coalesce(escalation_since, now() - interval '1 hour');
 
   select count(*) into n_failed
@@ -508,9 +571,11 @@ create or replace function public.log_error_system(
   p_fingerprint text, p_level text, p_message text, p_context jsonb)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  insert into error_log (fingerprint, level, message, context, app_version, user_agent)
-  values (p_fingerprint, p_level, p_message, coalesce(p_context, '{}'::jsonb), 'cron', 'pg_cron')
-  on conflict (fingerprint) do update set
+  -- org_id explicitly NULL (the column defaults to current_org()): a system row belongs to
+  -- no tenant and is visible only to the platform admin.
+  insert into error_log (org_id, fingerprint, level, message, context, app_version, user_agent)
+  values (null, p_fingerprint, p_level, p_message, coalesce(p_context, '{}'::jsonb), 'cron', 'pg_cron')
+  on conflict (org_id, fingerprint) do update set
     count = error_log.count + 1, last_seen = now(),
     level = excluded.level, message = excluded.message, context = excluded.context;
 
@@ -539,11 +604,11 @@ revoke execute on function public.log_error_system(text, text, text, jsonb) from
 -- No grant back. The app calls only log_error, merge_row, replace_all and record_health
 -- (`grep -n '\.rpc(' crm.html`); pg_cron runs the alert functions as the scheduling
 -- superuser, whom these grants do not gate.
-revoke execute on function public.alert_recipients() from public, anon, authenticated;
-revoke execute on function public.unrouted_csms() from public, anon, authenticated;
-revoke execute on function public.alert_renewals(text, boolean) from public, anon, authenticated;
-revoke execute on function public.alert_overdue_tasks(text, boolean) from public, anon, authenticated;
-revoke execute on function public.alert_qbr_nudge(text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_recipients(uuid) from public, anon, authenticated;
+revoke execute on function public.unrouted_csms(uuid) from public, anon, authenticated;
+revoke execute on function public.alert_renewals(uuid, text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_overdue_tasks(uuid, text, boolean) from public, anon, authenticated;
+revoke execute on function public.alert_qbr_nudge(uuid, text, boolean) from public, anon, authenticated;
 revoke execute on function public.alert_post(text, jsonb, jsonb) from public, anon, authenticated;
 revoke execute on function public.send_alerts(text) from public, anon, authenticated;
 revoke execute on function public.settle_alert_sends() from public, anon, authenticated;

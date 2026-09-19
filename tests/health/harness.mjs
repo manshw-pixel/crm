@@ -42,7 +42,7 @@ const MOCK = `window.__sbFactory = () => {
   // UsersCard chains select(...).order(...) (wants {data:[...]}). Support all three.
   const profilesApi = () => ({
     select: () => {
-      const rows = window.__seedRows?.profiles || [window.__seedProfile || { id: "u1", name: "Test User", role: "admin" }];
+      const rows = window.__seedRows?.profiles || [window.__seedProfile || { id: "u1", name: "Test User", role: "admin", org_id: "org-a", platform_admin: false }];
       const p = Promise.resolve({ data: rows, error: null });
       p.eq = (_col, val) => ({
         single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }),
@@ -62,7 +62,16 @@ const MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
-  const fromImpl = t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t));
+  // The sidebar's platform-admin badge chains select("name").eq("id", org).single().
+  const orgsApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.orgs || [{ id: "org-a", name: "Acme Corp" }];
+      const p = Promise.resolve({ data: rows, error: null });
+      p.eq = (_c, val) => ({ single: async () => ({ data: rows.find(r => r.id === val) || null, error: null }) });
+      return p;
+    },
+  });
+  const fromImpl = t => (t === "profiles" ? profilesApi() : t === "orgs" ? orgsApi() : t === "error_log" ? errorLogApi() : api(t));
   return {
     from: fromImpl,
     rpc: (fn, args) => {
@@ -70,6 +79,10 @@ const MOCK = `window.__sbFactory = () => {
       if (fn === "admin_user_list") {
         return Promise.resolve({ data: window.__seedUsers || [], error: null });
       }
+      if (fn === "list_orgs") return Promise.resolve({ data: window.__seedOrgs || [], error: null });
+      if (fn === "create_org") return Promise.resolve(window.__createOrgError ? { data: null, error: { message: window.__createOrgError } } : { data: "org-new", error: null });
+      if (fn === "invite_user") return Promise.resolve({ data: window.__inviteResult ?? "invited", error: null });
+      if (fn === "switch_org") return Promise.resolve({ data: null, error: null });
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
       }
@@ -157,7 +170,7 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
   });
   const profilesApi = () => ({
     select: () => {
-      const rows = window.__seedRows?.profiles || [{ id: "u1", name: "Test User", role: "admin" }];
+      const rows = window.__seedRows?.profiles || [{ id: "u1", name: "Test User", role: "admin", org_id: "org-a", platform_admin: false }];
       const p = Promise.resolve({ data: rows, error: null });
       p.eq = (_col, val) => ({ single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }) });
       p.order = () => Promise.resolve({ data: rows, error: null });
@@ -173,8 +186,16 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
       return p;
     },
   });
+  const orgsApi = () => ({
+    select: () => {
+      const rows = window.__seedRows?.orgs || [{ id: "org-a", name: "Acme Corp" }];
+      const p = Promise.resolve({ data: rows, error: null });
+      p.eq = (_c, val) => ({ single: async () => ({ data: rows.find(r => r.id === val) || null, error: null }) });
+      return p;
+    },
+  });
   return {
-    from: t => (t === "profiles" ? profilesApi() : t === "error_log" ? errorLogApi() : api(t)),
+    from: t => (t === "profiles" ? profilesApi() : t === "orgs" ? orgsApi() : t === "error_log" ? errorLogApi() : api(t)),
     // Fault injection for the write-queue tests: window.__rpcFailures rejects the next N
     // calls, window.__rpcDelay adds latency (used to prove same-row writes are serial).
     // Each call is stamped with started/ended so a test can assert non-overlap.

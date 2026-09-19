@@ -3,7 +3,7 @@
 // `public`, `anon` AND `authenticated` -- the closing tests at the bottom of this file
 // prove that revocation holds for both published API roles.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount, seedTask, seedActivity } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, seedTask, seedActivity, ORG_A, ORG_B } from "./fixtures.mjs";
 
 // record_health() is defined in supabase-setup.sql, not email-alerts.sql, but its tests live
 // here with the alert suite: the snapshots exist only to feed the health-drop alert, and
@@ -113,8 +113,8 @@ test("a signed-in plain user can still record health", async () => {
 });
 
 test("email_log is admin-readable and closed to plain users", async () => {
-  await sql(`insert into email_log (kind, recipient, row_count, status)
-             values ('renewals', 'someone@test.local', 3, 'queued')`);
+  await sql(`insert into email_log (kind, recipient, row_count, status, org_id)
+             values ('renewals', 'someone@test.local', 3, 'queued', $1)`, [ORG_A]);
   const asAdmin = await sessions.admin.from("email_log").select("*");
   assert((asAdmin.data || []).length >= 1, "an admin could not read email_log");
   const asUser = await sessions.user.from("email_log").select("*");
@@ -144,7 +144,7 @@ test("email_log refuses a second send of the same kind to the same person today"
 });
 
 test("alert_recipients resolves each profile to an email address", async () => {
-  const rows = await sql(`select * from alert_recipients() order by email`);
+  const rows = await sql(`select * from alert_recipients('${ORG_A}'::uuid) order by email`);
   assert(rows.length >= 2, `expected the two bootstrap users, got ${rows.length}`);
   const admin = rows.find(r => r.email === "admin@test.local");
   assert(!!admin, "admin@test.local was not resolved");
@@ -155,7 +155,7 @@ test("alert_recipients resolves each profile to an email address", async () => {
 test("unrouted_csms reports a csm value that matches no profile", async () => {
   await seedAccount("u-1", { name: "Orphan Co", csm: "Nobody At All", contractStatus: "Active" });
   await seedAccount("u-2", { name: "Also Orphan", csm: "Nobody At All", contractStatus: "Active" });
-  const rows = await sql(`select * from unrouted_csms()`);
+  const rows = await sql(`select * from unrouted_csms('${ORG_A}'::uuid)`);
   const hit = rows.find(r => r.csm === "Nobody At All");
   assert(!!hit, "an unmatched csm was silently dropped instead of reported");
   assert(Number(hit.accounts) === 2, `expected 2 orphaned accounts, got ${hit.accounts}`);
@@ -164,7 +164,7 @@ test("unrouted_csms reports a csm value that matches no profile", async () => {
 test("unrouted_csms reports unmatched csms and ignores matched ones", async () => {
   await seedAccount("u-4", { name: "Matched Co",   csm: "Admin User",   contractStatus: "Active" });
   await seedAccount("u-5", { name: "Unmatched Co", csm: "Ghost Person", contractStatus: "Active" });
-  const rows = await sql(`select * from unrouted_csms()`);
+  const rows = await sql(`select * from unrouted_csms('${ORG_A}'::uuid)`);
   // The positive half: proves the function actually returns rows, so the negative
   // half below cannot pass merely because the result set was empty.
   const ghost = rows.find(r => r.csm === "Ghost Person");
@@ -183,7 +183,7 @@ test("alert_renewals returns only this CSM's accounts renewing within 30 days", 
   await seedAccount("r-3", { name: "Theirs",   csm: "Plain User", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
 
-  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  const rows = await sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.account_id);
   assert(ids.includes("r-1"), "the renewal due in 5 days was missing");
   assert(!ids.includes("r-2"), "a renewal 90 days out was included");
@@ -195,7 +195,7 @@ test("alert_renewals returns only this CSM's accounts renewing within 30 days", 
 test("alert_renewals excludes churned accounts", async () => {
   await seedAccount("r-4", { name: "Gone Co", csm: "Admin User", contractStatus: "Churned",
                              renewalDate: new Date(Date.now() + 3 * 864e5).toISOString().slice(0, 10) });
-  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  const rows = await sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Admin User')`);
   assert(!rows.map(r => r.account_id).includes("r-4"), "a churned account was included");
   // The window itself still works -- otherwise the assertion above passes vacuously.
   assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
@@ -204,8 +204,8 @@ test("alert_renewals excludes churned accounts", async () => {
 test("alert_renewals adds unowned accounts only when asked", async () => {
   await seedAccount("r-5", { name: "Nobody's", csm: "", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10) });
-  const without = await sql(`select * from alert_renewals('Admin User', false)`);
-  const with_   = await sql(`select * from alert_renewals('Admin User', true)`);
+  const without = await sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Admin User', false)`);
+  const with_   = await sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Admin User', true)`);
   assert(!without.map(r => r.account_id).includes("r-5"), "an unowned account leaked in by default");
   assert(with_.map(r => r.account_id).includes("r-5"), "an unowned account was not picked up for admins");
 });
@@ -220,7 +220,7 @@ test("alert_renewals tolerates a garbage (non-blank) renewalDate instead of rais
                              renewalDate: "TBD" });
   await seedAccount("r-7", { name: "Fine Co", csm: "Admin User", contractStatus: "Active",
                              renewalDate: new Date(Date.now() + 5 * 864e5).toISOString().slice(0, 10) });
-  const rows = await sql(`select * from alert_renewals('Admin User')`);
+  const rows = await sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.account_id);
   assert(!ids.includes("r-6"), "a garbage renewalDate was not filtered out");
   assert(ids.includes("r-7"), "a well-formed renewal was wrongly excluded alongside the garbage one");
@@ -234,7 +234,7 @@ test("alert_overdue_tasks routes through the account's CSM and skips Done", asyn
   await seedTask("t-2", { accountId: "t-acct", title: "Already done",  due: past,   status: "Done" });
   await seedTask("t-3", { accountId: "t-acct", title: "Not yet due",   due: future, status: "Open" });
 
-  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  const rows = await sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.task_id);
   assert(ids.includes("t-1"), "the overdue task was missing");
   assert(!ids.includes("t-2"), "a Done task was reported as overdue");
@@ -249,7 +249,7 @@ test("alert_overdue_tasks does not leak another CSM's tasks", async () => {
   await seedTask("t-4", { accountId: "t-other", title: "Theirs",
                           due: new Date(Date.now() - 9 * 864e5).toISOString().slice(0, 10),
                           status: "Open" });
-  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  const rows = await sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Admin User')`);
   assert(!rows.map(r => r.task_id).includes("t-4"), "another CSM's overdue task leaked in");
   assert(rows.length > 0, "the builder returned nothing at all, so nothing was proven");
 });
@@ -260,7 +260,7 @@ test("alert_overdue_tasks tolerates a garbage (non-blank) due date instead of ra
   await seedTask("t-6", { accountId: "t-garbage", title: "Bad due date", due: "TBD", status: "Open" });
   await seedTask("t-7", { accountId: "t-garbage", title: "Fine due date",
                           due: new Date(Date.now() - 1 * 864e5).toISOString().slice(0, 10), status: "Open" });
-  const rows = await sql(`select * from alert_overdue_tasks('Admin User')`);
+  const rows = await sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.task_id);
   assert(!ids.includes("t-6"), "a garbage due date was not filtered out");
   assert(ids.includes("t-7"), "a well-formed overdue task was wrongly excluded alongside the garbage one");
@@ -273,7 +273,7 @@ test("alert_qbr_nudge lists QBRs due within 14 days or already past", async () =
                              qbrFrequency: "Quarterly", nextQbrDate: iso(10) });
   await seedAccount("q-2", { name: "Far Off",  csm: "Admin User", contractStatus: "Active",
                              qbrFrequency: "Quarterly", nextQbrDate: iso(60) });
-  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'due'`);
+  const rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User') where section = 'due'`);
   const ids = rows.map(r => r.account_id);
   assert(ids.includes("q-1"), "a QBR due in 10 days was not listed");
   assert(!ids.includes("q-2"), "a QBR 60 days out was listed");
@@ -282,7 +282,7 @@ test("alert_qbr_nudge lists QBRs due within 14 days or already past", async () =
 test("alert_qbr_nudge flags a past QBR with no QBR activity logged near it", async () => {
   await seedAccount("q-3", { name: "Unlogged Co", csm: "Admin User", contractStatus: "Active",
                              qbrFrequency: "Quarterly", nextQbrDate: iso(-20) });
-  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'unlogged'`);
+  const rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User') where section = 'unlogged'`);
   assert(rows.map(r => r.account_id).includes("q-3"),
     "a past QBR with no activity was not flagged as possibly unlogged");
 });
@@ -292,7 +292,7 @@ test("alert_qbr_nudge does NOT flag a past QBR that was logged within 14 days of
                              qbrFrequency: "Quarterly", nextQbrDate: iso(-20) });
   await seedActivity("act-1", { accountId: "q-4", type: "QBR", date: iso(-18),
                                 summary: "Q3 review held" });
-  const rows = await sql(`select * from alert_qbr_nudge('Admin User') where section = 'unlogged'`);
+  const rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User') where section = 'unlogged'`);
   assert(!rows.map(r => r.account_id).includes("q-4"),
     "an account with a logged QBR was wrongly accused of not logging it");
   // Prove the section is populated at all, or the assertion above is vacuous.
@@ -306,7 +306,7 @@ test("alert_qbr_nudge ignores accounts with qbrFrequency None", async () => {
                              qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
   await seedAccount("q-5", { name: "No QBRs", csm: "Admin User", contractStatus: "Active",
                              qbrFrequency: "None", nextQbrDate: "" });
-  const rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+  const rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.account_id);
   assert(ids.includes("q-6"), "an account with a real QBR cadence in the window was missing");
   assert(!ids.includes("q-5"), "an account with no QBR cadence was nudged");
@@ -318,7 +318,7 @@ test("alert_qbr_nudge tolerates a garbage (non-blank) nextQbrDate instead of rai
                              qbrFrequency: "Quarterly", nextQbrDate: "TBD" });
   await seedAccount("q-9", { name: "Fine QBR Co", csm: "Admin User", contractStatus: "Active",
                              qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
-  const rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+  const rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User')`);
   const ids = rows.map(r => r.account_id);
   assert(!ids.includes("q-8"), "a garbage nextQbrDate was not filtered out");
   assert(ids.includes("q-9"), "a well-formed QBR was wrongly excluded alongside the garbage one");
@@ -329,8 +329,8 @@ test("alert_overdue_tasks adds unowned accounts' tasks only when asked", async (
   await seedTask("t-5", { accountId: "t-unowned", title: "Orphan task",
                           due: new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10),
                           status: "Open" });
-  const without = await sql(`select * from alert_overdue_tasks('Admin User', false)`);
-  const with_   = await sql(`select * from alert_overdue_tasks('Admin User', true)`);
+  const without = await sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Admin User', false)`);
+  const with_   = await sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Admin User', true)`);
   assert(!without.map(r => r.task_id).includes("t-5"), "an unowned account's task leaked in by default");
   assert(with_.map(r => r.task_id).includes("t-5"), "an unowned account's task was not picked up for admins");
 });
@@ -338,8 +338,8 @@ test("alert_overdue_tasks adds unowned accounts' tasks only when asked", async (
 test("alert_qbr_nudge adds unowned accounts only when asked", async () => {
   await seedAccount("q-7", { name: "Nobody's QBR", csm: "", contractStatus: "Active",
                              qbrFrequency: "Quarterly", nextQbrDate: iso(5) });
-  const without = await sql(`select * from alert_qbr_nudge('Admin User', false)`);
-  const with_   = await sql(`select * from alert_qbr_nudge('Admin User', true)`);
+  const without = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User', false)`);
+  const with_   = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User', true)`);
   assert(!without.map(r => r.account_id).includes("q-7"), "an unowned account leaked in by default");
   assert(with_.map(r => r.account_id).includes("q-7"), "an unowned account was not picked up for admins");
 });
@@ -358,7 +358,7 @@ test("alert_qbr_nudge tolerates a blank activity date instead of raising", async
 
   let rows, err = null;
   try {
-    rows = await sql(`select * from alert_qbr_nudge('Admin User')`);
+    rows = await sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Admin User')`);
   } catch (e) { err = e; }
   assert(!err, `alert_qbr_nudge raised on a blank activity date: ${err && err.message}`);
   assert(rows.map(r => r.account_id).includes("q-8"),
@@ -634,18 +634,219 @@ test("send_alerts refuses to run when the sender is still the placeholder", asyn
   await sql(`update alert_config set from_email = 'alerts@onevio.test' where id = 1`);
 });
 
-test("send_alerts skips a kind disabled in alert_config.enabled_kinds", async () => {
+// ---------- per org (multi-tenant Task 5) ----------
+// Every test below that sends runs after the two placeholder tests above, which leave
+// alert_config with a real-looking key and sender, and calls stubSend() itself.
+const inDays = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const bodyOf = r => JSON.stringify(typeof r.body === "string" ? JSON.parse(r.body) : r.body);
+const ALL_KINDS = "array['renewals','overdue_tasks','qbr_nudge']";
+
+// F3: enabled_kinds moved from alert_config to org_alert_prefs. A disabled kind is no longer
+// a whole-run refusal: that org is simply skipped. So the proof is "nothing sent, nothing
+// logged", paired with a control run after re-enabling that DOES mail the same person --
+// without it, a dispatcher that never sends would pass.
+test("send_alerts skips a kind an org has disabled in org_alert_prefs", async () => {
   await stubSend();
   await sql(`delete from email_log`);
   await sql(`delete from test_sent`);
   await seedAccount("s-disabled", { name: "Disabled Co", csm: "Admin User", contractStatus: "Active",
-                             renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
-  await sql(`update alert_config set enabled_kinds = array['overdue_tasks','qbr_nudge'] where id = 1`);
-  const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
-  assert(/disabled/i.test(result), `expected a "disabled" refusal, got: ${result}`);
-  const sent = await sql(`select * from test_sent`);
-  assert(sent.length === 0, `a disabled kind still sent ${sent.length} email(s)`);
-  await sql(`update alert_config set enabled_kinds = array['renewals','overdue_tasks','qbr_nudge'] where id = 1`);
+                                    renewalDate: inDays(6) });
+  await sql(`update org_alert_prefs set enabled_kinds = array['overdue_tasks','qbr_nudge'] where org_id = $1`, [ORG_A]);
+  try {
+    await sql(`select send_alerts('renewals')`);
+    const logged = await sql(`select * from email_log where kind = 'renewals' and org_id = $1`, [ORG_A]);
+    assert(logged.length === 0, `org A has renewals disabled but logged ${logged.length} row(s)`);
+    const sent = await sentTo("admin@test.local");
+    assert(sent.length === 0, `a disabled kind still sent ${sent.length} email(s) to admin@test.local`);
+  } finally {
+    await sql(`update org_alert_prefs set enabled_kinds = ${ALL_KINDS} where org_id = $1`, [ORG_A]);
+  }
+  await sql(`select send_alerts('renewals')`);
+  const control = await sentTo("admin@test.local");
+  assert(control.length === 1, `control: re-enabled renewals should mail admin@test.local once, got ${control.length}`);
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+});
+
+test("alert builders see only the org they are asked about", async () => {
+  const due = inDays(5);
+  await seedAccount("ren-a", { name: "Renew A", csm: "Admin User", renewalDate: due, contractStatus: "Active" }, ORG_A);
+  await seedAccount("ren-b", { name: "Renew B", csm: "Admin B",    renewalDate: due, contractStatus: "Active" }, ORG_B);
+  const a = await sql(`select account_id from alert_renewals($1, 'Admin User', true)`, [ORG_A]);
+  const b = await sql(`select account_id from alert_renewals($1, 'Admin B', true)`, [ORG_B]);
+  assert(a.some(r => r.account_id === "ren-a") && !a.some(r => r.account_id === "ren-b"), `org A builder returned ${JSON.stringify(a)}`);
+  assert(b.some(r => r.account_id === "ren-b") && !b.some(r => r.account_id === "ren-a"), `org B builder returned ${JSON.stringify(b)}`);
+});
+
+test("overdue-task and QBR builders see only the org they are asked about", async () => {
+  // Same account id in both orgs: the task join must pair a task with ITS org's account.
+  await seedAccount("dup-acct", { name: "Dup A", csm: "Admin User", contractStatus: "Active",
+                                  qbrFrequency: "Quarterly", nextQbrDate: inDays(3) }, ORG_A);
+  await seedAccount("dup-acct", { name: "Dup B", csm: "Admin User", contractStatus: "Active",
+                                  qbrFrequency: "Quarterly", nextQbrDate: inDays(3) }, ORG_B);
+  await seedTask("dup-task-b", { accountId: "dup-acct", title: "B task", due: inDays(-2), status: "Open" }, ORG_B);
+  const tasksA = await sql(`select * from alert_overdue_tasks($1, 'Admin User', false)`, [ORG_A]);
+  const tasksB = await sql(`select * from alert_overdue_tasks($1, 'Admin User', false)`, [ORG_B]);
+  assert(tasksB.some(r => r.task_id === "dup-task-b" && r.account_name === "Dup B"),
+    `org B's task was not found against org B's account: ${JSON.stringify(tasksB)}`);
+  assert(!tasksA.some(r => r.task_id === "dup-task-b"), `org B's task leaked into org A: ${JSON.stringify(tasksA)}`);
+  const qbrA = await sql(`select * from alert_qbr_nudge($1, 'Admin User', false)`, [ORG_A]);
+  assert(qbrA.some(r => r.account_name === "Dup A") && !qbrA.some(r => r.account_name === "Dup B"),
+    `org A QBR builder returned ${JSON.stringify(qbrA)}`);
+  await sql(`delete from tasks where id = 'dup-task-b'`);
+  await sql(`delete from accounts where id = 'dup-acct'`);
+});
+
+test("alert_recipients is per org", async () => {
+  const a = await sql(`select email from alert_recipients($1)`, [ORG_A]);
+  const b = await sql(`select email from alert_recipients($1)`, [ORG_B]);
+  assert(a.some(r => r.email === "user@test.local") && !a.some(r => r.email === "userb@test.local"), "org A recipients leak");
+  assert(b.some(r => r.email === "userb@test.local") && !b.some(r => r.email === "user@test.local"), "org B recipients leak");
+  // auth.test.mjs leaves inv-admin@test.local as a second org B admin; it belongs to B only.
+  assert(!a.some(r => r.email === "inv-admin@test.local"), "org B's extra admin was listed in org A");
+});
+
+// F11: an org's unrouted list is computed against ITS OWN profiles. "Admin User" is a real
+// person in org A, so an org-B account with that csm reaches nobody in org B.
+test("unrouted_csms is per org: accounts and profile names both come from that org only", async () => {
+  await seedAccount("xo-a", { name: "Only In A Co", csm: "Only In A", contractStatus: "Active" }, ORG_A);
+  await seedAccount("xo-b", { name: "Cross Name Co", csm: "Admin User", contractStatus: "Active",
+                              renewalDate: inDays(4) }, ORG_B);
+  const b = await sql(`select * from unrouted_csms($1)`, [ORG_B]);
+  const a = await sql(`select * from unrouted_csms($1)`, [ORG_A]);
+  assert(b.some(r => r.csm === "Admin User"), `org B should report "Admin User" as unrouted: ${JSON.stringify(b)}`);
+  assert(!b.some(r => r.csm === "Only In A"), `org A's unrouted csm leaked into org B: ${JSON.stringify(b)}`);
+  assert(!b.some(r => r.csm === "Admin B"), `org B's own admin was reported as unrouted: ${JSON.stringify(b)}`);
+  assert(a.some(r => r.csm === "Only In A"), `org A lost its own unrouted csm: ${JSON.stringify(a)}`);
+  assert(!a.some(r => r.csm === "Admin User"), `org B's "Admin User" account leaked into org A: ${JSON.stringify(a)}`);
+});
+
+test("send_alerts logs one row per recipient per org and honours per-org enabled_kinds", async () => {
+  await stubSend();
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'noreply@onevio.test' where id = 1`);
+  await sql(`update org_alert_prefs set enabled_kinds = array['overdue_tasks'] where org_id = $1`, [ORG_B]);
+  await sql(`delete from email_log where kind = 'renewals'`);
+  await sql(`delete from test_sent`);
+  try {
+    const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+    const rows = await sql(`select recipient, org_id from email_log where kind = 'renewals' and day = current_date`);
+    assert(rows.some(r => r.org_id === ORG_A), `org A got no renewals digest: ${result}`);
+    assert(!rows.some(r => r.org_id === ORG_B), "org B has renewals disabled but was mailed");
+    assert((await sentTo("adminb@test.local")).length === 0, "adminb@test.local was mailed a disabled kind");
+  } finally {
+    await sql(`update org_alert_prefs set enabled_kinds = ${ALL_KINDS} where org_id = $1`, [ORG_B]);
+  }
+  // Control: with renewals back on, org B IS mailed -- and each row carries its own org.
+  await sql(`delete from email_log where kind = 'renewals'`);
+  await sql(`delete from test_sent`);
+  await sql(`select send_alerts('renewals')`);
+  const rows = await sql(`select recipient, org_id from email_log where kind = 'renewals' and day = current_date`);
+  const adminB = rows.find(r => r.recipient === "adminb@test.local");
+  const adminA = rows.find(r => r.recipient === "admin@test.local");
+  assert(adminB && adminB.org_id === ORG_B, `control: adminb@test.local not logged under org B: ${JSON.stringify(rows)}`);
+  assert(adminA && adminA.org_id === ORG_A, `admin@test.local not logged under org A: ${JSON.stringify(rows)}`);
+  const perRecipient = new Set(rows.map(r => r.recipient));
+  assert(perRecipient.size === rows.length, `a recipient was logged twice: ${JSON.stringify(rows)}`);
+});
+
+// F11: the digest body itself -- rows and the unrouted footer -- is the recipient's org only.
+// Relies on the send just above (ren-a, ren-b, xo-a, xo-b seeded earlier in this block).
+test("each org's digest carries only that org's accounts and unrouted list", async () => {
+  const [toB] = await sentTo("adminb@test.local");
+  const [toA] = await sentTo("admin@test.local");
+  assert(toB && toA, "the previous test's control send did not mail both admins");
+  const b = bodyOf(toB), a = bodyOf(toA);
+  assert(b.includes("Renew B") && b.includes("Cross Name Co"), `org B digest is missing its own rows: ${b}`);
+  assert(!b.includes("Renew A"), `org A's account leaked into org B's digest: ${b}`);
+  assert(b.includes("Admin User") && !b.includes("Only In A"),
+    `org B's unrouted footer is not org B's own: ${b}`);
+  assert(a.includes("Renew A"), `org A digest is missing its own row: ${a}`);
+  assert(!a.includes("Renew B") && !a.includes("Cross Name Co"), `org B's account leaked into org A's digest: ${a}`);
+  await sql(`delete from accounts where id in ('ren-a','ren-b','xo-a','xo-b')`);
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+});
+
+// F2 (moved from Task 3) plus the "Client C" case: an org created by create_org has prefs but
+// no users until its admin signs up, and an org with no prefs row is outside the loop. Both
+// must be skipped with no send, no log row and no error_log noise, in the same run that
+// still mails org A (the control).
+test("create_org gives the new org prefs; send_alerts skips orgs with no recipients or no prefs", async () => {
+  const { data: newOrg, error } = await sessions.platform.rpc("create_org",
+    { p_name: "Prefs Co", p_admin_email: "owner@prefsco.test" });
+  assert(!error, error && error.message);
+  const [prefs] = await sql(`select enabled_kinds from org_alert_prefs where org_id = $1`, [newOrg]);
+  assert(prefs && ["renewals", "overdue_tasks", "qbr_nudge"].every(k => prefs.enabled_kinds.includes(k)),
+    `create_org did not create a default org_alert_prefs row: ${JSON.stringify(prefs)}`);
+
+  const [{ id: bare }] = await sql(`insert into orgs (name) values ('No Prefs Co') returning id`);
+  try {
+    await seedAccount("empty-1", { name: "Nobody Home", csm: "", contractStatus: "Active", renewalDate: inDays(3) }, newOrg);
+    await seedAccount("empty-2", { name: "No Prefs Acct", csm: "", contractStatus: "Active", renewalDate: inDays(3) }, bare);
+    await seedAccount("empty-ctl", { name: "Control Co", csm: "Admin User", contractStatus: "Active", renewalDate: inDays(3) }, ORG_A);
+    await stubSend();
+    await sql(`delete from email_log`);
+    await sql(`delete from test_sent`);
+    await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+
+    const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+    assert(!/failed/.test(result), `an empty org produced a failure: ${result}`);
+    const logged = await sql(`select * from email_log where org_id = any($1::uuid[])`, [[newOrg, bare]]);
+    assert(logged.length === 0, `an org with no recipients or no prefs was logged: ${JSON.stringify(logged)}`);
+    const errs = await sql(`select * from error_log where fingerprint = 'email-digest-build-failed'`);
+    assert(errs.length === 0, `skipping an empty org wrote error_log noise: ${JSON.stringify(errs)}`);
+    const sent = (await sql(`select * from test_sent`)).map(bodyOf);
+    assert(!sent.some(b => b.includes("Nobody Home") || b.includes("No Prefs Acct")),
+      "an empty org's account appeared in someone's digest");
+    assert((await sentTo("admin@test.local")).length === 1, `control: org A was not mailed in the same run: ${result}`);
+  } finally {
+    await sql(`delete from accounts where id = 'empty-ctl'`);
+    await sql(`delete from orgs where id = any($1::uuid[])`, [[newOrg, bare]]);
+    await sql(`delete from email_log`);
+    await sql(`delete from test_sent`);
+  }
+});
+
+// F24: recipient addresses are another tenant's staff list. The refusal is read back by SQL,
+// and the org A admin's read of the same row is the control.
+test("an org B admin cannot read org A's email_log rows", async () => {
+  await sql(`delete from email_log where kind = 'xorg'`);
+  await sql(`insert into email_log (kind, recipient, row_count, org_id) values
+             ('xorg', 'a-staff@test.local', 1, $1), ('xorg', 'b-staff@test.local', 1, $2)`, [ORG_A, ORG_B]);
+  const { data: asB, error: eB } = await sessions.adminB.from("email_log").select("recipient").eq("kind", "xorg");
+  assert(!eB, eB && eB.message);
+  assert(asB.some(r => r.recipient === "b-staff@test.local"), `control: org B admin cannot read its own row: ${JSON.stringify(asB)}`);
+  assert(!asB.some(r => r.recipient === "a-staff@test.local"), `org B admin read org A's email_log: ${JSON.stringify(asB)}`);
+  const { data: asA } = await sessions.admin.from("email_log").select("recipient").eq("kind", "xorg");
+  assert((asA || []).some(r => r.recipient === "a-staff@test.local"), "control: org A admin cannot read org A's row");
+  assert(!(asA || []).some(r => r.recipient === "b-staff@test.local"), "org A admin read org B's email_log");
+  const exists = await sql(`select 1 from email_log where kind = 'xorg' and org_id = $1`, [ORG_A]);
+  assert(exists.length === 1, "read-back: org A's row is not actually there");
+  await sql(`delete from email_log where kind = 'xorg'`);
+});
+
+// F11: org_alert_prefs cross-org read and write, each with an own-org control.
+test("org_alert_prefs is readable only in-org and writable only by that org's admin", async () => {
+  const { data: asB } = await sessions.adminB.from("org_alert_prefs").select("org_id");
+  assert((asB || []).some(r => r.org_id === ORG_B), `control: org B admin cannot read its own prefs: ${JSON.stringify(asB)}`);
+  assert(!(asB || []).some(r => r.org_id === ORG_A), `org B admin read org A's prefs: ${JSON.stringify(asB)}`);
+  const { data: asUser } = await sessions.user.from("org_alert_prefs").select("org_id");
+  assert((asUser || []).length === 1 && asUser[0].org_id === ORG_A, `a plain org A user should read exactly its org's row: ${JSON.stringify(asUser)}`);
+
+  // Cross-org and plain-user writes: no error comes back from a filtered-out update, so read back.
+  await sessions.adminB.from("org_alert_prefs").update({ health_drop_points: 99 }).eq("org_id", ORG_A);
+  await sessions.user.from("org_alert_prefs").update({ health_drop_points: 98 }).eq("org_id", ORG_A);
+  const [afterRefused] = await sql(`select health_drop_points from org_alert_prefs where org_id = $1`, [ORG_A]);
+  assert(afterRefused.health_drop_points !== 99 && afterRefused.health_drop_points !== 98,
+    `a refused update changed org A's prefs to ${afterRefused.health_drop_points}`);
+
+  // Control: org A's own admin CAN write it.
+  const before = afterRefused.health_drop_points;
+  const { error } = await sessions.admin.from("org_alert_prefs").update({ health_drop_points: 11 }).eq("org_id", ORG_A);
+  assert(!error, error && error.message);
+  const [afterOwn] = await sql(`select health_drop_points from org_alert_prefs where org_id = $1`, [ORG_A]);
+  assert(afterOwn.health_drop_points === 11, `control: org A admin's update did not land (${afterOwn.health_drop_points})`);
+  await sql(`update org_alert_prefs set health_drop_points = $2 where org_id = $1`, [ORG_A, before]);
 });
 
 // pg_net is deliberately NOT installed in this test database (extensions live in a file the
@@ -910,9 +1111,9 @@ test("record_health sweeps snapshots past 90 days but keeps snapshots inside the
   await seedAccount("h-retain", { name: "Retention Account" });
   // System-wide for health_snapshots for the same reason as the error_log sweep above.
   await sql(`delete from health_snapshots`);
-  await sql(`insert into health_snapshots (account_id, day, score)
-             values ('h-retain', current_date - interval '91 days', 40),
-                    ('h-retain', current_date - interval '89 days', 55)`);
+  await sql(`insert into health_snapshots (org_id, account_id, day, score)
+             values ($1, 'h-retain', current_date - interval '91 days', 40),
+                    ($1, 'h-retain', current_date - interval '89 days', 55)`, [ORG_A]);
   // Any record_health call sweeps -- a distinct day (today) so the upsert-within-a-day
   // behaviour tested elsewhere doesn't collide with the two seeded rows.
   const { error } = await sessions.admin.rpc("record_health",
@@ -972,11 +1173,11 @@ const DENIED_CODES = ["42501", "PGRST202"];
 // tests below do not depend on what earlier tests in this file happened to leave behind.
 const OWNER_PROBES = {
   // Existence only -- a zero-row result is a perfectly normal answer here.
-  alert_recipients: () => sql(`select * from alert_recipients()`),
-  unrouted_csms: () => sql(`select * from unrouted_csms()`),
-  alert_renewals: () => sql(`select * from alert_renewals('Ana', false)`),
-  alert_overdue_tasks: () => sql(`select * from alert_overdue_tasks('Ana', false)`),
-  alert_qbr_nudge: () => sql(`select * from alert_qbr_nudge('Ana', false)`),
+  alert_recipients: () => sql(`select * from alert_recipients('${ORG_A}'::uuid)`),
+  unrouted_csms: () => sql(`select * from unrouted_csms('${ORG_A}'::uuid)`),
+  alert_renewals: () => sql(`select * from alert_renewals('${ORG_A}'::uuid, 'Ana', false)`),
+  alert_overdue_tasks: () => sql(`select * from alert_overdue_tasks('${ORG_A}'::uuid, 'Ana', false)`),
+  alert_qbr_nudge: () => sql(`select * from alert_qbr_nudge('${ORG_A}'::uuid, 'Ana', false)`),
 
   // Existence only, but it needs net._http_response, which does not exist until
   // ensureHttpResponseTable() has run (pg_net is deliberately absent from this test DB).
@@ -1044,14 +1245,14 @@ const OWNER_PROBES = {
 
 // [rpc name, rpc args, signature for has_function_privilege]
 const CLOSED_FUNCTIONS = [
-  ["alert_recipients", {}, "public.alert_recipients()"],
-  ["unrouted_csms", {}, "public.unrouted_csms()"],
-  ["alert_renewals", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_renewals(text, boolean)"],
-  ["alert_overdue_tasks", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_overdue_tasks(text, boolean)"],
-  ["alert_qbr_nudge", { p_csm: "Ana", p_include_unowned: false },
-    "public.alert_qbr_nudge(text, boolean)"],
+  ["alert_recipients", { p_org: ORG_A }, "public.alert_recipients(uuid)"],
+  ["unrouted_csms", { p_org: ORG_A }, "public.unrouted_csms(uuid)"],
+  ["alert_renewals", { p_org: ORG_A, p_csm: "Ana", p_include_unowned: false },
+    "public.alert_renewals(uuid, text, boolean)"],
+  ["alert_overdue_tasks", { p_org: ORG_A, p_csm: "Ana", p_include_unowned: false },
+    "public.alert_overdue_tasks(uuid, text, boolean)"],
+  ["alert_qbr_nudge", { p_org: ORG_A, p_csm: "Ana", p_include_unowned: false },
+    "public.alert_qbr_nudge(uuid, text, boolean)"],
   ["alert_post", { p_url: "http://127.0.0.1:1/none", p_headers: {}, p_body: {} },
     "public.alert_post(text, jsonb, jsonb)"],
   ["send_alerts", { p_kind: "renewals" }, "public.send_alerts(text)"],
