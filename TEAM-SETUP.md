@@ -74,10 +74,41 @@ it `supabase start` cannot run and the suite is CI-only on that machine.
 
 ## 6. First logins
 
-- **You sign up first** — the first account automatically becomes **admin**.
-- Colleagues open the same URL and sign up; they start as **user** (no Settings access).
+- Sign-up is invite-only: a colleague can only join through **Settings → Users → Add** (an
+  admin invites them by email), or by being the platform admin created during setup below.
+  Public sign-up with no invite creates a login that sees nothing until an admin attaches it.
+- Invited colleagues start as **user** (no Settings access) unless invited as admin.
 - In **Settings → Users** you can promote one colleague to be the second admin (max 2 admins; the last admin can never be demoted — the database enforces both).
 - To remove someone entirely: Supabase dashboard → **Authentication → Users** → delete.
+
+## Clients (multi-tenant)
+
+OneVio hosts several client companies in one install. Each client is an **org**; users
+belong to exactly one org and see only its data.
+
+**First-time upgrade of an existing install**
+1. Open `supabase-setup.sql` and set the two `EDIT ME` literals:
+   - Line 20, `insert into public.orgs (id, name) values (..., 'My Company')` — the default
+     org's name. Every row and user that existed before multi-tenancy is stamped onto this
+     org, so nothing changes visibly for your current team.
+   - Line 58, `where ... lower(email) = lower('you@yourcompany.com')` — the platform admin's
+     sign-in email. This line is a no-op until that account has actually signed up; re-run
+     the file after they sign in once to pick it up.
+   Both are idempotent: change and re-run the whole file any time.
+2. Run `supabase-setup.sql`, then `email-alerts.sql`, in the SQL editor, in that order. Both
+   are safe to re-run.
+3. Sign in as the platform-admin account once (so the row exists), then re-run
+   `supabase-setup.sql` to flip `platform_admin = true` on it.
+
+**Onboarding a client**
+Settings → Platform (visible only to the platform admin) → fill in client name, the admin's
+name, email and a temporary password → Create client. Share the credentials. That admin
+adds their own team from Settings → Users. Switch into a client from the same card to see
+exactly what they see; the amber badge in the sidebar shows which org you are currently in.
+
+**Alert preferences per client** are rows in `public.org_alert_prefs` (which alert kinds are
+enabled, health-drop sensitivity); edit them in the SQL editor for now — there is no UI for
+this yet.
 
 ## Disabling a user
 

@@ -1,7 +1,7 @@
 # Multi-tenant orgs: onboarding clients into one OneVio install
 
 Date: 2026-09-18
-Status: approved design, not yet planned
+Status: implemented (PR pending)
 
 ## Problem
 
@@ -99,7 +99,9 @@ change follows that convention rather than adding a separate file. Steps, in ord
    `attachments[].url` inside `accounts.data`.
 
 `supabase-setup.sql` and `email-alerts.sql` are updated so a fresh install produces the
-same end state; the migration file exists for the live database.
+same end state; there is no separate migration file — this repo's convention is that
+`supabase-setup.sql` itself is the migration, re-run whole in the SQL editor against the
+live database.
 
 ## Security model
 
@@ -230,6 +232,50 @@ row survives, and the app's load query returns the same data as before.
 3. Re-run `email-alerts.sql` (idempotent) to install `org_alert_prefs` and the per-org `send_alerts`.
 4. Set `platform_admin = true` on your own profile by SQL (the only way to mint one).
 5. Sign in, confirm the sidebar shows the default org, create the first client.
+
+## Changes during implementation
+
+Decisions made while building that override or refine this spec, in build order (see
+`.superpowers/sdd/2026-09-18-multi-tenant-orgs/progress.md` for the full ledger):
+
+- **Commit attribution.** Trailer uses `Claude Opus 5`, not the plan's `Claude Fable 5.1` —
+  the session's own attribution rule wins.
+- **Profile backfill runs once, not on every re-run.** The `profiles.org_id` backfill
+  (stamping the default org) fires only in the migration that adds the column, guarded by
+  an `information_schema` check. Re-running `supabase-setup.sql` never touches `org_id`
+  again — otherwise a later uninvited sign-up (which legitimately has `org_id null`) would
+  be silently pulled into the default org on the next re-run.
+- **`error_log` is scoped per org**, not global as originally specced. It gained a nullable
+  `org_id` (default `current_org()`); `error_log_select` allows an org admin to see rows for
+  their own org, and the platform admin to see everything including org-less system rows.
+  Fingerprint uniqueness is now per org.
+- **At most one open invite per email, across all orgs.** A unique index on
+  `lower(email)` among un-accepted invites means `invite_user` and `create_org` refuse to
+  create a second open invite for an address another org already holds; a same-org
+  re-invite instead updates the existing invite's role. Prevents one org from hijacking a
+  pending admin invite issued by another. `create_org` also refuses a duplicate org name
+  (case-insensitive).
+- **Legacy storage files are not moved or re-linked.** The plan's one-off rewrite of
+  `storage.objects` names and of `attachments[].path`/`url` inside `accounts.data` (and,
+  as built, also `activities.data.attachments[]` and `tasks.data.attachments[]`) was
+  dropped: renaming a storage object orphans the underlying file (404), which is
+  irreversible. Instead, new uploads go under `<org_id>/...` and pre-existing,
+  un-prefixed legacy paths stay readable and deletable, but only by the default org.
+- **`invite_user` and `create_org` attach an existing org-less login** instead of only
+  inserting an invite row. If the target email already has a profile with `org_id null`
+  (signed up once, was never invited), the RPC sets that profile's `org_id`/`role`
+  directly and marks the invite accepted, rather than leaving a dangling invite that a
+  fresh sign-up would never match (Supabase treats a repeat sign-up on an existing address
+  as a no-op). Both RPCs refuse to attach an address whose profile already belongs to
+  another org.
+- **Send-failure escalations are visible only to the platform admin**, not to org admins,
+  since `email_log`/error escalation for cross-org sending failures is a platform-level
+  concern under the per-org `send_alerts()` iteration.
+- **`settings` keyed by `org_id` alone**, no separate serial `id` column, as specced, but
+  called out here because it is a visible schema deviation from a single-row-keyed-by-`id`
+  table.
+- **Sidebar reads `orgs` directly** under an `orgs_select` policy rather than through a
+  `my_org_name()` RPC, since the policy alone is sufficient and simpler.
 
 ## Out of scope
 
