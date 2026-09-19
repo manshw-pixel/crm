@@ -172,9 +172,11 @@ async function assertAnonIsAnonymous() {
 // touched storage anyway — the bucket and its objects live in the `storage` schema and
 // survive a reset, which is exactly why this purge is needed for a repeated local run.
 async function purgeAttachments() {
-  // Both the org-prefixed layout (Task 4) and the legacy flat `rls/` prefix: until the
-  // storage policies move to org prefixes, the existing storage tests still write `rls/`.
-  const targets = [[sessions.admin, `${ORG_A}/rls`], [sessions.adminB, `${ORG_B}/rls`], [sessions.admin, "rls"]];
+  // The org-prefixed layout, plus the un-prefixed `rls` and `rls-new` paths the storage
+  // tests seed or attempt. sessions.admin is in the default org, which keeps delete on
+  // legacy (un-prefixed) objects.
+  const targets = [[sessions.admin, `${ORG_A}/rls`], [sessions.adminB, `${ORG_B}/rls`],
+                   [sessions.admin, "rls"], [sessions.admin, "rls-new"]];
   for (const [session, prefix] of targets) {
     const { data, error } = await session.storage.from("attachments").list(prefix);
     // A missing bucket or an empty prefix is the normal case on a fresh stack, not a failure.

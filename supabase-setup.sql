@@ -892,12 +892,34 @@ on conflict (id) do nothing;
 
 -- Gated the same way as the entity tables: a disabled user must not read or upload files
 -- just because the storage policies live apart from the do-block loops above.
+--
+-- Org-prefixed: every new object lives under <org_id>/<account_id>/<file>, and the first
+-- path segment must be the caller's org on read, upload and delete.
+--
+-- Legacy objects (uploaded before multi-tenancy, first segment = an account id, not a uuid
+-- of an org) are NOT moved. Renaming storage.objects.name in SQL only renames the catalogue
+-- row: the blob in the storage backend stays keyed by the old name, so every legacy file
+-- would 404 and its row could not be deleted through SQL either (Supabase's trigger refuses
+-- direct deletes). Instead, read and delete also accept a non-uuid first segment for the
+-- default org, which owns every pre-multitenant file. Upload never does: new files must
+-- carry the org prefix. Stored links (accounts.data.documents[], activities.data.attachments[],
+-- tasks.data.attachments[]) therefore stay valid unchanged, and nothing is rewritten.
 drop policy if exists attachments_read on storage.objects;
 create policy attachments_read on storage.objects
-  for select to authenticated using (bucket_id = 'attachments' and public.is_active());
+  for select to authenticated
+  using (bucket_id = 'attachments' and public.is_active()
+         and ((storage.foldername(name))[1] = public.current_org()::text
+              or (public.current_org() = '00000000-0000-0000-0000-000000000001'
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
-  for insert to authenticated with check (bucket_id = 'attachments' and public.is_active());
+  for insert to authenticated
+  with check (bucket_id = 'attachments' and public.is_active()
+              and (storage.foldername(name))[1] = public.current_org()::text);
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
-  for delete to authenticated using (bucket_id = 'attachments' and public.is_active());
+  for delete to authenticated
+  using (bucket_id = 'attachments' and public.is_active()
+         and ((storage.foldername(name))[1] = public.current_org()::text
+              or (public.current_org() = '00000000-0000-0000-0000-000000000001'
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
