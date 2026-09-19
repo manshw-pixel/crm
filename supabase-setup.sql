@@ -852,6 +852,8 @@ returns uuid language plpgsql security definer set search_path = public as $$
 declare
   new_id uuid;
   addr text := lower(trim(p_admin_email));
+  existing_id uuid;
+  existing_org uuid;
 begin
   if not public.is_platform_admin() then
     raise exception 'create_org: platform admin only';
@@ -870,13 +872,29 @@ begin
   if exists (select 1 from invites where lower(email) = addr and accepted_at is null) then
     raise exception 'create_org: % already has an open invite', addr;
   end if;
+  -- handle_new_user() fires only for a NEW login, so an admin address that already has one
+  -- would never pick up the invite. As invite_user does: refuse a login in another workspace
+  -- (before any insert), attach an org-less one below.
+  select p.id, p.org_id into existing_id, existing_org
+    from profiles p join auth.users u on u.id = p.id
+   where lower(u.email) = addr limit 1;
+  if existing_org is not null then
+    raise exception 'create_org: % already belongs to another workspace', addr;
+  end if;
   insert into orgs (name) values (trim(p_name)) returning id into new_id;
   insert into settings (org_id, data) values (new_id, '{}'::jsonb);
   -- org_alert_prefs lives in email-alerts.sql, which may not be installed on a fresh stack.
   if to_regclass('public.org_alert_prefs') is not null then
     execute 'insert into org_alert_prefs (org_id) values ($1) on conflict (org_id) do nothing' using new_id;
   end if;
-  insert into invites (email, org_id, role, created_by) values (addr, new_id, 'admin', auth.uid());
+  if existing_id is not null then
+    perform set_config('app.invite_attach', 'on', true);
+    update profiles set org_id = new_id, role = 'admin' where id = existing_id;
+    perform set_config('app.invite_attach', 'off', true);
+    insert into invites (email, org_id, role, created_by, accepted_at) values (addr, new_id, 'admin', auth.uid(), now());
+  else
+    insert into invites (email, org_id, role, created_by) values (addr, new_id, 'admin', auth.uid());
+  end if;
   return new_id;
 end $$;
 

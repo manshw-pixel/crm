@@ -2,7 +2,7 @@
 // the same test, so a policy that returns nothing to anyone would fail loudly rather than
 // pass vacuously (the lesson of the anon-key incident in fixtures.mjs).
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, seedAccount, valueOf, orgOf, signUpFresh, ORG_A, ORG_B } from "./fixtures.mjs";
+import { sessions, sql, seedAccount, valueOf, orgOf, roleOf, signUpFresh, ORG_A, ORG_B } from "./fixtures.mjs";
 
 const TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 
@@ -440,4 +440,29 @@ test("guard_profile_org: a client still cannot set its own org_id, even an org-l
   const { client, id } = await signUpFresh("selfattach@test.local");
   await client.from("profiles").update({ org_id: ORG_A }).eq("id", id);
   assert((await orgOf(id)) === null, "an org-less user attached themselves");
+});
+
+// ---------- Task 8: create_org and an admin address that already has a login ----------
+// handle_new_user() fires only for a NEW login, so create_org must deal with an existing one
+// itself, exactly as invite_user does: attach an org-less login, refuse one in another org.
+test("create_org: an existing org-less login becomes the new org's admin", async () => {
+  const { id } = await signUpFresh("orgless.owner@test.local");
+  const { data: orgId, error } = await sessions.platform.rpc("create_org", { p_name: "Client E", p_admin_email: "Orgless.Owner@test.local" });
+  assert(!error, error && error.message);
+  assert((await orgOf(id)) === orgId, "the org-less login was not attached to the new org");
+  assert((await roleOf(id)) === "admin", "attached login is not the new org's admin");
+  const invs = await sql(`select accepted_at from invites where email = 'orgless.owner@test.local'`);
+  assert(invs.length === 1 && invs[0].accepted_at, `expected one accepted invite, got ${JSON.stringify(invs)}`);
+});
+
+test("create_org: an admin address whose login is in another workspace is refused and creates nothing", async () => {
+  const { id } = await signUpFresh("owned.elsewhere@test.local");
+  await sql(`update profiles set org_id = $1 where id = $2`, [ORG_B, id]);
+  const { error } = await sessions.platform.rpc("create_org", { p_name: "Client F", p_admin_email: "owned.elsewhere@test.local" });
+  assert(error && /belongs to another workspace/i.test(error.message), `expected refusal, got ${error && error.message}`);
+  assert((await orgOf(id)) === ORG_B, "the other org's user was moved");
+  const orgs = await sql(`select 1 from orgs where name = 'Client F'`);
+  assert(orgs.length === 0, "a refused create_org left an org behind");
+  const invs = await sql(`select 1 from invites where email = 'owned.elsewhere@test.local'`);
+  assert(invs.length === 0, "a refused create_org left an invite behind");
 });

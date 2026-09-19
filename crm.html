@@ -3459,6 +3459,7 @@ function Settings({ st, dispatch, user, scored }) {
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
       <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
+      {user.platform_admin && <PlatformCard me={user} />}
       <UsersCard me={user} />
       {user.role === "admin" && <ErrorLogCard />}
       <Card title="Data">
@@ -3601,6 +3602,71 @@ const signUpMessage = (name, role, status) =>
   status === "exists" ? `${name}'s email already has a login, so no new login was created. Ask them to sign in; if they still see "not attached to a workspace", tell your platform admin.`
   : status === "pending" ? `${name} added as ${role}. A confirmation email was sent: they must click its link before they can sign in with the temporary password.`
   : `${name} added as ${role}. Share the email + temporary password with them (they can change it via "Forgot password?").`;
+/* Platform admin only: the list of client orgs, a "new client" form and "switch into".
+   Switching is a full reload on purpose: the store, realtime channels, CURRENT_ORG and every
+   memo in App are built for one org; re-deriving them in place is more code than it is worth. */
+function PlatformCard({ me }) {
+  const [orgs, setOrgs] = useState([]);
+  const [v, setV] = useState({ name: "", adminName: "", email: "", pass: "" });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const load = () => sb.rpc("list_orgs").then(({ data, error }) => error ? setErr(error.message) : setOrgs(data || []));
+  useEffect(() => { load(); }, []);
+  const createClient = async e => {
+    e.preventDefault(); setErr(""); setMsg("");
+    if (!v.name.trim() || !v.adminName.trim() || !v.email.trim()) return setErr("Client name, admin name and admin email are required.");
+    if (v.pass.length < 6) return setErr("Temporary password must be at least 6 characters.");
+    setBusy(true);
+    try {
+      // create_org refuses a duplicate name, an address with an open invite and a login in
+      // another workspace; its message goes to the user as-is. It attaches an org-less login.
+      const { error } = await sb.rpc("create_org", { p_name: v.name.trim(), p_admin_email: v.email.trim() });
+      if (error) throw error;
+      // Otherwise it left an admin invite, which handle_new_user applies to this sign-up.
+      // 'exists' can then only mean the org-less login create_org already attached.
+      const { status } = await signUpUser({ email: v.email, pass: v.pass, name: v.adminName });
+      setMsg(`${v.name.trim()} created. ` + (status === "exists"
+        ? `Existing login added to it as admin: ${v.adminName.trim()} signs in with their current password.`
+        : signUpMessage(v.adminName.trim(), "admin", status)));
+      setV({ name: "", adminName: "", email: "", pass: "" });
+    } catch (ex) { setErr(ex.message); }
+    load();
+    setBusy(false);
+  };
+  const switchTo = async o => {
+    setErr(""); setMsg("");
+    const { error } = await sb.rpc("switch_org", { p_org_id: o.id });
+    if (error) return setErr(error.message);
+    // window.__reload is a test seam: the health suite counts the reload instead of taking it.
+    (window.__reload || (() => location.reload()))();
+  };
+  return (
+    <Card title={`Platform · clients (${orgs.length})`}>
+      <div data-platform-card>
+        {orgs.map(o => (
+          <div key={o.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+            <span className="flex-1">
+              <div>{o.name}{o.id === me.org_id && <span className="text-xs text-slate-500"> (current)</span>}</div>
+              <div className="text-xs text-slate-500">{o.users} user{o.users === 1 ? "" : "s"} · since {String(o.created_at).slice(0, 10)}</div>
+            </span>
+            {o.id !== me.org_id && <button data-switch-org={o.id} className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => switchTo(o)}>Switch into</button>}
+          </div>
+        ))}
+        <form onSubmit={createClient} className="mt-3 grid gap-2 sm:grid-cols-2">
+          <Input placeholder="Client name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} />
+          <Input placeholder="Admin name" value={v.adminName} onChange={e => setV({ ...v, adminName: e.target.value })} />
+          <Input type="email" placeholder="Admin email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} />
+          <Input type="password" placeholder="Temporary password" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} />
+          <div className="sm:col-span-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "…" : "Create client"}</Btn></div>
+        </form>
+        {err && <div className="mt-2 text-xs text-rose-600">{err}</div>}
+        {msg && <div className="mt-2 text-xs text-emerald-700">{msg}</div>}
+        <p className="mt-2 text-xs text-slate-500">Each client is a separate workspace: its users see only its accounts. Switch into a client to work as its admin; switch back here when done.</p>
+      </div>
+    </Card>
+  );
+}
 function UsersCard({ me }) {
   const [users, setUsers] = useState([]);
   const [err, setErr] = useState("");
