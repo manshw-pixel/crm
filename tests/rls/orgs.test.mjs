@@ -114,7 +114,9 @@ test("an org admin can insert an invite into their own org, not another", async 
   assert(cross.error && cross.error.code === "42501", `expected 42501, got ${cross.error && cross.error.code}`);
   const plain = await sessions.user.from("invites").insert({ email: "inv-plain@test.local", org_id: ORG_A, role: "admin" });
   assert(plain.error && plain.error.code === "42501", `a plain user's invite: expected 42501, got ${plain.error && plain.error.code}`);
-  const rows = await sql(`select email, org_id from invites where email like 'inv-%@test.local'`);
+  // Only this test's three addresses: auth.test.mjs owns other inv-* invites (one in org B).
+  const rows = await sql(`select email, org_id from invites
+                          where email in ('inv-own@test.local', 'inv-cross@test.local', 'inv-plain@test.local')`);
   assert(rows.length === 1 && rows[0].email === "inv-own@test.local" && rows[0].org_id === ORG_A,
     `unexpected invites ${JSON.stringify(rows)}`);
 });
@@ -159,10 +161,23 @@ test("profiles are visible only within the org", async () => {
 });
 
 test("demoting an org's last admin fails even though other orgs have admins", async () => {
-  const [{ id }] = await sql(`select id from profiles where org_id = $1 and role = 'admin' and not platform_admin`, [ORG_B]);
+  const [{ id }] = await sql(`select p.id from profiles p join auth.users u on u.id = p.id where u.email = 'adminb@test.local'`);
+  // auth.test.mjs signs up inv-admin@test.local as a SECOND org B admin; with it active the
+  // demotion below is legitimately allowed (and did demote adminB in CI, cascading into the
+  // errorlog tests). Make adminB org B's only admin first -- by SQL, where the guard still
+  // holds because adminB remains.
+  await sql(`update profiles set role = 'user' where org_id = $1 and role = 'admin' and id <> $2`, [ORG_B, id]);
+  const [{ n }] = await sql(`select count(*)::int as n from profiles where org_id = $1 and role = 'admin' and not disabled`, [ORG_B]);
+  assert(n === 1, `setup: org B should have exactly one admin, has ${n}`);
+  const [{ na }] = await sql(`select count(*)::int as na from profiles where org_id = $1 and role = 'admin' and not disabled`, [ORG_A]);
+  assert(na >= 1, "setup: org A must have an admin for the per-org claim to mean anything");
   const { error } = await sessions.adminB.from("profiles").update({ role: "user" }).eq("id", id);
+  const [{ role }] = await sql(`select role from profiles where id = $1`, [id]);
+  // Never leave the shared adminB session demoted: later files depend on it.
+  if (role !== "admin") await sql(`update profiles set role = 'admin' where id = $1`, [id]);
   // Self-demotion goes through the trigger, which raises -> PostgREST surfaces an error.
   assert(error && /at least one admin/i.test(error.message), `expected the per-org guard, got ${error && error.message}`);
+  assert(role === "admin", "org B's last admin was demoted");
 });
 
 test("orgs: a member sees only their own org; the platform admin sees all", async () => {

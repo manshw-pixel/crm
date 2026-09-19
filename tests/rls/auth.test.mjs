@@ -162,7 +162,7 @@ test("a non-admin cannot call admin_user_list", async () => {
 });
 
 test("an admin can change a user's email, and a non-admin cannot", async () => {
-  const target = await signUpFresh("email-target1@test.local");
+  const target = await invitedFresh("email-target1@test.local");
   const newAddr = "email-target1-new@test.local";
 
   // Non-admin refusal, checked BEFORE the admin succeeds, so a later success can't be
@@ -177,8 +177,8 @@ test("an admin can change a user's email, and a non-admin cannot", async () => {
 });
 
 test("admin_set_user_email rejects a duplicate address", async () => {
-  const a = await signUpFresh("dup-a@test.local");
-  const b = await signUpFresh("dup-b@test.local");
+  const a = await invitedFresh("dup-a@test.local");
+  const b = await invitedFresh("dup-b@test.local");
   const takenAddr = "dup-a-taken@test.local";
 
   // Prove the permitting case first: admin CAN move a's address to a fresh one.
@@ -193,10 +193,11 @@ test("admin_set_user_email rejects a duplicate address", async () => {
 });
 
 test("admin_set_user_email rejects a malformed address", async () => {
-  const target = await signUpFresh("malformed-target@test.local");
+  const target = await invitedFresh("malformed-target@test.local");
   const { error } = await sessions.admin.rpc("admin_set_user_email",
     { p_id: target.id, p_email: "not-an-email" });
   assert(error, "expected a malformed email to be refused");
+  assert(/not a valid email/.test(error.message), `refused for the wrong reason: ${error.message}`);
 });
 
 // Task 3's other tests above only check that the RPC call itself returns without error --
@@ -212,7 +213,7 @@ test("admin_set_user_email rejects a malformed address", async () => {
 // shared by every other file in the suite and this test permanently changes its account's
 // address; a fresh account isolates the blast radius to itself.
 test("after an email change the new address signs in and the old one does not", async () => {
-  const target = await signUpFresh("gotrue-move-src@test.local");
+  const target = await invitedFresh("gotrue-move-src@test.local");
   const newAddr = "gotrue-move-dst@test.local";
 
   const { error: rpcErr } = await sessions.admin.rpc("admin_set_user_email",
