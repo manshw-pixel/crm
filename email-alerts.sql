@@ -214,7 +214,7 @@ language sql security definer set search_path = public as $$
     and safe_date(a.data->>'renewalDate') between current_date and current_date + 30
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
-                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org))) )
+                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
 $$;
 
@@ -244,7 +244,7 @@ language sql security definer set search_path = public as $$
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
     and ( trim(a.data->>'csm') = p_csm
           or (p_include_unowned and not exists (
-                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org))) )
+                select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
 $$;
 
@@ -271,7 +271,7 @@ language sql security definer set search_path = public as $$
       and safe_date(a.data->>'nextQbrDate') is not null
       and ( trim(a.data->>'csm') = p_csm
             or (p_include_unowned and not exists (
-                  select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org))) )
+                  select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   )
   select id, nm, nq, (nq - current_date)::int, 'due'
   from mine
