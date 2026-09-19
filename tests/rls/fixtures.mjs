@@ -110,11 +110,9 @@ export async function bootstrap() {
   await resetStack();
   await sql(`insert into orgs (id, name) values ($1, 'Org B') on conflict (id) do nothing`, [ORG_B]);
   await sql(`insert into settings (org_id, data) values ($1, '{}') on conflict (org_id) do nothing`, [ORG_B]);
-  // org_alert_prefs is created by email-alerts.sql (Task 5); until then the table is absent.
-  await sql(`do $$ begin
-    if to_regclass('public.org_alert_prefs') is not null then
-      insert into org_alert_prefs (org_id) values ('${ORG_B}') on conflict (org_id) do nothing;
-    end if; end $$`);
+  // email-alerts.sql's one-off backfill ran before org B existed, so give it prefs here,
+  // exactly as create_org does for a real new org.
+  await sql(`insert into org_alert_prefs (org_id) values ($1) on conflict (org_id) do nothing`, [ORG_B]);
   await sql(`insert into invites (email, org_id, role) values
     ('admin@test.local',    $1, 'admin'),
     ('user@test.local',     $1, 'user'),
