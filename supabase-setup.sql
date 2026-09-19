@@ -36,16 +36,20 @@ alter table public.profiles
 -- org_id is NULL for a sign-up that matched no invite: such a user has a valid session and
 -- reads nothing (is_active() requires an org). platform_admin can only be set by SQL or by
 -- a platform admin (guard_profile_org below).
+-- Backfill ONLY in the run that adds the column: every profile that exists at that moment
+-- predates multi-tenancy and belongs to the default org. On any later re-run an org-less
+-- profile is an uninvited sign-up, and stamping it would hand a stranger all of org A --
+-- so no re-run may ever touch org_id here.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'profiles' and column_name = 'org_id') then
+    alter table public.profiles add column org_id uuid references public.orgs(id);
+    update public.profiles set org_id = '00000000-0000-0000-0000-000000000001';
+  end if;
+end $$;
 alter table public.profiles
-  add column if not exists org_id uuid references public.orgs(id),
   add column if not exists platform_admin boolean not null default false;
--- Only profiles older than the first client org are legacy rows; a later org-less sign-up
--- stays org-less on re-run. With no client orgs yet, min() is null and the comparison is
--- null, so nothing is stamped by the first statement -- hence the second one.
-update public.profiles set org_id = '00000000-0000-0000-0000-000000000001' where org_id is null
-  and created_at < (select min(created_at) from public.orgs where id <> '00000000-0000-0000-0000-000000000001');
-update public.profiles set org_id = '00000000-0000-0000-0000-000000000001'
-  where org_id is null and not exists (select 1 from public.orgs where id <> '00000000-0000-0000-0000-000000000001');
 
 -- EDIT ME: the platform admin's sign-in email. A no-op until that account exists (and on
 -- the placeholder); re-run this file after that person has signed up.

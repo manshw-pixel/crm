@@ -226,6 +226,20 @@ export async function seedRow(table, id, data = { name: "Seeded" }, session = se
   if (error) throw new Error(`seedRow(${table}, ${id}) failed: ${error.message}`);
 }
 
+// Re-apply supabase-setup.sql over the live stack WITHOUT dropping anything -- exactly what
+// an operator does after editing an EDIT ME line. Proves the file's re-run is harmless.
+export async function reapplySetup() {
+  const client = new pg.Client({ connectionString: DB_URL });
+  await client.connect();
+  try {
+    await client.query(readFileSync(SETUP_SQL, "utf8"));
+    await client.query(`notify pgrst, 'reload schema';`);
+  } finally {
+    await client.end();
+  }
+  await waitForSchemaReload();
+}
+
 // Raw SQL as the `postgres` superuser. Builders are revoked from `authenticated` on
 // purpose, so PostgREST cannot reach them and the suite must not try.
 export async function sql(text, params = []) {

@@ -1,7 +1,7 @@
 // The signup path and role assignment -- handle_new_user() in supabase-setup.sql. A sign-up
 // joins an org ONLY through a pending invite; there is no "first user becomes admin" rule.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, sql, signUpFresh, roleOf, orgOf, seedAccount, invitedFresh, newClient, PASSWORD, ORG_A, ORG_B } from "./fixtures.mjs";
+import { sessions, sql, signUpFresh, roleOf, orgOf, seedAccount, invitedFresh, reapplySetup, newClient, PASSWORD, ORG_A, ORG_B } from "./fixtures.mjs";
 
 // invitedFresh: guard_admin_count counts admins per org, so an org-less "second admin"
 // would not be a second admin of anything.
@@ -33,6 +33,24 @@ test("a sign-up with no invite gets no org and reads nothing", async () => {
   const { data, error } = await client.from("accounts").select("id");
   assert(!error, `unexpected error: ${error && error.message}`);
   assert((data || []).length === 0, "an org-less user can read accounts");
+});
+
+// The profiles backfill must run only in the run that adds org_id. A re-run (which the
+// EDIT ME notes tell operators to do) must never stamp an uninvited sign-up into org A.
+// This re-applies the WHOLE setup file over the live stack, not just the backfill.
+test("re-running the setup file leaves an uninvited sign-up org-less", async () => {
+  await seedAccount("vis-rerun", { name: "A" }, ORG_A);
+  const { client, id } = await signUpFresh("rerun-stranger@test.local", "Rerun Stranger");
+  assert(await orgOf(id) === null, "precondition: the uninvited sign-up already has an org");
+
+  await reapplySetup();
+
+  assert(await orgOf(id) === null, "re-running supabase-setup.sql stamped an uninvited profile into an org");
+  const { data: control, error: cErr } = await sessions.user.from("accounts").select("id").eq("id", "vis-rerun");
+  assert(!cErr && (control || []).length === 1, `control: org A's user cannot see vis-rerun (${cErr && cErr.message})`);
+  const { data, error } = await client.from("accounts").select("id").eq("id", "vis-rerun");
+  assert(!error, `unexpected error: ${error && error.message}`);
+  assert((data || []).length === 0, "the uninvited user reads org A's account after a re-run");
 });
 
 // GoTrue lowercases the address itself, so a sign-up through the API cannot tell whether
