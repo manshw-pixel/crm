@@ -466,6 +466,31 @@ create table if not exists public.error_log (
   last_seen   timestamptz not null default now()
 );
 
+-- Per-org since multi-tenancy. The identity is (org_id, fingerprint): two tenants hitting
+-- the same bug get a row each, and each org's admin sees only their own. org_id is NULL for
+-- system rows (log_error_system, from cron) -- those are platform-level, seen only by the
+-- platform admin. Backfill ONLY in the run that adds the column (same rule as profiles):
+-- every row that exists at that moment predates tenancy and belongs to the default org.
+do $$
+begin
+  if not exists (select 1 from information_schema.columns
+                 where table_schema = 'public' and table_name = 'error_log' and column_name = 'org_id') then
+    alter table public.error_log
+      add column org_id uuid references public.orgs(id) on delete cascade default public.current_org();
+    update public.error_log set org_id = '00000000-0000-0000-0000-000000000001';
+  end if;
+  -- the old identity was fingerprint alone; it would still collapse two orgs into one row
+  if exists (select 1 from pg_constraint where conrelid = 'public.error_log'::regclass and conname = 'error_log_pkey') then
+    alter table public.error_log drop constraint error_log_pkey;
+  end if;
+  -- NULLS NOT DISTINCT: all system rows (org_id null) share one bucket per fingerprint, so
+  -- `on conflict (org_id, fingerprint)` still collapses them.
+  if not exists (select 1 from pg_constraint where conrelid = 'public.error_log'::regclass and conname = 'error_log_org_fingerprint_key') then
+    alter table public.error_log
+      add constraint error_log_org_fingerprint_key unique nulls not distinct (org_id, fingerprint);
+  end if;
+end $$;
+
 alter table public.error_log enable row level security;
 
 -- insert: ANY authenticated user. Errors happen to non-admins, and a user who cannot
@@ -474,11 +499,16 @@ alter table public.error_log enable row level security;
 -- restricting it would blind the log to exactly the people worth hearing from, and
 -- fingerprint collapsing turns a flood into one row with a high count rather than many rows.
 drop policy if exists error_log_insert on public.error_log;
-create policy error_log_insert on public.error_log for insert to authenticated with check (true);
+-- Scoped to the caller's org: an unscoped check would let a client plant a row in another
+-- tenant's log. (log_error is definer and does not go through this policy.)
+create policy error_log_insert on public.error_log for insert to authenticated
+  with check (org_id = public.current_org());
 
--- select: admins only. Error messages quote application data.
+-- select: admins only, their own org. Error messages quote application data. Null-org
+-- system rows are for the platform admin only.
 drop policy if exists error_log_select on public.error_log;
-create policy error_log_select on public.error_log for select to authenticated using (public.is_admin());
+create policy error_log_select on public.error_log for select to authenticated
+  using ((public.is_admin() and org_id = public.current_org()) or public.is_platform_admin());
 
 -- NO update and NO delete policy, deliberately. log_error owns every mutation, so nobody
 -- can edit or delete a record -- including its count -- to erase their own errors.
@@ -518,10 +548,10 @@ begin
   -- Deliberately NOT gated on is_active(), unlike record_health below: a disabled user who
   -- cannot report an error is a user whose failures we never hear about.
 
-  insert into error_log (fingerprint, level, message, stack, context, user_id, app_version, user_agent)
-  values (p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
+  insert into error_log (org_id, fingerprint, level, message, stack, context, user_id, app_version, user_agent)
+  values (public.current_org(), p_fingerprint, p_level, p_message, p_stack, coalesce(p_context, '{}'::jsonb),
           auth.uid(), p_app_version, p_user_agent)
-  on conflict (fingerprint) do update set
+  on conflict (org_id, fingerprint) do update set
     count = error_log.count + 1,
     last_seen = now(),
     -- keep the most recent occurrence's detail

@@ -1,7 +1,7 @@
 // error_log against a REAL Postgres. The access rules and the counting are the
 // load-bearing claims here and neither can be proven against a mock.
 import { test, assert } from "../health/framework.mjs";
-import { sessions } from "./fixtures.mjs";
+import { sessions, sql, ORG_A, ORG_B } from "./fixtures.mjs";
 
 // p_ prefixes: every argument name collides with a column of error_log, and an unprefixed
 // parameter makes the function's own insert ambiguous at runtime.
@@ -106,4 +106,39 @@ test("a plain user cannot update or delete a row to erase their own errors", asy
   const rows = await rowsAsAdmin("fp-tamper-1");
   assert(rows.length === 1, "the row was deleted — there must be no delete policy");
   assert(rows[0].message === "boom", "the row was edited — there must be no update policy");
+});
+
+// ---------- tenancy ----------
+// Every "cannot see" below is paired with a control read by a session that CAN see the row.
+
+test("an org B admin cannot read an org A error row", async () => {
+  const { error } = await report("admin", "fp-org-iso");
+  assert(!error, `org A report failed: ${error && error.message}`);
+  assert((await rowsAsAdmin("fp-org-iso")).length === 1, "control: org A's admin cannot see its own row");
+  const { data, error: readErr } = await sessions.adminB.from("error_log").select("*").eq("fingerprint", "fp-org-iso");
+  assert(!readErr, `unexpected error shape: ${readErr && readErr.message}`);
+  assert((data || []).length === 0, "LEAK: org B's admin read org A's error row");
+});
+
+test("the same fingerprint logged from both orgs gives two rows", async () => {
+  assert(!(await report("user", "fp-org-both")).error, "org A report failed");
+  assert(!(await report("userB", "fp-org-both")).error, "org B report failed");
+  const rows = await sql(`select org_id, count from error_log where fingerprint = 'fp-org-both' order by org_id`);
+  assert(rows.length === 2 && rows[0].org_id === ORG_A && rows[1].org_id === ORG_B && rows.every(r => r.count === 1),
+    `expected one row per org, got ${JSON.stringify(rows)}`);
+  const { data } = await sessions.adminB.from("error_log").select("org_id").eq("fingerprint", "fp-org-both");
+  assert(data.length === 1 && data[0].org_id === ORG_B, `org B's admin should see only its own row: ${JSON.stringify(data)}`);
+});
+
+test("a null-org system row is invisible to an org admin and visible to the platform admin", async () => {
+  await sql(`delete from error_log where fingerprint = 'fp-system'`);
+  await sql(`select public.log_error_system('fp-system', 'crash', 'cron boom', '{}'::jsonb)`);
+  await sql(`select public.log_error_system('fp-system', 'crash', 'cron boom', '{}'::jsonb)`);
+  const rows = await sql(`select org_id, count from error_log where fingerprint = 'fp-system'`);
+  assert(rows.length === 1 && rows[0].org_id === null && rows[0].count === 2,
+    `system rows should collapse into one null-org row: ${JSON.stringify(rows)}`);
+  const asAdmin = await sessions.admin.from("error_log").select("*").eq("fingerprint", "fp-system");
+  assert(!asAdmin.error && asAdmin.data.length === 0, `an org admin read a system row: ${JSON.stringify(asAdmin.data)}`);
+  const asPlatform = await sessions.platform.from("error_log").select("*").eq("fingerprint", "fp-system");
+  assert(!asPlatform.error && asPlatform.data.length === 1, `the platform admin should see the system row: ${JSON.stringify(asPlatform)}`);
 });

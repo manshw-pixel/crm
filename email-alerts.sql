@@ -483,7 +483,7 @@ begin
   -- counted twice. Anchoring to error_log.last_seen for this fingerprint means each sweep
   -- only ever looks at failures settled since the escalation it itself just wrote, so a
   -- given failure is counted exactly once no matter how the cron cadence lines up.
-  select last_seen into escalation_since from error_log where fingerprint = 'email-send-failed';
+  select last_seen into escalation_since from error_log where fingerprint = 'email-send-failed' and org_id is null;
   escalation_since := coalesce(escalation_since, now() - interval '1 hour');
 
   select count(*) into n_failed
@@ -508,9 +508,11 @@ create or replace function public.log_error_system(
   p_fingerprint text, p_level text, p_message text, p_context jsonb)
 returns void language plpgsql security definer set search_path = public as $$
 begin
-  insert into error_log (fingerprint, level, message, context, app_version, user_agent)
-  values (p_fingerprint, p_level, p_message, coalesce(p_context, '{}'::jsonb), 'cron', 'pg_cron')
-  on conflict (fingerprint) do update set
+  -- org_id explicitly NULL (the column defaults to current_org()): a system row belongs to
+  -- no tenant and is visible only to the platform admin.
+  insert into error_log (org_id, fingerprint, level, message, context, app_version, user_agent)
+  values (null, p_fingerprint, p_level, p_message, coalesce(p_context, '{}'::jsonb), 'cron', 'pg_cron')
+  on conflict (org_id, fingerprint) do update set
     count = error_log.count + 1, last_seen = now(),
     level = excluded.level, message = excluded.message, context = excluded.context;
 
