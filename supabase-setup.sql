@@ -221,6 +221,14 @@ create or replace function public.guard_profile_org()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
   if auth.uid() is null then return new; end if;
+  -- invite_user() attaching an existing org-less login sets this transaction-local flag
+  -- itself. A client cannot: set_config is not exposed through the API, and the flag is
+  -- only honoured for a row that had NO org (it can never move someone between orgs) and
+  -- never for the platform flag.
+  if current_setting('app.invite_attach', true) = 'on'
+     and old.org_id is null and new.platform_admin is not distinct from old.platform_admin then
+    return new;
+  end if;
   if (new.org_id is distinct from old.org_id or new.platform_admin is distinct from old.platform_admin)
      and not public.is_platform_admin() then
     raise exception 'Only a platform admin can change a user''s org or platform flag';
@@ -786,9 +794,15 @@ grant execute on function public.admin_set_user_email(uuid, text) to authenticat
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.
+-- Returns 'invited' (an open invite for a future sign-up) or 'attached' (an existing login
+-- that had no org was placed straight into this org). The return type changed from void,
+-- hence the drop: create or replace cannot change a return type.
+drop function if exists public.invite_user(text, text);
 create or replace function public.invite_user(p_email text, p_role text)
-returns void language plpgsql security definer set search_path = public as $$
-declare addr text := lower(trim(p_email));
+returns text language plpgsql security definer set search_path = public as $
+declare
+  addr text := lower(trim(p_email));
+  existing record;
 begin
   if not public.is_admin() then
     raise exception 'invite_user: admin only';
@@ -802,6 +816,26 @@ begin
   if not public.valid_email(addr) then
     raise exception 'invite_user: % is not a valid email address', p_email;
   end if;
+  -- handle_new_user() only fires for a NEW login, so an address that already has one would
+  -- never pick up an invite. Deal with it here instead of leaving a dead invite behind.
+  select p.id, p.org_id into existing
+    from profiles p join auth.users u on u.id = p.id
+   where lower(u.email) = addr limit 1;
+  if found then
+    if existing.org_id = public.current_org() then
+      raise exception 'invite_user: % is already a member of this workspace', addr;
+    elsif existing.org_id is not null then
+      raise exception 'invite_user: % already belongs to another workspace', addr;
+    end if;
+    perform set_config('app.invite_attach', 'on', true);
+    update profiles set org_id = public.current_org(), role = p_role where id = existing.id;
+    perform set_config('app.invite_attach', 'off', true);
+    insert into invites (email, org_id, role, created_by, accepted_at)
+    values (addr, public.current_org(), p_role, auth.uid(), now())
+    on conflict (email, org_id) do update
+      set role = excluded.role, created_by = excluded.created_by, accepted_at = now();
+    return 'attached';
+  end if;
   if exists (select 1 from invites where lower(email) = addr and accepted_at is null
              and org_id <> public.current_org()) then
     raise exception 'invite_user: % already has an open invite to another workspace', addr;
@@ -810,7 +844,8 @@ begin
   values (addr, public.current_org(), p_role, auth.uid())
   on conflict (email, org_id) do update
     set role = excluded.role, created_by = excluded.created_by, created_at = now(), accepted_at = null;
-end $$;
+  return 'invited';
+end $;
 
 create or replace function public.create_org(p_name text, p_admin_email text)
 returns uuid language plpgsql security definer set search_path = public as $$

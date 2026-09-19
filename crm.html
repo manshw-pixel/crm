@@ -3590,8 +3590,17 @@ async function signUpUser({ email, pass, name }) {
   const tmp = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const { data, error } = await tmp.auth.signUp({ email: email.trim(), password: pass, options: { data: { name: name.trim() }, emailRedirectTo: authRedirect() } });
   if (error) throw error;
-  return data;
+  // With email confirmation on, GoTrue answers an ALREADY-registered address with a fake
+  // user and no error; the tell is an empty identities array. Report it, never "added".
+  const status = data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0 ? "exists"
+    : !data.session && data.user && !data.user.email_confirmed_at ? "pending" : "created";
+  return { ...data, status };
 }
+// The admin-facing sentence for a signUpUser() status, shared by every "add a user" surface.
+const signUpMessage = (name, role, status) =>
+  status === "exists" ? `${name}'s email already has a login, so no new login was created. Ask them to sign in; if they still see "not attached to a workspace", tell your platform admin.`
+  : status === "pending" ? `${name} added as ${role}. A confirmation email was sent: they must click its link before they can sign in with the temporary password.`
+  : `${name} added as ${role}. Share the email + temporary password with them (they can change it via "Forgot password?").`;
 function UsersCard({ me }) {
   const [users, setUsers] = useState([]);
   const [err, setErr] = useState("");
@@ -3676,10 +3685,15 @@ function UsersCard({ me }) {
       // The invite is what attaches the sign-up to THIS org (handle_new_user matches it
       // by email). Sign-up without it would create an org-less user who sees nothing.
       // The invite also carries the role, so no follow-up role update is needed.
-      const { error: invErr } = await sb.rpc("invite_user", { p_email: v.email.trim(), p_role: v.role });
+      const { data: invited, error: invErr } = await sb.rpc("invite_user", { p_email: v.email.trim(), p_role: v.role });
       if (invErr) throw invErr;
-      await signUpUser({ email: v.email, pass: v.pass, name: v.name });
-      setMsg(`${v.name.trim()} added as ${v.role}. Share the email + temporary password with them (they can change it via "Forgot password?"). If email confirmation is enabled in Supabase, they must click the confirmation link first.`);
+      // 'attached': the address already had a login with no workspace, and invite_user put
+      // it straight into this one. Signing up again would only hit "already registered".
+      if (invited === "attached") setMsg("Existing login added to this workspace.");
+      else {
+        const { status } = await signUpUser({ email: v.email, pass: v.pass, name: v.name });
+        setMsg(signUpMessage(v.name.trim(), v.role, status));
+      }
       setV({ name: "", email: "", pass: "", role: "user" });
       load();
     } catch (ex) { setErr(ex.message); }

@@ -81,7 +81,8 @@ const MOCK = `window.__sbFactory = () => {
       }
       if (fn === "list_orgs") return Promise.resolve({ data: window.__seedOrgs || [], error: null });
       if (fn === "create_org") return Promise.resolve({ data: "org-new", error: null });
-      if (fn === "switch_org" || fn === "invite_user") return Promise.resolve({ data: null, error: null });
+      if (fn === "invite_user") return Promise.resolve({ data: window.__inviteResult ?? "invited", error: null });
+      if (fn === "switch_org") return Promise.resolve({ data: null, error: null });
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
       }

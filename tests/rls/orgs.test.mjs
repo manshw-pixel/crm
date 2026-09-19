@@ -401,3 +401,43 @@ test("create_org: a retry with the same name errors and makes one org; the owner
   const [p] = await sql(`select role from profiles where id = $1`, [id]);
   assert(p.role === "admin", `owner should be admin, got ${p.role}`);
 });
+
+// I1: handle_new_user() fires only for a NEW login, so invite_user must attach an address
+// that already has an org-less login, or the admin's "add user" silently does nothing.
+test("invite_user: an existing org-less login is attached to the caller's org and reads its data", async () => {
+  const { client, id } = await signUpFresh("orgless.existing@test.local");
+  await seedAccount("attach-a", { name: "A sees this" }, ORG_A);
+  const { data: before } = await client.from("accounts").select("id").eq("id", "attach-a");
+  assert(before.length === 0, "an org-less login read org A data before being attached");
+  const { data, error } = await sessions.admin.rpc("invite_user", { p_email: "Orgless.Existing@test.local", p_role: "user" });
+  assert(!error, error && error.message);
+  assert(data === "attached", `expected 'attached', got ${JSON.stringify(data)}`);
+  assert((await orgOf(id)) === ORG_A, "profile was not attached to org A");
+  const [inv] = await sql(`select accepted_at from invites where email = 'orgless.existing@test.local' and org_id = $1`, [ORG_A]);
+  assert(inv && inv.accepted_at, "attach left an OPEN invite behind");
+  const { data: after, error: e2 } = await client.from("accounts").select("id").eq("id", "attach-a");
+  assert(!e2 && after.length === 1, `attached user cannot read org A data: ${JSON.stringify(after)} ${e2 && e2.message}`);
+});
+
+test("invite_user: a login already in another org is refused and leaves no invite", async () => {
+  const { id } = await signUpFresh("taken.elsewhere@test.local");
+  await sql(`update profiles set org_id = $1 where id = $2`, [ORG_B, id]);
+  const { data, error } = await sessions.admin.rpc("invite_user", { p_email: "taken.elsewhere@test.local", p_role: "admin" });
+  assert(error && /belongs to another workspace/i.test(error.message), `expected refusal, got ${error && error.message} / ${data}`);
+  assert((await orgOf(id)) === ORG_B, "the other org's user was moved");
+  const rows = await sql(`select 1 from invites where email = 'taken.elsewhere@test.local'`);
+  assert(rows.length === 0, "a refused invite left a row behind");
+});
+
+test("invite_user: a brand-new address still gets an open invite and returns 'invited'", async () => {
+  const { data, error } = await sessions.admin.rpc("invite_user", { p_email: "brand.new@test.local", p_role: "user" });
+  assert(!error && data === "invited", `got ${JSON.stringify(data)} ${error && error.message}`);
+  const [inv] = await sql(`select accepted_at from invites where email = 'brand.new@test.local'`);
+  assert(inv && inv.accepted_at === null, "no open invite for a new address");
+});
+
+test("guard_profile_org: a client still cannot set its own org_id, even an org-less one", async () => {
+  const { client, id } = await signUpFresh("selfattach@test.local");
+  await client.from("profiles").update({ org_id: ORG_A }).eq("id", id);
+  assert((await orgOf(id)) === null, "an org-less user attached themselves");
+});

@@ -37,3 +37,22 @@ test("adding a user invites them before signing them up", async () => {
   assert(calls[0].args.p_email === "new@example.com" && calls[0].args.p_role === "user", `invite args ${JSON.stringify(calls[0].args)}`);
   await browser.close();
 });
+
+test("an address with an existing org-less login is attached, and no sign-up is attempted", async () => {
+  const { page, browser } = await launch(`${empty} window.__inviteResult = "attached"; window.__seedUsers = [{ id: "u1", name: "Test User", role: "admin", disabled: false, email: "t@t.io" }];`);
+  await page.click('button[title="Settings"]');
+  await page.waitForSelector("text=Add user");
+  // Count sign-ups: signUpUser() is the only caller of supabase.createClient after boot.
+  await page.evaluate(() => {
+    window.__signUps = 0;
+    const real = window.supabase.createClient;
+    window.supabase.createClient = (...a) => { window.__signUps++; return real(...a); };
+  });
+  await page.fill('input[placeholder="Name"]', "Old Login");
+  await page.fill('input[placeholder="Email"]', "old@example.com");
+  await page.fill('input[placeholder="Temp password"]', "secret12");
+  await page.click("text=Add user");
+  await page.waitForSelector("text=Existing login added to this workspace", { timeout: 15000 });
+  assert((await page.evaluate(() => window.__signUps)) === 0, "a sign-up was attempted for an attached login");
+  await browser.close();
+});
