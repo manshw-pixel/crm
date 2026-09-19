@@ -4,6 +4,22 @@
 -- Safe to re-run (idempotent).
 -- ============================================================
 
+-- ---------- EDIT ME: platform identity ----------
+-- The default org receives every row and user that existed before multi-tenancy. Its id
+-- is fixed so this file can stamp existing data without a lookup. The platform admin is
+-- the one account that can create client orgs and switch between them (Settings ->
+-- Platform). Both EDIT ME literals (the org name here, the platform admin's email below
+-- the profiles backfill) are idempotent: change them and re-run.
+create table if not exists public.orgs (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  created_at timestamptz not null default now()
+);
+alter table public.orgs enable row level security;
+insert into public.orgs (id, name)
+values ('00000000-0000-0000-0000-000000000001', 'My Company')   -- EDIT ME: your company name
+on conflict (id) do nothing;
+
 -- ---------- tables ----------
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
@@ -17,21 +33,100 @@ create table if not exists public.profiles (
 alter table public.profiles
   add column if not exists disabled boolean not null default false;
 
+-- org_id is NULL for a sign-up that matched no invite: such a user has a valid session and
+-- reads nothing (is_active() requires an org). platform_admin can only be set by SQL or by
+-- a platform admin (guard_profile_org below).
+alter table public.profiles
+  add column if not exists org_id uuid references public.orgs(id),
+  add column if not exists platform_admin boolean not null default false;
+-- Only profiles older than the first client org are legacy rows; a later org-less sign-up
+-- stays org-less on re-run. With no client orgs yet, min() is null and the comparison is
+-- null, so nothing is stamped by the first statement -- hence the second one.
+update public.profiles set org_id = '00000000-0000-0000-0000-000000000001' where org_id is null
+  and created_at < (select min(created_at) from public.orgs where id <> '00000000-0000-0000-0000-000000000001');
+update public.profiles set org_id = '00000000-0000-0000-0000-000000000001'
+  where org_id is null and not exists (select 1 from public.orgs where id <> '00000000-0000-0000-0000-000000000001');
+
+-- EDIT ME: the platform admin's sign-in email. A no-op until that account exists (and on
+-- the placeholder); re-run this file after that person has signed up.
+update public.profiles set platform_admin = true
+  where not platform_admin
+    and id = (select id from auth.users where lower(email) = lower('you@yourcompany.com'));   -- EDIT ME
+
+create table if not exists public.invites (
+  email text not null,
+  org_id uuid not null references public.orgs(id) on delete cascade,
+  role text not null check (role in ('admin','user')),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  accepted_at timestamptz,
+  primary key (email, org_id)
+);
+alter table public.invites enable row level security;
+
+-- ---------- helper: which org is this request for? ----------
+-- The single source of tenancy. Every policy and every org-stamping RPC reads this.
+-- Definer so it can read profiles regardless of the profiles policies; stable so the
+-- planner evaluates it once per statement.
+create or replace function public.current_org()
+returns uuid language sql stable security definer set search_path = public as
+$$ select org_id from profiles where id = auth.uid() $$;
+
+create or replace function public.is_platform_admin()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and platform_admin and not disabled) $$;
+
+-- ---------- helper: one definition of a plausible email address ----------
+-- Used by every SQL function that accepts an address from the browser, so the rule cannot
+-- drift between them. Immutable, touches no table, reveals nothing: needs no gate.
+create or replace function public.valid_email(p text)
+returns boolean language sql immutable set search_path = public as
+$$ select coalesce(p ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$', false) $$;
+
+-- settings: one row per org. Pre-multitenant this was `id int primary key check (id = 1)`.
 create table if not exists public.settings (
-  id int primary key check (id = 1),
+  org_id uuid primary key default public.current_org() references public.orgs(id) on delete cascade,
   data jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
+do $$
+begin
+  if exists (select 1 from information_schema.columns
+             where table_schema = 'public' and table_name = 'settings' and column_name = 'id') then
+    alter table public.settings add column if not exists org_id uuid;
+    update public.settings set org_id = '00000000-0000-0000-0000-000000000001' where org_id is null;
+    alter table public.settings drop constraint settings_pkey;
+    alter table public.settings drop column id;
+    alter table public.settings
+      alter column org_id set not null,
+      alter column org_id set default public.current_org(),
+      add primary key (org_id),
+      add constraint settings_org_id_fkey foreign key (org_id) references public.orgs(id) on delete cascade;
+  end if;
+end $$;
 
 do $$
 declare t text;
 begin
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
     execute format('create table if not exists public.%I (
-      id text primary key,
+      org_id uuid not null default public.current_org() references public.orgs(id) on delete cascade,
+      id text not null,
       data jsonb not null,
-      updated_at timestamptz not null default now()
+      updated_at timestamptz not null default now(),
+      primary key (org_id, id)
     )', t);
+    -- migrate a pre-multitenant table: add + backfill + swap the primary key, once
+    execute format('alter table public.%I add column if not exists org_id uuid', t);
+    execute format('update public.%I set org_id = %L where org_id is null', t, '00000000-0000-0000-0000-000000000001');
+    execute format('alter table public.%I alter column org_id set not null, alter column org_id set default public.current_org()', t);
+    if exists (select 1 from pg_constraint
+               where conrelid = format('public.%I', t)::regclass and contype = 'p' and array_length(conkey, 1) = 1) then
+      execute format('alter table public.%I drop constraint %I, add primary key (org_id, id)', t, t || '_pkey');
+    end if;
+    if not exists (select 1 from pg_constraint where conrelid = format('public.%I', t)::regclass and conname = t || '_org_id_fkey') then
+      execute format('alter table public.%I add constraint %I foreign key (org_id) references public.orgs(id) on delete cascade', t, t || '_org_id_fkey');
+    end if;
   end loop;
 end $$;
 
@@ -46,18 +141,34 @@ $$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin
 -- in the client would be a label the browser is trusted to honour, which it is not.
 create or replace function public.is_active()
 returns boolean language sql stable security definer set search_path = public as
-$$ select exists (select 1 from profiles where id = auth.uid() and not disabled) $$;
+$$ select exists (select 1 from profiles where id = auth.uid() and not disabled and org_id is not null) $$;
 
--- ---------- signup trigger: auto-create profile; first user = admin ----------
+-- ---------- signup trigger: attach through a pending invite ----------
+-- The old rule "first sign-up ever becomes admin" is gone: with several orgs there is no
+-- meaningful "first". A sign-up is attached to an org ONLY if a pending invite matches its
+-- email; anything else gets a profile with no org, which is_active() rejects everywhere.
+-- The browser cannot say "put me in org X": invites are written by invite_user() (org
+-- admins, own org only) and create_org() (platform admin), never by the client directly.
+-- Gate: this is a trigger on auth.users, not callable through the API; the invite match
+-- IS the gate, and a sign-up with no match gets role 'user' and no org.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  inv invites;
 begin
-  insert into profiles (id, name, role)
+  select * into inv from invites
+   where email = lower(trim(new.email)) and accepted_at is null
+   order by created_at desc limit 1;
+  insert into profiles (id, name, role, org_id)
   values (
     new.id,
     coalesce(new.raw_user_meta_data->>'name', split_part(new.email, '@', 1)),
-    case when not exists (select 1 from profiles) then 'admin' else 'user' end
+    coalesce(inv.role, 'user'),
+    inv.org_id
   ) on conflict (id) do nothing;
+  if inv.email is not null then
+    update invites set accepted_at = now() where email = inv.email and org_id = inv.org_id;
+  end if;
   return new;
 end $$;
 
@@ -66,7 +177,7 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
 
--- ---------- admin guard: any number of admins, but never zero ----------
+-- ---------- admin guard: any number of admins per org, but never zero ----------
 create or replace function public.guard_admin_count()
 returns trigger language plpgsql security definer set search_path = public as $$
 begin
@@ -80,7 +191,7 @@ begin
      and old.role = 'admin' and not old.disabled
      and (new.role <> 'admin' or new.disabled)
      and (select count(*) from profiles
-            where role = 'admin' and not disabled and id <> old.id) = 0 then
+            where role = 'admin' and not disabled and id <> old.id and org_id = old.org_id) = 0 then
     raise exception 'At least one admin must remain';
   end if;
   return new;
@@ -90,6 +201,26 @@ drop trigger if exists guard_admin_count on public.profiles;
 create trigger guard_admin_count
   before insert or update of role, disabled on public.profiles
   for each row execute function public.guard_admin_count();
+
+-- ---------- org column immutability ----------
+-- profiles_update_admin lets an org admin edit rows in their org; this trigger is what
+-- stops that admin (or a user editing their own row) from moving anyone to another org
+-- or minting a platform admin. SQL-editor and cron contexts have no auth.uid() and are
+-- exempt: that is how this file's own backfill and switch_org's owner context run.
+create or replace function public.guard_profile_org()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return new; end if;
+  if (new.org_id is distinct from old.org_id or new.platform_admin is distinct from old.platform_admin)
+     and not public.is_platform_admin() then
+    raise exception 'Only a platform admin can change a user''s org or platform flag';
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_profile_org on public.profiles;
+create trigger guard_profile_org
+  before update of org_id, platform_admin on public.profiles
+  for each row execute function public.guard_profile_org();
 
 -- ---------- row-level security ----------
 alter table public.profiles enable row level security;
@@ -415,11 +546,24 @@ end $$;
 -- Unlike ARR, health has no event ledger and CANNOT be reconstructed backwards. This table
 -- only ever knows what it was told, starting the day it ships.
 create table if not exists public.health_snapshots (
+  org_id     uuid not null,
   account_id text not null,
   day        date not null default current_date,
   score      int  not null check (score between 0 and 100),
-  primary key (account_id, day)
+  primary key (org_id, account_id, day)
 );
+-- migrate a pre-multitenant table: add + backfill + widen the primary key, once
+alter table public.health_snapshots add column if not exists org_id uuid;
+update public.health_snapshots set org_id = '00000000-0000-0000-0000-000000000001' where org_id is null;
+do $$
+begin
+  alter table public.health_snapshots alter column org_id set not null;
+  if exists (select 1 from pg_constraint where conrelid = 'public.health_snapshots'::regclass
+             and contype = 'p' and array_length(conkey, 1) = 2) then
+    alter table public.health_snapshots drop constraint health_snapshots_pkey,
+      add primary key (org_id, account_id, day);
+  end if;
+end $$;
 
 alter table public.health_snapshots enable row level security;
 
@@ -523,7 +667,7 @@ begin
   if not public.is_admin() then
     raise exception 'admin_set_user_email: admin only';
   end if;
-  if addr !~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$' then
+  if not public.valid_email(addr) then
     raise exception 'admin_set_user_email: % is not a valid email address', p_email;
   end if;
   if exists (select 1 from auth.users where lower(email) = addr and id <> p_id) then

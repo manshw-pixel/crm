@@ -10,6 +10,11 @@ export const API_URL = process.env.SUPABASE_API_URL || "http://127.0.0.1:54321";
 export const DB_URL = process.env.SUPABASE_DB_URL || "postgresql://postgres:postgres@127.0.0.1:54322/postgres";
 export const PASSWORD = "test-password-123";
 
+// The default org that supabase-setup.sql creates and stamps existing data with. Fixed
+// uuid so tests and the backfill can name it without a lookup.
+export const ORG_A = "00000000-0000-0000-0000-000000000001";
+export const ORG_B = "00000000-0000-0000-0000-000000000002";
+
 // The CLI's local anon key is public and not a secret — but it is NOT fixed. This literal
 // is a stale key from an older CLI, kept only as a local convenience; newer stacks reject
 // it outright. CI exports SUPABASE_ANON_KEY from `supabase status -o json`, and
@@ -28,11 +33,11 @@ export const newClient = () => createClient(API_URL, ANON_KEY, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-export const sessions = { admin: null, user: null, anon: newClient() };
+export const sessions = { admin: null, user: null, adminB: null, userB: null, platform: null, anon: newClient() };
 
-// Drop and rebuild from supabase-setup.sql. Dropping auth.users too is what makes the
-// first-signup-becomes-admin trigger testable: handle_new_user() checks for an EMPTY
-// profiles table, so a stale user from a previous run would silently change the outcome.
+// Drop and rebuild from supabase-setup.sql. Dropping auth.users too keeps sign-up
+// deterministic: a stale user from a previous run would make signUp() throw "already
+// registered" and leave its old profile (and org) in place.
 export async function resetStack() {
   const client = new pg.Client({ connectionString: DB_URL });
   await client.connect();
@@ -94,19 +99,42 @@ async function signUp(email, name) {
   return { client, id: data.user.id };
 }
 
-// ORDER MATTERS AND IS ASSERTED, NOT ASSUMED. handle_new_user() makes the first signup
-// against an empty profiles table an admin. A suite that signed users up ad hoc would pass
-// or fail on test ordering, so the two canonical users are created here, in this order.
+// Two orgs, two people each, plus a platform admin who starts inside org A. Every user is
+// INVITED first: handle_new_user() attaches a sign-up to an org only through a pending
+// invite, so an ad-hoc sign-up here would land with no org and read nothing.
+//
+// The platform admin is invited as 'user', not 'admin': the platform RPCs gate on
+// platform_admin, not role, and a second org-A admin would make the "last admin" guard
+// tests in auth.test.mjs pass for the wrong reason (or fail).
 export async function bootstrap() {
   await resetStack();
-  const admin = await signUp("admin@test.local", "Admin User");
-  const user = await signUp("user@test.local", "Plain User");
-  sessions.admin = admin.client;
-  sessions.user = user.client;
+  await sql(`insert into orgs (id, name) values ($1, 'Org B') on conflict (id) do nothing`, [ORG_B]);
+  await sql(`insert into settings (org_id, data) values ($1, '{}') on conflict (org_id) do nothing`, [ORG_B]);
+  // org_alert_prefs is created by email-alerts.sql (Task 5); until then the table is absent.
+  await sql(`do $$ begin
+    if to_regclass('public.org_alert_prefs') is not null then
+      insert into org_alert_prefs (org_id) values ('${ORG_B}') on conflict (org_id) do nothing;
+    end if; end $$`);
+  await sql(`insert into invites (email, org_id, role) values
+    ('admin@test.local',    $1, 'admin'),
+    ('user@test.local',     $1, 'user'),
+    ('adminb@test.local',   $2, 'admin'),
+    ('userb@test.local',    $2, 'user'),
+    ('platform@test.local', $1, 'user')`, [ORG_A, ORG_B]);
+  const admin    = await signUp("admin@test.local", "Admin User");
+  const user     = await signUp("user@test.local", "Plain User");
+  const adminB   = await signUp("adminb@test.local", "Admin B");
+  const userB    = await signUp("userb@test.local", "Plain B");
+  const platform = await signUp("platform@test.local", "Platform Owner");
+  // The flag cannot be granted through the API (guard_profile_org), only by SQL.
+  await sql(`update profiles set platform_admin = true where id = $1`, [platform.id]);
+  sessions.admin = admin.client;   sessions.user = user.client;
+  sessions.adminB = adminB.client; sessions.userB = userB.client;
+  sessions.platform = platform.client;
   sessions.anon = newClient();
   await assertAnonIsAnonymous();
   await purgeAttachments();
-  return { adminId: admin.id, userId: user.id };
+  return { adminId: admin.id, userId: user.id, adminBId: adminB.id, userBId: userB.id, platformId: platform.id };
 }
 
 // The five anonymous tests are all of the form "the anon client got nothing back". That
@@ -144,10 +172,15 @@ async function assertAnonIsAnonymous() {
 // touched storage anyway — the bucket and its objects live in the `storage` schema and
 // survive a reset, which is exactly why this purge is needed for a repeated local run.
 async function purgeAttachments() {
-  const { data, error } = await sessions.admin.storage.from("attachments").list("rls");
-  // A missing bucket or an empty prefix is the normal case on a fresh stack, not a failure.
-  if (error || !data?.length) return;
-  await sessions.admin.storage.from("attachments").remove(data.map(f => `rls/${f.name}`));
+  // Both the org-prefixed layout (Task 4) and the legacy flat `rls/` prefix: until the
+  // storage policies move to org prefixes, the existing storage tests still write `rls/`.
+  const targets = [[sessions.admin, `${ORG_A}/rls`], [sessions.adminB, `${ORG_B}/rls`], [sessions.admin, "rls"]];
+  for (const [session, prefix] of targets) {
+    const { data, error } = await session.storage.from("attachments").list(prefix);
+    // A missing bucket or an empty prefix is the normal case on a fresh stack, not a failure.
+    if (error || !data?.length) continue;
+    await session.storage.from("attachments").remove(data.map(f => `${prefix}/${f.name}`));
+  }
 }
 
 let fresh = 0;
@@ -157,26 +190,32 @@ export async function signUpFresh(email, name = "Fresh User") {
   return signUp(email || `fresh${++fresh}@test.local`, name);
 }
 
+// Read by SQL: an org admin's session can no longer see another org's profiles.
 export async function roleOf(id) {
-  const { data } = await sessions.admin.from("profiles").select("role").eq("id", id).single();
-  return data?.role ?? null;
+  const [row] = await sql(`select role from profiles where id = $1`, [id]);
+  return row?.role ?? null;
+}
+export async function orgOf(id) {
+  const [row] = await sql(`select org_id from profiles where id = $1`, [id]);
+  return row?.org_id ?? null;
 }
 
-// Read-backs run AS ADMIN on purpose. A denied delete or update returns no error, so the
-// only way to know it was denied is to look at the row with a session that can see it.
-export async function stillExists(table, id) {
-  const { data } = await sessions.admin.from(table).select("id").eq("id", id);
-  return (data || []).length > 0;
+// Read-backs run by SQL on purpose. A denied delete or update returns no error, so the
+// only way to know it was denied is to look at the row with a session that can see it --
+// and only the superuser sees every org.
+export async function stillExists(table, id, org = ORG_A) {
+  const rows = await sql(`select id from public.${table} where org_id = $1 and id = $2`, [org, id]);
+  return rows.length > 0;
 }
 
-export async function valueOf(table, id) {
-  const { data } = await sessions.admin.from(table).select("data").eq("id", id).single();
-  return data?.data ?? null;
+export async function valueOf(table, id, org = ORG_A) {
+  const [row] = await sql(`select data from public.${table} where org_id = $1 and id = $2`, [org, id]);
+  return row?.data ?? null;
 }
 
-// Insert a row as admin for a test to then attack as a plain user.
-export async function seedRow(table, id, data = { name: "Seeded" }) {
-  const { error } = await sessions.admin.from(table).insert({ id, data });
+// Insert a row through the API (default: org A's admin) for a test to then attack.
+export async function seedRow(table, id, data = { name: "Seeded" }, session = sessions.admin) {
+  const { error } = await session.from(table).insert({ id, data });
   if (error) throw new Error(`seedRow(${table}, ${id}) failed: ${error.message}`);
 }
 
@@ -195,9 +234,9 @@ export async function sql(text, params = []) {
 
 // Seed a JSONB row directly. seedRow() goes through PostgREST as admin; these go through
 // SQL so a test can seed rows a policy would refuse, and so dates land unambiguously.
-export const seedAccount  = (id, data) => sql(`insert into accounts    (id, data) values ($1, $2)
-                                               on conflict (id) do update set data = excluded.data`, [id, data]);
-export const seedTask     = (id, data) => sql(`insert into tasks       (id, data) values ($1, $2)
-                                               on conflict (id) do update set data = excluded.data`, [id, data]);
-export const seedActivity = (id, data) => sql(`insert into activities  (id, data) values ($1, $2)
-                                               on conflict (id) do update set data = excluded.data`, [id, data]);
+const seedEntity = table => (id, data, org = ORG_A) => sql(
+  `insert into public.${table} (org_id, id, data) values ($1, $2, $3)
+   on conflict (org_id, id) do update set data = excluded.data`, [org, id, data]);
+export const seedAccount  = seedEntity("accounts");
+export const seedTask     = seedEntity("tasks");
+export const seedActivity = seedEntity("activities");

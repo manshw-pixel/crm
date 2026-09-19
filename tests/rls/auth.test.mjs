@@ -1,17 +1,61 @@
-// The signup path and role assignment — handle_new_user() in supabase-setup.sql.
+// The signup path and role assignment -- handle_new_user() in supabase-setup.sql. A sign-up
+// joins an org ONLY through a pending invite; there is no "first user becomes admin" rule.
 import { test, assert } from "../health/framework.mjs";
-import { sessions, roleOf, signUpFresh, newClient, PASSWORD } from "./fixtures.mjs";
+import { sessions, sql, signUpFresh, roleOf, orgOf, seedAccount, newClient, PASSWORD, ORG_A, ORG_B } from "./fixtures.mjs";
 
-test("the first signup becomes an admin", async () => {
-  const { data } = await sessions.admin.auth.getUser();
-  const role = await roleOf(data.user.id);
-  assert(role === "admin", `first signup should be admin, got ${role}`);
+// Invite into org A first: an uninvited sign-up has no org, and guard_admin_count counts
+// admins per org, so an org-less "second admin" would not be a second admin of anything.
+async function invitedFresh(email, org = ORG_A) {
+  await sql(`insert into invites (email, org_id, role) values ($1, $2, 'user')`, [email, org]);
+  return signUpFresh(email);
+}
+
+test("a sign-up matching an admin invite lands in that org as admin", async () => {
+  await sql(`insert into invites (email, org_id, role) values ('inv-admin@test.local', $1, 'admin')`, [ORG_B]);
+  const { id } = await signUpFresh("inv-admin@test.local", "Invited Admin");
+  assert(await roleOf(id) === "admin", "invite role 'admin' was not applied");
+  assert(await orgOf(id) === ORG_B, "invite org was not applied");
+  const [inv] = await sql(`select accepted_at from invites where email = 'inv-admin@test.local'`);
+  assert(inv.accepted_at, "the invite was not marked accepted");
 });
 
-test("the second signup becomes a plain user", async () => {
-  const { data } = await sessions.user.auth.getUser();
-  const role = await roleOf(data.user.id);
-  assert(role === "user", `second signup should be user, got ${role}`);
+test("a sign-up matching a user invite lands in that org as user", async () => {
+  await sql(`insert into invites (email, org_id, role) values ('inv-user@test.local', $1, 'user')`, [ORG_A]);
+  const { id } = await signUpFresh("inv-user@test.local", "Invited User");
+  assert(await roleOf(id) === "user", "invite role 'user' was not applied");
+  assert(await orgOf(id) === ORG_A, "invite org was not applied");
+});
+
+test("a sign-up with no invite gets no org and reads nothing", async () => {
+  // Real data behind the absence: an org-A account the control session CAN read.
+  await seedAccount("vis-a", { name: "A" }, ORG_A);
+  const { data: control, error: cErr } = await sessions.user.from("accounts").select("id").eq("id", "vis-a");
+  assert(!cErr && (control || []).length === 1, `control: org A's user cannot see vis-a (${cErr && cErr.message})`);
+
+  const { client, id } = await signUpFresh("stranger@test.local", "Stranger");
+  assert(await orgOf(id) === null, "an uninvited sign-up was attached to an org");
+  assert(await roleOf(id) === "user", "an uninvited sign-up must never be admin");
+  const { data, error } = await client.from("accounts").select("id");
+  assert(!error, `unexpected error: ${error && error.message}`);
+  assert((data || []).length === 0, "an org-less user can read accounts");
+});
+
+// GoTrue lowercases the address itself, so a sign-up through the API cannot tell whether
+// the trigger's lower() works. Insert into auth.users directly with a mixed-case address,
+// which is exactly what fires handle_new_user(), so the trigger's own matching is tested.
+test("invite email matching is case-insensitive", async () => {
+  await sql(`insert into invites (email, org_id, role) values ('mixed@test.local', $1, 'user')`, [ORG_B]);
+  const [u] = await sql(`insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data)
+    values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated',
+            'MiXed@Test.Local', '{}'::jsonb) returning id`);
+  assert(await orgOf(u.id) === ORG_B, "a mixed-case address did not match its lowercase invite");
+});
+
+test("profile name falls back to the email prefix when sign-up sends no name", async () => {
+  await sql(`insert into invites (email, org_id, role) values ('noname@test.local', $1, 'user')`, [ORG_A]);
+  const { id } = await signUpFresh("noname@test.local", null);
+  const [row] = await sql(`select name from profiles where id = $1`, [id]);
+  assert(row.name === "noname", `expected 'noname', got ${row.name}`);
 });
 
 test("a profile is auto-created and named from signup metadata", async () => {
@@ -20,11 +64,15 @@ test("a profile is auto-created and named from signup metadata", async () => {
   assert(p && p.name === "Admin User", `expected name "Admin User", got ${JSON.stringify(p)}`);
 });
 
-test("a profile with no name metadata is named from the email prefix", async () => {
-  const { client } = await signUpFresh("noname@test.local", null);
-  const { data } = await client.auth.getUser();
-  const { data: p } = await sessions.admin.from("profiles").select("name").eq("id", data.user.id).single();
-  assert(p && p.name === "noname", `expected name "noname", got ${JSON.stringify(p)}`);
+// guard_profile_org(): profiles_update_admin lets an org admin update their OWN row, so RLS
+// alone does not stop them minting themselves a platform admin. The trigger must.
+test("an org admin cannot make themselves a platform admin", async () => {
+  const { data } = await sessions.admin.auth.getUser();
+  const { error } = await sessions.admin.from("profiles").update({ platform_admin: true }).eq("id", data.user.id);
+  assert(error, "setting own platform_admin should raise");
+  assert(/platform admin/i.test(error.message), `expected the guard's message, got: ${error.message}`);
+  const [row] = await sql(`select platform_admin from profiles where id = $1`, [data.user.id]);
+  assert(row.platform_admin === false, "platform_admin was set despite the guard");
 });
 
 // guard_admin_count(): any number of admins, but never zero.
@@ -38,7 +86,7 @@ test("demoting the last admin is refused", async () => {
 });
 
 test("one of two admins can be demoted", async () => {
-  const second = await signUpFresh("admin2@test.local");
+  const second = await invitedFresh("admin2@test.local");
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
   assert(await roleOf(second.id) === "admin", "the promotion did not take effect");
@@ -61,7 +109,7 @@ test("disabling the last admin is refused", async () => {
 });
 
 test("an admin cannot disable themselves even when another admin exists", async () => {
-  const second = await signUpFresh("admin2b@test.local");
+  const second = await invitedFresh("admin2b@test.local");
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
 
@@ -72,7 +120,7 @@ test("an admin cannot disable themselves even when another admin exists", async 
 });
 
 test("one of two admins can be disabled by the other", async () => {
-  const second = await signUpFresh("admin3@test.local");
+  const second = await invitedFresh("admin3@test.local");
   const { error: promote } = await sessions.admin.from("profiles").update({ role: "admin" }).eq("id", second.id);
   assert(!promote, `promoting a second admin failed: ${promote && promote.message}`);
 
