@@ -49,7 +49,7 @@
 - Create: `tests/rls/pre-multitenant-setup.sql`
 
 **Interfaces:**
-- Produces: a byte-for-byte copy of today's `supabase-setup.sql`, used by Task 8's migration test.
+- Produces: a byte-for-byte copy of today's `supabase-setup.sql`, used by Task 6's migration test.
 
 - [ ] **Step 1: Create the branch**
 
@@ -193,7 +193,7 @@ export async function bootstrap() {
 }
 ```
 
-Note `org_alert_prefs` is created by `email-alerts.sql` (Task 6). Until Task 6 lands, that insert will fail; so in THIS task write it as a guarded statement:
+Note `org_alert_prefs` is created by `email-alerts.sql` (Task 5). Until Task 5 lands, that insert will fail; so in THIS task write it as a guarded statement:
 
 ```js
   await sql(`do $$ begin
@@ -485,7 +485,7 @@ alter table public.invites enable row level security;
 node tests/rls/run.mjs
 ```
 
-Expected: bootstrap succeeds; the five auth tests PASS. Policy, merge, replace and storage tests may fail on old assumptions (`settings` with `id: 1`, `rls/` storage prefix); they are fixed in Tasks 2 and 5. Record which fail in the commit message body.
+Expected: bootstrap succeeds; the five auth tests PASS. Policy, merge, replace and storage tests may fail on old assumptions (`settings` with `id: 1`, `rls/` storage prefix); they are fixed in Tasks 2 and 4. Record which fail in the commit message body.
 
 - [ ] **Step 6: Commit**
 
@@ -765,7 +765,7 @@ end $$;
 node tests/rls/run.mjs
 ```
 
-Expected: everything in `auth`, `policies`, `orgs`, `merge`, `replace`, `errorlog` PASS. `storage` and `emailalerts` may still fail (Tasks 5 and 6). No test in `orgs.test.mjs` may be skipped or weakened to get here.
+Expected: everything in `auth`, `policies`, `orgs`, `merge`, `replace`, `errorlog` PASS. `storage` and `emailalerts` may still fail (Tasks 4 and 5). No test in `orgs.test.mjs` may be skipped or weakened to get here.
 
 - [ ] **Step 6: Commit**
 
@@ -1298,7 +1298,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `tests/health/run.mjs`
 
 **Interfaces:**
-- Produces: module-level `let CURRENT_ORG = null;` set in `Root` when the profile loads; `Root` fetches `id,name,role,disabled,org_id,platform_admin`; `App` receives `user` with those fields; sidebar shows `user.orgName` when `user.platform_admin`.
+- Produces: module-level `let CURRENT_ORG = null;` set in `Root` when the profile loads; `Root` fetches `id,name,role,disabled,org_id,platform_admin`; `App` receives `user` with those fields; sidebar shows App-local `orgName` state when `user.platform_admin`.
 - Consumes: `invite_user`, `orgs_select`.
 
 - [ ] **Step 1: Extend the health mock**

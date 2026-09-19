@@ -126,7 +126,7 @@ export const QUEUE_SEED = () => {
     { id: "q-done", accountId: "a1", title: "Old finished thing", due: rel(-9), priority: "Low", status: "Done", owner: "Priya" },
   ];
   return `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: ${JSON.stringify(tasks)}.map(d => ({ id: d.id, data: d })), opportunities: [], team: [], settings: [] };
-window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin" };`;
 };
 export const openTasks = async page => {
   await page.getByRole("button", { name: "Tasks" }).first().click();
@@ -205,7 +205,7 @@ test("a task referencing a deleted account still renders, with a dash for the ac
     { id: "orphan", accountId: "does-not-exist", title: "Follow up with ghost account", due: rel(0), priority: "Medium", status: "Open", owner: "Priya" },
   ];
   const seed = `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: ${JSON.stringify(tasks)}.map(d => ({ id: d.id, data: d })), opportunities: [], team: [], settings: [] };
-window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin" };`;
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length);
   await openTasks(page);
@@ -218,7 +218,7 @@ window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
 test("Tasks view shows the no-tasks-at-all empty state when the seed has zero tasks", async () => {
   const accts = [seedAccount({ id: "a1", name: "Northwind Analytics", csm: "Priya", renewalDate: "2029-01-01" })];
   const seed = `window.__seedRows = { accounts: ${JSON.stringify(accts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };
-window.__seedProfile = { id: "u1", name: "Priya", role: "admin" };`;
+window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin" };`;
   const { page, browser } = await launch(seed);
   const noTasks = await page.evaluate(() => window.__store && window.__store.getState().tasks.length === 0);
   assert(noTasks, "seed should genuinely have zero tasks");

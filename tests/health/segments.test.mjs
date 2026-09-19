@@ -187,7 +187,7 @@ test("the segment dropdown shows segment names, not raw ids", async () => {
 // (settings_write ... using (is_admin())). A non-admin clicking "Save view" would get
 // an optimistic segment locally, a rejected write, a "Save failed (settings)" toast,
 // and nothing left after a reload. Non-admins can still APPLY segments an admin saved.
-const csmSeed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [{ id: "u1", name: "Casey CSM", role: "csm" }] };`;
+const csmSeed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [{ id: "u1", org_id: "org-a", name: "Casey CSM", role: "csm" }] };`;
 
 test("a non-admin cannot save or delete segments, but can still apply them", async () => {
   const { page, browser } = await launch(csmSeed);

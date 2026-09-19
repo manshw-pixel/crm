@@ -10,7 +10,7 @@ const ROWS = [
 
 const seedFor = (role, rows) => `window.__seedRows = { accounts: [], contacts: [],
   activities: [], tasks: [], opportunities: [], team: [], settings: [],
-  profiles: [{ id: "u1", name: "Test User", role: ${JSON.stringify(role)} }],
+  profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: ${JSON.stringify(role)} }],
   error_log: ${JSON.stringify(rows)} };`;
 
 test("an admin sees the error panel with counts", async () => {

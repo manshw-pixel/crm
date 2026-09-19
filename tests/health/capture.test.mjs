@@ -4,7 +4,7 @@ import { launchPersistent, seedAccount } from "./harness.mjs";
 const A = seedAccount({ id: "c1", name: "Capture Co", arr: 100 });
 const seed = `window.__seedRows = { accounts: [{ id: "c1", data: ${JSON.stringify(A)} }],
   contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [],
-  profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+  profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 const logCalls = page => page.evaluate(() =>
   (window.__rpcCalls || []).filter(c => c.fn === "log_error").map(c => c.args));

@@ -4,7 +4,7 @@ import { launchPersistent, seedAccount } from "./harness.mjs";
 const A = seedAccount({ id: "s1", name: "Sync Co", arr: 100 });
 const seed = `window.__seedRows = { accounts: [{ id: "s1", data: ${JSON.stringify(A)} }],
   contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [],
-  profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+  profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 test("the header shows a saving indicator that settles to saved", async () => {
   const { page, browser } = await launchPersistent(seed);

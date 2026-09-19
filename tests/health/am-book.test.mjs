@@ -160,7 +160,7 @@ test("a foreign-currency account is measured in USD", async () => {
 // bookSeed omits `profiles`, which is fine for calling __health directly but leaves the
 // app with no signed-in user, so no view renders. Anything asserting on the DOM needs it.
 const seedWithUser = accounts => bookSeed(accounts).replace("settings: [] };",
-  `settings: [], profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`);
+  `settings: [], profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`);
 
 test("the dashboard card shows the three section totals and expands to accounts", async () => {
   const book = [

@@ -12,7 +12,7 @@ import { launchPersistent, seedAccount } from "./harness.mjs";
 const P = seedAccount({ id: "p1", name: "Parent Co", csm: "Priya" });
 const S = seedAccount({ id: "s1", name: "Sub Co", parentId: "p1", csm: "Priya" });
 const O = seedAccount({ id: "o1", name: "Other Co", csm: "Dana" });
-const PROFILES = [{ id: "u1", name: "Test User", role: "admin" }, { id: "u2", name: "Dana", role: "csm" }];
+const PROFILES = [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }, { id: "u2", name: "Dana", role: "csm" }];
 const seed = `window.__seedRows = {
   accounts: ${JSON.stringify([P, S, O])}.map(d => ({ id: d.id, data: d })),
   contacts: [{ id: "c1", data: { id: "c1", accountId: "p1", name: "Ann" } },

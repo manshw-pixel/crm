@@ -5,7 +5,7 @@ const A = seedAccount({ id: "a1", name: "Alpha", csm: "Priya", tier: "Mid" });
 const B = seedAccount({ id: "a2", name: "Beta", csm: "Priya", tier: "SMB" });
 // the team list (and so the CSM dropdown's options) comes from profiles, not the team key.
 // "Dana" must be a real profile or selecting it in the dialog resolves to "".
-const PROFILES = [{ id: "u1", name: "Test User", role: "admin" }, { id: "u2", name: "Dana", role: "csm" }];
+const PROFILES = [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }, { id: "u2", name: "Dana", role: "csm" }];
 export const seed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: ${JSON.stringify(PROFILES)} };`;
 
 test("BULK_PATCH_ACCOUNTS reassigns CSM and writes one audit entry each", async () => {
@@ -519,7 +519,7 @@ test("deleting a single account offers an undo that restores it with its childre
 // back to just the signed-in user, which is what actually happened the first time this
 // test was written (it passed even with the fix reverted, for the wrong reason).
 const disabledTeamSeed = `window.__seedRows = { accounts: [${JSON.stringify(seedAccount({ id: "a1", name: "Alpha", csm: "Priya" }))}].map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [
-  { id: "u1", name: "Test User", role: "admin", disabled: false },
+  { id: "u1", org_id: "org-a", name: "Test User", role: "admin", disabled: false },
   { id: "u2", name: "Priya", role: "user", disabled: true }
 ] };`;
 

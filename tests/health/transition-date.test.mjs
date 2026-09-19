@@ -7,7 +7,7 @@ import { test, assert } from "./framework.mjs";
 // auth gate -- anything asserting on RENDERED output needs the profiles row too.
 const seedOf = accounts => `window.__seedRows = { accounts: ${JSON.stringify(accounts)}.map(d => ({ id: d.id, data: d })),`
   + ` contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [],`
-  + ` profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+  + ` profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 const openDetail = async (page, name) => {
   await page.click('button[title="Accounts"]');

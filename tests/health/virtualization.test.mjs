@@ -17,7 +17,7 @@ function makeAccounts(n) {
     arr: 1000 + i, arrUSD: 1000 + i, currency: "USD",
   }));
 }
-const seedOf = accounts => `window.__seedRows = { accounts: ${JSON.stringify(accounts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [{ id: "u1", name: "Test User", role: "admin" }] };`;
+const seedOf = accounts => `window.__seedRows = { accounts: ${JSON.stringify(accounts)}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
 
 const BIG = 2000;
 const bigSeed = seedOf(makeAccounts(BIG));
