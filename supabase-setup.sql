@@ -799,7 +799,7 @@ grant execute on function public.admin_set_user_email(uuid, text) to authenticat
 -- hence the drop: create or replace cannot change a return type.
 drop function if exists public.invite_user(text, text);
 create or replace function public.invite_user(p_email text, p_role text)
-returns text language plpgsql security definer set search_path = public as $
+returns text language plpgsql security definer set search_path = public as $$
 declare
   addr text := lower(trim(p_email));
   existing record;
@@ -845,7 +845,7 @@ begin
   on conflict (email, org_id) do update
     set role = excluded.role, created_by = excluded.created_by, created_at = now(), accepted_at = null;
   return 'invited';
-end $;
+end $$;
 
 create or replace function public.create_org(p_name text, p_admin_email text)
 returns uuid language plpgsql security definer set search_path = public as $$
