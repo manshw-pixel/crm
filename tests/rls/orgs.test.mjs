@@ -186,3 +186,170 @@ test("orgs: a member sees only their own org; the platform admin sees all", asyn
   const { data: all } = await sessions.platform.from("orgs").select("id");
   assert(all.length >= 2, "platform admin should see every org");
 });
+
+// ---------- Task 3: platform RPCs ----------
+// All four are security definer, so RLS does not apply inside them. Each test below proves a
+// refusal came from the function's own gate, and reads the result back by SQL.
+
+// sessions.platform must end every test in ORG_A as a plain user (bootstrap's placement);
+// later files count org membership. SQL has no auth.uid(), so guard_profile_org allows this.
+async function restorePlatform() {
+  await sql(`update profiles set org_id = $1, role = 'user'
+             where id = (select id from auth.users where email = 'platform@test.local')`, [ORG_A]);
+}
+
+test("invite_user: an org admin invites into their own org only", async () => {
+  const { error } = await sessions.admin.rpc("invite_user", { p_email: "  New.Person@Test.local ", p_role: "user" });
+  assert(!error, error && error.message);
+  const [inv] = await sql(`select org_id, role, email from invites where email = 'new.person@test.local'`);
+  assert(inv && inv.org_id === ORG_A && inv.role === "user", `invite row wrong: ${JSON.stringify(inv)}`);
+});
+
+test("invite_user: a plain user cannot invite", async () => {
+  const { error } = await sessions.user.rpc("invite_user", { p_email: "nope@test.local", p_role: "admin" });
+  assert(error && /admin only/i.test(error.message), `expected admin-only refusal, got ${error && error.message}`);
+  const rows = await sql(`select 1 from invites where email = 'nope@test.local'`);
+  assert(rows.length === 0, "a plain user's invite landed");
+});
+
+test("invite_user: an org B admin's invite lands in org B, never org A", async () => {
+  const { error } = await sessions.adminB.rpc("invite_user", { p_email: "fromb@test.local", p_role: "admin" });
+  assert(!error, error && error.message);
+  const rows = await sql(`select org_id from invites where email = 'fromb@test.local'`);
+  assert(rows.length === 1 && rows[0].org_id === ORG_B, `org B admin's invite landed wrong: ${JSON.stringify(rows)}`);
+});
+
+test("invite_user: anonymous callers are refused", async () => {
+  const { error } = await sessions.anon.rpc("invite_user", { p_email: "anon@test.local", p_role: "admin" });
+  assert(error, "anon called invite_user");
+  const rows = await sql(`select 1 from invites where email = 'anon@test.local'`);
+  assert(rows.length === 0, "an anonymous invite landed");
+});
+
+test("invite_user: rejects a bad role and a malformed address", async () => {
+  const { error: r } = await sessions.admin.rpc("invite_user", { p_email: "badrole@test.local", p_role: "owner" });
+  assert(r && /role must be/i.test(r.message), `expected role refusal, got ${r && r.message}`);
+  const { error: e } = await sessions.admin.rpc("invite_user", { p_email: "not an email", p_role: "user" });
+  assert(e && /not a valid email/i.test(e.message), `expected email refusal, got ${e && e.message}`);
+  const rows = await sql(`select 1 from invites where email in ('badrole@test.local', 'not an email')`);
+  assert(rows.length === 0, "a rejected invite landed");
+});
+
+test("invite_user: re-inviting the same email replaces the role and re-opens the invite", async () => {
+  await sessions.admin.rpc("invite_user", { p_email: "twice@test.local", p_role: "user" });
+  await sql(`update invites set accepted_at = now() where email = 'twice@test.local'`);
+  const { error } = await sessions.admin.rpc("invite_user", { p_email: "twice@test.local", p_role: "admin" });
+  assert(!error, error && error.message);
+  const [inv] = await sql(`select role, accepted_at from invites where email = 'twice@test.local' and org_id = $1`, [ORG_A]);
+  assert(inv.role === "admin" && inv.accepted_at === null, `expected re-opened admin invite, got ${JSON.stringify(inv)}`);
+});
+
+// F2: the org_alert_prefs assertion moved to Task 5, which creates that table.
+test("create_org: platform admin creates an org with settings and an admin invite", async () => {
+  const { data: orgId, error } = await sessions.platform.rpc("create_org", { p_name: "Client C", p_admin_email: "Owner@ClientC.com" });
+  assert(!error, error && error.message);
+  const [org] = await sql(`select name from orgs where id = $1`, [orgId]);
+  assert(org && org.name === "Client C", "org row missing");
+  assert((await sql(`select 1 from settings where org_id = $1`, [orgId])).length === 1, "settings row missing");
+  const [inv] = await sql(`select role from invites where org_id = $1 and email = 'owner@clientc.com'`, [orgId]);
+  assert(inv && inv.role === "admin", "admin invite missing");
+});
+
+test("create_org: an org admin, a plain user and anon cannot create orgs", async () => {
+  const { error: a } = await sessions.admin.rpc("create_org", { p_name: "Rogue A", p_admin_email: "r@r.com" });
+  assert(a && /platform admin/i.test(a.message), `expected platform-admin refusal, got ${a && a.message}`);
+  const { error: b } = await sessions.adminB.rpc("create_org", { p_name: "Rogue B", p_admin_email: "r@r.com" });
+  assert(b && /platform admin/i.test(b.message), `expected platform-admin refusal, got ${b && b.message}`);
+  const { error: u } = await sessions.user.rpc("create_org", { p_name: "Rogue U", p_admin_email: "r@r.com" });
+  assert(u && /platform admin/i.test(u.message), `expected platform-admin refusal, got ${u && u.message}`);
+  const { error: n } = await sessions.anon.rpc("create_org", { p_name: "Rogue N", p_admin_email: "r@r.com" });
+  assert(n, "anon called create_org");
+  const rows = await sql(`select 1 from orgs where name like 'Rogue%'`);
+  assert(rows.length === 0, "a refused create_org still created an org");
+});
+
+test("create_org: rejects a malformed admin address", async () => {
+  const { error } = await sessions.platform.rpc("create_org", { p_name: "Bad Mail Co", p_admin_email: "nope" });
+  assert(error && /not a valid email/i.test(error.message), `expected email refusal, got ${error && error.message}`);
+  assert((await sql(`select 1 from orgs where name = 'Bad Mail Co'`)).length === 0, "org created despite a bad address");
+});
+
+test("switch_org: platform admin moves into org B and sees its rows; others cannot", async () => {
+  await seedAccount("sw-b", { name: "Switch B" }, ORG_B);
+  try {
+    const { error: denied } = await sessions.admin.rpc("switch_org", { p_org_id: ORG_B });
+    assert(denied && /platform admin/i.test(denied.message), "an org admin switched orgs");
+    const { error: deniedB } = await sessions.adminB.rpc("switch_org", { p_org_id: ORG_A });
+    assert(deniedB && /platform admin/i.test(deniedB.message), "org B's admin switched orgs");
+    const { error: deniedU } = await sessions.user.rpc("switch_org", { p_org_id: ORG_B });
+    assert(deniedU && /platform admin/i.test(deniedU.message), "a plain user switched orgs");
+    const { error: deniedN } = await sessions.anon.rpc("switch_org", { p_org_id: ORG_B });
+    assert(deniedN, "anon called switch_org");
+    const moved = await sql(`select u.email, p.org_id from profiles p join auth.users u on u.id = p.id
+                             where u.email in ('admin@test.local', 'adminb@test.local', 'user@test.local')`);
+    const home = { "admin@test.local": ORG_A, "user@test.local": ORG_A, "adminb@test.local": ORG_B };
+    assert(moved.length === 3, `setup: expected 3 bootstrap profiles, got ${moved.length}`);
+    for (const m of moved) assert(m.org_id === home[m.email], `${m.email} was moved to ${m.org_id}`);
+
+    const { error } = await sessions.platform.rpc("switch_org", { p_org_id: ORG_B });
+    assert(!error, error && error.message);
+    const { data } = await sessions.platform.from("accounts").select("id").eq("id", "sw-b");
+    assert(data.length === 1, "platform admin does not see org B after switching");
+    const { error: back } = await sessions.platform.rpc("switch_org", { p_org_id: ORG_A });
+    assert(!back, back && back.message);
+    const [p] = await sql(`select p.org_id from profiles p join auth.users u on u.id = p.id where u.email = 'platform@test.local'`);
+    assert(p.org_id === ORG_A, "switching back to org A did not land");
+  } finally {
+    await restorePlatform();
+  }
+});
+
+test("switch_org: refuses an unknown org", async () => {
+  const { error } = await sessions.platform.rpc("switch_org", { p_org_id: "00000000-0000-0000-0000-00000000dead" });
+  assert(error && /no such org/i.test(error.message), `expected no-such-org, got ${error && error.message}`);
+  const [p] = await sql(`select p.org_id from profiles p join auth.users u on u.id = p.id where u.email = 'platform@test.local'`);
+  assert(p.org_id === ORG_A, "a refused switch still moved the platform admin");
+});
+
+// F11: after a switch, replace_all empties and refills only the org switched into. replace_all
+// is admin-gated and the platform admin is invited as a plain user (F1), so it is made an org
+// B admin by SQL for this test only; restorePlatform puts it back as an org A user.
+test("replace_all after switch_org touches only the new org's rows", async () => {
+  await seedAccount("rs-keep-a", { name: "Keep A" }, ORG_A);
+  await seedAccount("rs-old-b", { name: "Old B" }, ORG_B);
+  const [{ data: settingsB }] = await sql(`select data from settings where org_id = $1`, [ORG_B]);
+  try {
+    const { error: sw } = await sessions.platform.rpc("switch_org", { p_org_id: ORG_B });
+    assert(!sw, sw && sw.message);
+    await sql(`update profiles set role = 'admin'
+               where id = (select id from auth.users where email = 'platform@test.local')`);
+    const { error } = await sessions.platform.rpc("replace_all",
+      { payload: { accounts: [{ id: "rs-new-b", name: "New B" }], settings: settingsB } });
+    assert(!error, `replace_all errored: ${error && error.message}`);
+    const a = await sql(`select id from accounts where org_id = $1 and id = 'rs-keep-a'`, [ORG_A]);
+    assert(a.length === 1, "replace_all in org B wiped org A's row");
+    const b = (await sql(`select id from accounts where org_id = $1`, [ORG_B])).map(r => r.id);
+    assert(b.includes("rs-new-b"), "replace_all did not insert into org B");
+    assert(!b.includes("rs-old-b"), "replace_all did not replace org B's rows");
+    const newA = await sql(`select 1 from accounts where org_id = $1 and id = 'rs-new-b'`, [ORG_A]);
+    assert(newA.length === 0, "replace_all wrote into org A");
+  } finally {
+    await restorePlatform();
+  }
+});
+
+test("list_orgs: platform admin gets every org with a user count; others are refused", async () => {
+  const { data, error } = await sessions.platform.rpc("list_orgs");
+  assert(!error, error && error.message);
+  const a = data.find(o => o.id === ORG_A), b = data.find(o => o.id === ORG_B);
+  assert(a && b, "both orgs listed");
+  assert(b.users >= 2, `org B should count its two users, got ${b && b.users}`);
+  const { error: denied } = await sessions.admin.rpc("list_orgs");
+  assert(denied && /platform admin/i.test(denied.message), "an org admin listed all orgs");
+  const { error: deniedB } = await sessions.adminB.rpc("list_orgs");
+  assert(deniedB && /platform admin/i.test(deniedB.message), "org B's admin listed all orgs");
+  const { error: deniedU } = await sessions.user.rpc("list_orgs");
+  assert(deniedU && /platform admin/i.test(deniedU.message), "a plain user listed all orgs");
+  const { error: deniedN } = await sessions.anon.rpc("list_orgs");
+  assert(deniedN, "anon listed all orgs");
+});

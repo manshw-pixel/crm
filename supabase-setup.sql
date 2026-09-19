@@ -776,6 +776,93 @@ revoke execute on function public.admin_set_user_email(uuid, text) from public, 
 grant execute on function public.admin_user_list() to authenticated;
 grant execute on function public.admin_set_user_email(uuid, text) to authenticated;
 
+-- ---------- onboarding: invites and orgs ----------
+-- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
+-- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
+-- apply inside them: each one checks its own gate on entry.
+create or replace function public.invite_user(p_email text, p_role text)
+returns void language plpgsql security definer set search_path = public as $$
+declare addr text := lower(trim(p_email));
+begin
+  if not public.is_admin() then
+    raise exception 'invite_user: admin only';
+  end if;
+  if public.current_org() is null then
+    raise exception 'invite_user: you are not in an org';
+  end if;
+  if p_role is null or p_role not in ('admin','user') then
+    raise exception 'invite_user: role must be admin or user';
+  end if;
+  if not public.valid_email(addr) then
+    raise exception 'invite_user: % is not a valid email address', p_email;
+  end if;
+  insert into invites (email, org_id, role, created_by)
+  values (addr, public.current_org(), p_role, auth.uid())
+  on conflict (email, org_id) do update
+    set role = excluded.role, created_by = excluded.created_by, created_at = now(), accepted_at = null;
+end $$;
+
+create or replace function public.create_org(p_name text, p_admin_email text)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare
+  new_id uuid;
+  addr text := lower(trim(p_admin_email));
+begin
+  if not public.is_platform_admin() then
+    raise exception 'create_org: platform admin only';
+  end if;
+  if coalesce(length(trim(p_name)), 0) = 0 then
+    raise exception 'create_org: name is required';
+  end if;
+  if not public.valid_email(addr) then
+    raise exception 'create_org: % is not a valid email address', p_admin_email;
+  end if;
+  insert into orgs (name) values (trim(p_name)) returning id into new_id;
+  insert into settings (org_id, data) values (new_id, '{}'::jsonb);
+  -- org_alert_prefs lives in email-alerts.sql, which may not be installed on a fresh stack.
+  if to_regclass('public.org_alert_prefs') is not null then
+    execute 'insert into org_alert_prefs (org_id) values ($1) on conflict (org_id) do nothing' using new_id;
+  end if;
+  insert into invites (email, org_id, role, created_by) values (addr, new_id, 'admin', auth.uid());
+  return new_id;
+end $$;
+
+-- Runs as the caller for guard_profile_org: auth.uid() is set and is_platform_admin() is
+-- true, so the trigger lets the move through. Do not exempt definer functions from it.
+create or replace function public.switch_org(p_org_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'switch_org: platform admin only';
+  end if;
+  if not exists (select 1 from orgs where id = p_org_id) then
+    raise exception 'switch_org: no such org';
+  end if;
+  update profiles set org_id = p_org_id where id = auth.uid();
+end $$;
+
+create or replace function public.list_orgs()
+returns table(id uuid, name text, created_at timestamptz, users int)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'list_orgs: platform admin only';
+  end if;
+  return query
+    select o.id, o.name, o.created_at,
+           (select count(*)::int from profiles p where p.org_id = o.id and not p.disabled)
+    from orgs o order by o.created_at;
+end $$;
+
+revoke execute on function public.invite_user(text, text) from public, anon;
+revoke execute on function public.create_org(text, text) from public, anon;
+revoke execute on function public.switch_org(uuid) from public, anon;
+revoke execute on function public.list_orgs() from public, anon;
+grant execute on function public.invite_user(text, text) to authenticated;
+grant execute on function public.create_org(text, text) to authenticated;
+grant execute on function public.switch_org(uuid) to authenticated;
+grant execute on function public.list_orgs() to authenticated;
+
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
 -- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
