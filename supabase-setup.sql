@@ -7,8 +7,8 @@
 -- ---------- EDIT ME: platform identity ----------
 -- The default org receives every row and user that existed before multi-tenancy. Its id
 -- is fixed so this file can stamp existing data without a lookup. The platform admin is
--- the one account that can create client orgs and switch between them (Settings ->
--- Platform). Both EDIT ME literals (the org name here, the platform admin's email below
+-- the one account that can create client orgs and switch between them (the Clients
+-- console a platform admin lands on). Both EDIT ME literals (the org name here, the platform admin's email below
 -- the profiles backfill) are idempotent: change them and re-run.
 create table if not exists public.orgs (
   id uuid primary key default gen_random_uuid(),
@@ -16,6 +16,10 @@ create table if not exists public.orgs (
   created_at timestamptz not null default now()
 );
 alter table public.orgs enable row level security;
+-- Client disable (Clients console). A full, reversible lockout: org_enabled() below is
+-- ANDed into is_active() AND is_admin(), so every policy and every definer RPC that gates
+-- on either inherits it. Data is kept; re-enabling restores access.
+alter table public.orgs add column if not exists disabled boolean not null default false;
 insert into public.orgs (id, name)
 values ('00000000-0000-0000-0000-000000000001', 'My Company')   -- EDIT ME: your company name
 on conflict (id) do nothing;
@@ -90,6 +94,14 @@ create or replace function public.is_platform_admin()
 returns boolean language sql stable security definer set search_path = public as
 $$ select exists (select 1 from profiles where id = auth.uid() and platform_admin and not disabled) $$;
 
+-- True when the caller's org is not disabled, or the caller is the platform admin (who must
+-- be able to open a disabled client, and must survive their own home org being disabled).
+create or replace function public.org_enabled()
+returns boolean language sql stable security definer set search_path = public as
+$$ select public.is_platform_admin()
+       or exists (select 1 from profiles p join orgs o on o.id = p.org_id
+                  where p.id = auth.uid() and not o.disabled) $$;
+
 -- ---------- helper: one definition of a plausible email address ----------
 -- Used by every SQL function that accepts an address from the browser, so the rule cannot
 -- drift between them. Immutable, touches no table, reveals nothing: needs no gate.
@@ -147,7 +159,8 @@ end $$;
 -- ---------- helper: is the current user an admin? ----------
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as
-$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not disabled) $$;
+$$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin' and not disabled)
+          and public.org_enabled() $$;
 
 -- ---------- helper: is the current user active (not disabled)? ----------
 -- Gates every policy below. This is what makes disabling take effect on a LIVE session:
@@ -155,7 +168,8 @@ $$ select exists (select 1 from profiles where id = auth.uid() and role = 'admin
 -- in the client would be a label the browser is trusted to honour, which it is not.
 create or replace function public.is_active()
 returns boolean language sql stable security definer set search_path = public as
-$$ select exists (select 1 from profiles where id = auth.uid() and not disabled and org_id is not null) $$;
+$$ select exists (select 1 from profiles where id = auth.uid() and not disabled and org_id is not null)
+          and public.org_enabled() $$;
 
 -- ---------- signup trigger: attach through a pending invite ----------
 -- The old rule "first sign-up ever becomes admin" is gone: with several orgs there is no
@@ -965,8 +979,9 @@ begin
   update profiles set org_id = p_org_id where id = auth.uid();
 end $$;
 
+drop function if exists public.list_orgs();
 create or replace function public.list_orgs()
-returns table(id uuid, name text, created_at timestamptz, users int)
+returns table(id uuid, name text, created_at timestamptz, users int, disabled boolean)
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_platform_admin() then
@@ -974,18 +989,35 @@ begin
   end if;
   return query
     select o.id, o.name, o.created_at,
-           (select count(*)::int from profiles p where p.org_id = o.id and not p.disabled)
+           (select count(*)::int from profiles p where p.org_id = o.id and not p.disabled),
+           o.disabled
     from orgs o order by o.created_at;
+end $$;
+
+-- Any org may be disabled, OneVio included: org_enabled() exempts the platform admin, so
+-- this cannot lock its caller out.
+create or replace function public.set_org_disabled(p_org_id uuid, p_disabled boolean)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'set_org_disabled: platform admin only';
+  end if;
+  update orgs set disabled = p_disabled where id = p_org_id;
+  if not found then
+    raise exception 'set_org_disabled: no such org';
+  end if;
 end $$;
 
 revoke execute on function public.invite_user(text, text) from public, anon;
 revoke execute on function public.create_org(text, text) from public, anon;
 revoke execute on function public.switch_org(uuid) from public, anon;
 revoke execute on function public.list_orgs() from public, anon;
+revoke execute on function public.set_org_disabled(uuid, boolean) from public, anon;
 grant execute on function public.invite_user(text, text) to authenticated;
 grant execute on function public.create_org(text, text) to authenticated;
 grant execute on function public.switch_org(uuid) to authenticated;
 grant execute on function public.list_orgs() to authenticated;
+grant execute on function public.set_org_disabled(uuid, boolean) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
