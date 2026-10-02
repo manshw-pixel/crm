@@ -10,12 +10,22 @@ async function whileDisabled(org, fn) {
   try { await fn(); } finally { await setDisabled(org, false); }
 }
 const TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities", "settings"];
+const seedRaw = (table, id, org) => sql(
+  `insert into public.${table} (org_id, id, data) values ($1, $2, '{"name":"dis seed"}')
+   on conflict (org_id, id) do nothing`, [org, id]);
 
 test("a disabled org's user reads and writes nothing; other orgs are untouched; re-enable restores", async () => {
   await seedAccount("dis-b", { name: "B row" }, ORG_B);
   await seedAccount("dis-a", { name: "A row" }, ORG_A);
   const before = await sessions.userB.from("accounts").select("id").eq("id", "dis-b");
   assert(before.data?.length === 1, `precondition: org B user cannot read its own row (${before.error?.message})`);
+  for (const t of ["contacts", "activities", "tasks", "opportunities"]) await seedRaw(t, `dis-${t}`, ORG_B);
+  for (const t of TABLES) {
+    const pre = await sessions.userB.from(t).select("*");
+    assert((pre.data || []).length >= 1, `precondition: org B user cannot read ${t} while enabled (${pre.error?.message})`);
+  }
+  const hOk = await sessions.userB.rpc("record_health", { p_scores: [{ accountId: "dis-b", score: 1 }] });
+  assert(!hOk.error && hOk.data >= 1, `precondition: record_health wrote nothing for an enabled org: ${JSON.stringify(hOk)}`);
   await whileDisabled(ORG_B, async () => {
     for (const t of TABLES) {
       const { data } = await sessions.userB.from(t).select("*");
@@ -24,8 +34,10 @@ test("a disabled org's user reads and writes nothing; other orgs are untouched; 
     const ins = await sessions.userB.from("tasks").insert({ id: "dis-t", data: { title: "x" } });
     assert(ins.error, "a disabled org's user inserted a task");
     const m = await sessions.userB.rpc("merge_row", { tbl: "accounts", row_id: "dis-b", patch: { name: "hacked" }, appends: {} });
+    const touched = (await valueOf("accounts", "dis-b", ORG_B)).name !== "B row";
+    if (touched) await seedAccount("dis-b", { name: "B row" }, ORG_B);
     assert(m.error, "merge_row succeeded for a disabled org's user");
-    assert((await valueOf("accounts", "dis-b", ORG_B)).name === "B row", "a disabled org's row was changed");
+    assert(!touched, "a disabled org's row was changed");
     const h = await sessions.userB.rpc("record_health", { p_scores: [{ accountId: "dis-b", score: 1 }] });
     assert(h.error || h.data === 0, `record_health wrote for a disabled org: ${JSON.stringify(h.data)}`);
     const other = await sessions.user.from("accounts").select("id").eq("id", "dis-a");
@@ -38,6 +50,20 @@ test("a disabled org's user reads and writes nothing; other orgs are untouched; 
 test("a disabled org's ADMIN cannot write settings, update profiles, invite or list users", async () => {
   const pre = await sessions.adminB.rpc("admin_user_list");
   assert(!pre.error && pre.data.length >= 1, `precondition: org B admin cannot list users (${pre.error?.message})`);
+  const origSettings = (await sql(`select data from settings where org_id = $1`, [ORG_B]))[0].data;
+  const target = (await sql(`select id, name from profiles where org_id = $1 and role = 'user' limit 1`, [ORG_B]))[0];
+  assert(target, "precondition: org B has no plain user profile");
+  try {
+    await sessions.adminB.from("settings").update({ data: { ...origSettings, marker: "dis" } }).eq("org_id", ORG_B);
+    const sOn = await sql(`select data from settings where org_id = $1`, [ORG_B]);
+    assert(sOn[0]?.data?.marker === "dis", "precondition: an enabled org's admin cannot write settings");
+    await sessions.adminB.from("profiles").update({ name: "Renamed by disabled admin" }).eq("id", target.id);
+    const pOn = await sql(`select name from profiles where id = $1`, [target.id]);
+    assert(pOn[0]?.name === "Renamed by disabled admin", "precondition: an enabled org's admin cannot update a profile");
+  } finally {
+    await sql(`update settings set data = $2 where org_id = $1`, [ORG_B, origSettings]);
+    await sql(`update profiles set name = $2 where id = $1`, [target.id, target.name]);
+  }
   await whileDisabled(ORG_B, async () => {
     const list = await sessions.adminB.rpc("admin_user_list");
     assert(list.error || (list.data || []).length === 0, "admin_user_list answered for a disabled org");
@@ -46,9 +72,9 @@ test("a disabled org's ADMIN cannot write settings, update profiles, invite or l
     await sessions.adminB.from("settings").update({ data: { marker: "dis" } }).eq("org_id", ORG_B);
     const s = await sql(`select data from settings where org_id = $1`, [ORG_B]);
     assert(s[0]?.data?.marker !== "dis", "a disabled org's admin wrote settings");
-    await sessions.adminB.from("profiles").update({ name: "Renamed by disabled admin" }).eq("org_id", ORG_B).eq("role", "user");
-    const p = await sql(`select 1 from profiles where name = 'Renamed by disabled admin'`);
-    assert(p.length === 0, "a disabled org's admin updated a profile");
+    await sessions.adminB.from("profiles").update({ name: "Renamed by disabled admin" }).eq("id", target.id);
+    const p = await sql(`select name from profiles where id = $1`, [target.id]);
+    assert(p[0]?.name === target.name, "a disabled org's admin updated a profile");
   });
 });
 
