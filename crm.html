@@ -3459,7 +3459,6 @@ function Settings({ st, dispatch, user, scored }) {
       <IntegrationsCard st={st} dispatch={dispatch} user={user} />
       <PlaybookCard st={st} dispatch={dispatch} />
       <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
-      {user.platform_admin && <PlatformCard me={user} />}
       <UsersCard me={user} />
       {user.role === "admin" && <ErrorLogCard />}
       <Card title="Data">
@@ -3602,15 +3601,14 @@ const signUpMessage = (name, role, status) =>
   status === "exists" ? `${name}'s email already has a login, so no new login was created. Ask them to sign in; if they still see "not attached to a workspace", tell your platform admin.`
   : status === "pending" ? `${name} added as ${role}. A confirmation email was sent: they must click its link before they can sign in with the temporary password.`
   : `${name} added as ${role}. Share the email + temporary password with them (they can change it via "Forgot password?").`;
-/* Platform admin only: the list of client orgs, a "new client" form and "switch into".
-   Switching is a full reload on purpose: the store, realtime channels, CURRENT_ORG and every
-   memo in App are built for one org; re-deriving them in place is more code than it is worth. */
-function PlatformCard({ me }) {
+function ClientConsole({ me, onEnter }) {
   const [orgs, setOrgs] = useState([]);
   const [v, setV] = useState({ name: "", adminName: "", email: "", pass: "" });
+  const [showNew, setShowNew] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
+  const [confirmOrg, setConfirmOrg] = useState(null); // the org pending disable
   const load = () => sb.rpc("list_orgs").then(({ data, error }) => error ? setErr(error.message) : setOrgs(data || []));
   useEffect(() => { load(); }, []);
   const createClient = async e => {
@@ -3634,37 +3632,70 @@ function PlatformCard({ me }) {
     load();
     setBusy(false);
   };
-  const switchTo = async o => {
+  const open = async o => {
     setErr(""); setMsg("");
+    // Already in this org: no switch, no reload -- just enter.
+    if (o.id === me.org_id) { inClientSet(true); return onEnter(); }
+    inClientSet(true);
     const { error } = await sb.rpc("switch_org", { p_org_id: o.id });
-    if (error) return setErr(error.message);
+    if (error) { inClientSet(false); return setErr(error.message); }
     // window.__reload is a test seam: the health suite counts the reload instead of taking it.
     (window.__reload || (() => location.reload()))();
   };
+  const applyDisabled = async (o, disabled) => {
+    setErr(""); setMsg("");
+    const { error } = await sb.rpc("set_org_disabled", { p_org_id: o.id, p_disabled: disabled });
+    if (error) setErr(error.message);
+    else { setMsg(`${o.name} ${disabled ? "disabled — its users have lost access" : "re-enabled"}.`); load(); }
+  };
   return (
-    <Card title={`Platform · clients (${orgs.length})`}>
-      <div data-platform-card>
-        {orgs.map(o => (
-          <div key={o.id} className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-            <span className="flex-1">
-              <div>{o.name}{o.id === me.org_id && <span className="text-xs text-slate-500"> (current)</span>}</div>
-              <div className="text-xs text-slate-500">{o.users} user{o.users === 1 ? "" : "s"} · since {String(o.created_at).slice(0, 10)}</div>
-            </span>
-            {o.id !== me.org_id && <button data-switch-org={o.id} className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => switchTo(o)}>Switch into</button>}
+    <div data-client-console className="min-h-screen bg-slate-50 px-4 py-8">
+      <div className="mx-auto max-w-3xl">
+        <div className="mb-6 flex items-center justify-between">
+          <h1 className="text-lg font-bold text-slate-900">OneVio Platform</h1>
+          <div className="flex items-center gap-3 text-sm text-slate-600">
+            <span>{me.name}</span>
+            <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
           </div>
-        ))}
-        <form onSubmit={createClient} className="mt-3 grid gap-2 sm:grid-cols-2">
-          <Input placeholder="Client name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} />
-          <Input placeholder="Admin name" value={v.adminName} onChange={e => setV({ ...v, adminName: e.target.value })} />
-          <Input type="email" placeholder="Admin email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} />
-          <Input type="password" placeholder="Temporary password" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} />
-          <div className="sm:col-span-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "…" : "Create client"}</Btn></div>
-        </form>
-        {err && <div className="mt-2 text-xs text-rose-600">{err}</div>}
-        {msg && <div className="mt-2 text-xs text-emerald-700">{msg}</div>}
-        <p className="mt-2 text-xs text-slate-500">Each client is a separate workspace: its users see only its accounts. Switch into a client to work as its admin; switch back here when done.</p>
+        </div>
+        <Card title={`Clients (${orgs.length})`}>
+          {orgs.map(o => (
+            <div key={o.id} data-org-row={o.id} className="flex items-center gap-3 border-b border-slate-100 py-2 text-sm last:border-0">
+              <span className="flex-1">
+                <div className="font-medium">{o.name}</div>
+                <div className="text-xs text-slate-500">{o.users} user{o.users === 1 ? "" : "s"} · since {String(o.created_at).slice(0, 10)}</div>
+              </span>
+              {o.disabled
+                ? <span data-org-disabled={o.id} className="rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-700">Disabled</span>
+                : <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">Enabled</span>}
+              <button data-org-toggle={o.id} className="text-xs font-bold text-slate-600 hover:underline"
+                onClick={() => o.disabled ? applyDisabled(o, false) : setConfirmOrg(o)}>{o.disabled ? "Enable" : "Disable"}</button>
+              <button data-open-org={o.id} className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => open(o)}>Open</button>
+            </div>
+          ))}
+          <div className="mt-3">
+            {!showNew && <Btn data-new-client onClick={() => setShowNew(true)}>+ New client</Btn>}
+            {showNew && <form onSubmit={createClient} className="grid gap-2 sm:grid-cols-2">
+              <Input placeholder="Client name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} />
+              <Input placeholder="Admin name" value={v.adminName} onChange={e => setV({ ...v, adminName: e.target.value })} />
+              <Input type="email" placeholder="Admin email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} />
+              <Input type="password" placeholder="Temporary password" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} />
+              <div className="sm:col-span-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "…" : "Create client"}</Btn></div>
+            </form>}
+          </div>
+          {err && <div className="mt-2 text-xs text-rose-600">{err}</div>}
+          {msg && <div className="mt-2 text-xs text-emerald-700">{msg}</div>}
+          <p className="mt-2 text-xs text-slate-500">Each client is a separate workspace: its users see only its accounts. Open a client to work as its admin; use ← Clients to come back.</p>
+        </Card>
       </div>
-    </Card>
+      {confirmOrg && <ConfirmDialog
+        title={`Disable ${confirmOrg.name}?`}
+        body={`All ${confirmOrg.users} users lose access immediately. Their data is kept and re-enabling restores it.`
+          + (confirmOrg.id === HOME_ORG ? " This is your own company's workspace — OneVio's CSMs and admins will be locked out too. Your super-admin login is not affected." : "")}
+        confirmLabel="Disable"
+        onConfirm={async () => { await applyDisabled(confirmOrg, true); setConfirmOrg(null); }}
+        onClose={() => setConfirmOrg(null)} />}
+    </div>
   );
 }
 function UsersCard({ me }) {
@@ -3966,7 +3997,7 @@ class ViewBoundary extends React.Component {
   }
 }
 
-function App({ user }) {
+function App({ user, onBackToClients }) {
   const toast = useToast();
   // Platform admins can switch between workspaces, so they are shown which one they are in.
   const [orgName, setOrgName] = useState("");
@@ -4223,7 +4254,10 @@ function App({ user }) {
         </nav>
         <div className={`border-t border-slate-200 ${collapsed ? "p-2" : "p-4"}`}>
           {!collapsed && <>
-            {user.platform_admin && <div data-current-org className="mb-1 truncate rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-700" title="You are viewing this workspace as platform admin">{orgName || "…"}</div>}
+            {user.platform_admin && <div data-current-org className="mb-1 flex items-center gap-1 truncate rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-700" title="You are viewing this workspace as platform admin">
+              <button data-back-to-clients className="hover:underline" onClick={onBackToClients}>← Clients</button>
+              <span className="truncate">· {orgName || "…"}</span>
+            </div>}
             <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
             <div className="text-xs text-slate-500">{user.role}{loaded ? "" : " · loading…"}</div>
           </>}
@@ -4299,16 +4333,25 @@ function App({ user }) {
     </div>
   );
 }
+// The platform admin's home org (OneVio). Disabling it is allowed, behind an extra warning.
+const HOME_ORG = "00000000-0000-0000-0000-000000000001";
+// Console routing for the platform admin. Session-scoped on purpose: every new sign-in
+// starts at the console. Storage can throw (private mode, blocked site data); the fallback
+// is the console, which is safe.
+const IN_CLIENT_KEY = "onevio.inClient";
+const inClientGet = () => { try { return sessionStorage.getItem(IN_CLIENT_KEY) === "1"; } catch { return false; } };
+const inClientSet = on => { try { on ? sessionStorage.setItem(IN_CLIENT_KEY, "1") : sessionStorage.removeItem(IN_CLIENT_KEY); } catch {} };
 function Root() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [orgDisabled, setOrgDisabled] = useState(false);
+  const [inClient, setInClient] = useState(inClientGet);
   const [recovering, setRecovering] = useState(IS_RECOVERY);
   useEffect(() => {
     if (!CONFIGURED) return;
     sb.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: sub } = sb.auth.onAuthStateChange((_e, s) => setSession(s));
+    const { data: sub } = sb.auth.onAuthStateChange((e, s) => { if (e === "SIGNED_OUT") { inClientSet(false); setInClient(false); } setSession(s); });
     return () => sub.subscription.unsubscribe();
   }, []);
   useEffect(() => {
@@ -4365,11 +4408,13 @@ function Root() {
       <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
     </div>
   );
+  // The platform admin works from the client console and enters a client explicitly.
+  if (profile.platform_admin && !inClient) return <ToastProvider><ClientConsole me={profile} onEnter={() => setInClient(true)} /></ToastProvider>;
   // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
   // Renewals leaves the nav and every other view usable. This outer one is the backstop --
   // App's own body computes analytics (retentionStats at ~3204), so data that breaks THAT
   // throws before any view renders, and without this the user gets a blank white page.
-  return <ToastProvider><ViewBoundary view="the app"><App user={profile} /></ViewBoundary></ToastProvider>;
+  return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
 window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
