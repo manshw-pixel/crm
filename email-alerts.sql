@@ -168,6 +168,18 @@ $$;
 revoke execute on function public.alert_recipients(uuid) from public;
 revoke execute on function public.unrouted_csms(uuid)   from public;
 
+-- The orgs the dispatcher serves: those with prefs, minus any disabled client (a disabled
+-- client's users are locked out of the app, so they get no email either).
+create or replace function public.alert_orgs()
+returns table(org_id uuid, enabled_kinds text[])
+language sql stable security definer set search_path = public as $$
+  select p.org_id, p.enabled_kinds
+  from org_alert_prefs p join orgs o on o.id = p.org_id
+  where not o.disabled
+  order by p.org_id;
+$$;
+revoke execute on function public.alert_orgs() from public;
+
 -- A regex-passing string is not necessarily a real date ('2026-13-45' matches
 -- ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ but has no 13th month), and the regex + nullif guards below
 -- are per-account, not scoped to any one recipient -- a builder's WHERE and target list
@@ -373,7 +385,7 @@ begin
   -- each org's own choice (org_alert_prefs.enabled_kinds). An org with no prefs row is not
   -- in this loop at all, and an org with no recipients (a freshly created org whose admin
   -- has not signed up yet) runs an empty inner loop: neither case sends, logs or errors.
-  for o in select p.org_id, p.enabled_kinds from org_alert_prefs p order by p.org_id loop
+  for o in select * from alert_orgs() loop
   continue when not (p_kind = any(o.enabled_kinds));
 
   -- Unmatched CSM names, rendered into the admin digest so the failure is visible to a

@@ -106,7 +106,7 @@ belong to exactly one org and see only its data.
    `id` column the SQL drops and uploads files to paths the new storage policies refuse.
 
 **Onboarding a client**
-Settings → Platform (visible only to the platform admin) → fill in client name, the admin's
+The Clients console (where the platform admin lands after sign-in) → fill in client name, the admin's
 name, email and a temporary password → Create client. Share the credentials. That admin
 adds their own team from Settings → Users. Switch into a client from the same card to see
 exactly what they see; the amber badge in the sidebar shows which org you are currently in.
@@ -114,6 +114,13 @@ exactly what they see; the amber badge in the sidebar shows which org you are cu
 **Alert preferences per client** are rows in `public.org_alert_prefs` (which alert kinds are
 enabled, health-drop sensitivity); edit them in the SQL editor for now — there is no UI for
 this yet.
+
+**Disabling a client**
+From the Clients console, select a client and click Disable. All its users are locked out
+immediately (data kept), and Enable restores their access. Disabling OneVio itself locks out
+OneVio's own staff but not the platform admin. Picking up this feature requires re-running
+`supabase-setup.sql` **whole, top to bottom**, then `email-alerts.sql` — both in the SQL
+editor, in that order.
 
 ## Disabling a user
 

@@ -80,6 +80,11 @@ const MOCK = `window.__sbFactory = () => {
         return Promise.resolve({ data: window.__seedUsers || [], error: null });
       }
       if (fn === "list_orgs") return Promise.resolve({ data: window.__seedOrgs || [], error: null });
+      if (fn === "set_org_disabled") {
+        const o = (window.__seedOrgs || []).find(x => x.id === args.p_org_id);
+        if (o) o.disabled = args.p_disabled;
+        return Promise.resolve({ data: null, error: null });
+      }
       if (fn === "create_org") return Promise.resolve(window.__createOrgError ? { data: null, error: { message: window.__createOrgError } } : { data: "org-new", error: null });
       if (fn === "invite_user") return Promise.resolve({ data: window.__inviteResult ?? "invited", error: null });
       if (fn === "switch_org") return Promise.resolve({ data: null, error: null });
