@@ -91,3 +91,13 @@ test("set_org_disabled works for the platform admin only, and a locked-out user 
     assert(none.error && /no such org/.test(none.error.message), "unknown org not refused");
   } finally { await setDisabled(ORG_B, false); }
 });
+
+test("the email dispatcher's org list skips a disabled org", async () => {
+  const pre = await sql(`select org_id from public.alert_orgs()`);
+  assert(pre.some(r => r.org_id === ORG_B), "precondition: org B has no alert prefs, so this test proves nothing");
+  await whileDisabled(ORG_B, async () => {
+    const rows = await sql(`select org_id from public.alert_orgs()`);
+    assert(!rows.some(r => r.org_id === ORG_B), "alert_orgs still returns a disabled org");
+    assert(rows.some(r => r.org_id === ORG_A), "alert_orgs dropped an enabled org");
+  });
+});
