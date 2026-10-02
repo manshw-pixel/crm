@@ -32,8 +32,13 @@ Settings. Disabling is a full, reversible lockout of that client's users; data i
   - any org may be disabled, OneVio included.
 - `list_orgs()` gains a `disabled boolean` output column. The return type changes, so it is
   `drop function if exists` + recreate.
-- New `my_org_disabled()` returning boolean, security definer, so the app can tell a
-  locked-out user why they see nothing (they cannot read `orgs` themselves).
+- No new function is needed for the lockout screen. The existing `orgs_select` policy
+  (`id = current_org() or is_platform_admin()`) does not depend on `is_active()`, so a
+  locked-out user can still read their own org's `disabled` flag.
+- `is_admin()` must get the same org check as `is_active()`. Several policies (settings
+  write, profiles update, invites, accounts delete) and the RPCs `replace_all`,
+  `admin_user_list`, `admin_set_user_email` and `invite_user` gate on `is_admin()` alone,
+  so without this a disabled client's admin could still write.
 
 ### Definer audit (required)
 
@@ -81,8 +86,8 @@ The plan lists each function and its verdict.
 
 ### Locked-out user
 
-- After profile load, a user who is not the platform admin and for whom `my_org_disabled()`
-  is true sees a lockout screen next to the existing `profile.disabled` one: "Your
+- After profile load, a user who is not the platform admin and whose org row reads
+  `disabled = true` sees a lockout screen next to the existing `profile.disabled` one: "Your
   organisation's access is suspended." / "Contact your provider to restore it." with Sign
   out.
 
