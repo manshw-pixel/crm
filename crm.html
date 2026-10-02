@@ -4303,6 +4303,7 @@ function Root() {
   const [ready, setReady] = useState(false);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [orgDisabled, setOrgDisabled] = useState(false);
   const [recovering, setRecovering] = useState(IS_RECOVERY);
   useEffect(() => {
     if (!CONFIGURED) return;
@@ -4316,7 +4317,18 @@ function Root() {
       // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
       // wraps App, so window.__toast is genuinely undefined here and alert is the only
       // channel left. Deliberately kept.
-      .then(({ data, error }) => error ? (window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message)) : (CURRENT_ORG = data.org_id, setProfile(data)));
+      .then(async ({ data, error }) => {
+        if (error) return window.__toast?.({ text: "Could not load your profile: " + error.message, tone: "error" }) ?? alert("Could not load your profile: " + error.message);
+        // A disabled client's users are already locked out by RLS (org_enabled()). Resolve
+        // the flag BEFORE setProfile so the suspended screen never flashes an empty app.
+        // orgs_select does not depend on is_active(), so this read still works for them.
+        let suspended = false;
+        if (data.org_id && !data.platform_admin) {
+          const { data: o } = await sb.from("orgs").select("disabled").eq("id", data.org_id).single();
+          suspended = !!o?.disabled;
+        }
+        CURRENT_ORG = data.org_id; setOrgDisabled(suspended); setProfile(data);
+      });
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
@@ -4343,6 +4355,13 @@ function Root() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
       <p className="font-semibold text-slate-900">Your account is not attached to a workspace yet.</p>
       <p>Ask your administrator to invite {profile.name ? "you" : "this email"}.</p>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+    </div>
+  );
+  if (orgDisabled) return (
+    <div data-org-suspended className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
+      <p className="font-semibold text-slate-900">Your organisation's access is suspended.</p>
+      <p>Contact your provider to restore it.</p>
       <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
     </div>
   );
