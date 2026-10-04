@@ -168,3 +168,36 @@ test("create_org's refusal is shown and no sign-up is attempted", async () => {
   await browser.close();
 });
 
+
+test("a platform admin with no org of their own still lands on the console", async () => {
+  const { page, browser } = await launch(seedConsole(`window.__seedProfile.org_id = null;`));
+  await page.waitForSelector("[data-client-console] >> text=Beta Ltd", { timeout: 15000 });
+  assert(!/not attached to a workspace/.test(await rootText(page)), "no-workspace screen shown to the platform admin");
+  await browser.close();
+});
+
+test("an org-less ordinary user still gets the no-workspace screen (control)", async () => {
+  const { page, browser } = await launch(`${empty} window.__seedProfile = { id: "u1", name: "New", role: "user", org_id: null, platform_admin: false };`);
+  await page.waitForSelector("text=not attached to a workspace", { timeout: 15000 });
+  assert(!(await page.$("[data-client-console]")), "console shown to a non-platform admin");
+  await browser.close();
+});
+
+test("a switch_org that throws clears the in-client flag and shows the error", async () => {
+  const { page, browser } = await launch(seedConsole(`window.__switchOrgThrows = true;`));
+  await page.waitForSelector('[data-open-org="org-b"]', { timeout: 15000 });
+  await page.evaluate(() => { window.__reloads = 0; window.__reload = () => window.__reloads++; });
+  await page.click('[data-open-org="org-b"]');
+  await page.waitForSelector("[data-client-console] >> text=mock switch_org rejection", { timeout: 15000 });
+  assert(await page.evaluate(() => sessionStorage.getItem("onevio.inClient")) === null, "flag left set after a thrown switch_org");
+  assert((await page.evaluate(() => window.__reloads)) === 0, "reloaded after a failed switch");
+  await browser.close();
+});
+
+test("a profile load that throws reports it instead of hanging silently", async () => {
+  const { page, browser } = await launch(`${empty} window.__profileThrows = true; window.alert = m => { window.__alerted = m; };`);
+  await page.waitForFunction(() => window.__alerted, null, { timeout: 15000 });
+  const msg = await page.evaluate(() => window.__alerted);
+  assert(/Could not load your profile: mock profile rejection/.test(msg), msg);
+  await browser.close();
+});

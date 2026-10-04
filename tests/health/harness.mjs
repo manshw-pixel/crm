@@ -45,7 +45,8 @@ const MOCK = `window.__sbFactory = () => {
       const rows = window.__seedRows?.profiles || [window.__seedProfile || { id: "u1", name: "Test User", role: "admin", org_id: "org-a", platform_admin: false }];
       const p = Promise.resolve({ data: rows, error: null });
       p.eq = (_col, val) => ({
-        single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }),
+        // __profileThrows: the root profile read rejects, as supabase-js does on a network failure.
+        single: async () => { if (window.__profileThrows) throw new Error("mock profile rejection"); return { data: rows.find(r => r.id === val) || rows[0] || null, error: null }; },
       });
       p.order = () => Promise.resolve({ data: rows, error: null });
       return p;
@@ -87,7 +88,7 @@ const MOCK = `window.__sbFactory = () => {
       }
       if (fn === "create_org") return Promise.resolve(window.__createOrgError ? { data: null, error: { message: window.__createOrgError } } : { data: "org-new", error: null });
       if (fn === "invite_user") return Promise.resolve({ data: window.__inviteResult ?? "invited", error: null });
-      if (fn === "switch_org") return Promise.resolve({ data: null, error: null });
+      if (fn === "switch_org") return window.__switchOrgThrows ? Promise.reject(new Error("mock switch_org rejection")) : Promise.resolve({ data: null, error: null });
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
       }

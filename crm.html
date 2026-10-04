@@ -3637,7 +3637,10 @@ function ClientConsole({ me, onEnter }) {
     // Already in this org: no switch, no reload -- just enter.
     if (o.id === me.org_id) { inClientSet(true); return onEnter(); }
     inClientSet(true);
-    const { error } = await sb.rpc("switch_org", { p_org_id: o.id });
+    // A thrown rejection (network down, fetch aborted) must clear the flag just like a
+    // returned error, or the next reload drops the admin into a client they never entered.
+    let error;
+    try { ({ error } = await sb.rpc("switch_org", { p_org_id: o.id })); } catch (ex) { error = ex; }
     if (error) { inClientSet(false); return setErr(error.message); }
     // window.__reload is a test seam: the health suite counts the reload instead of taking it.
     (window.__reload || (() => location.reload()))();
@@ -4371,7 +4374,10 @@ function Root() {
           suspended = !!o?.disabled;
         }
         CURRENT_ORG = data.org_id; setOrgDisabled(suspended); setProfile(data);
-      });
+      })
+      // A throw (network failure, or the orgs read rejecting) would otherwise leave
+      // "Loading profile…" on screen forever with no way out.
+      .catch(ex => alert("Could not load your profile: " + (ex?.message || ex)));
   }, [session]);
   if (!CONFIGURED) return <SetupScreen />;
   if (!ready) return <div className="flex min-h-screen items-center justify-center text-sm text-slate-500">Loading…</div>;
@@ -4392,6 +4398,10 @@ function Root() {
       <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
     </div>
   );
+  // The platform admin works from the client console and enters a client explicitly. Ahead
+  // of the no-workspace screen: a platform admin with no org of their own still needs the
+  // console, since that is where they pick one. Behind the disabled gate, which still wins.
+  if (profile.platform_admin && !inClient) return <ToastProvider><ClientConsole me={profile} onEnter={() => setInClient(true)} /></ToastProvider>;
   // Sign-ups that matched no invite land here. RLS already returns them nothing; this
   // says why instead of rendering an empty app.
   if (!profile.org_id) return (
@@ -4408,8 +4418,6 @@ function Root() {
       <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
     </div>
   );
-  // The platform admin works from the client console and enters a client explicitly.
-  if (profile.platform_admin && !inClient) return <ToastProvider><ClientConsole me={profile} onEnter={() => setInClient(true)} /></ToastProvider>;
   // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
   // Renewals leaves the nav and every other view usable. This outer one is the backstop --
   // App's own body computes analytics (retentionStats at ~3204), so data that breaks THAT
