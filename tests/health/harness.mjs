@@ -293,10 +293,14 @@ export function buildMockedHtml(seedJs) {
   return "file://" + file.replace(/\\/g, "/");
 }
 
+// Default renewal is Jan 1 two years out: always beyond the app's 90-day playbook window.
+// A fixed date (it was 2027-01-01) silently entered that window on 2026-10-03, and the app
+// then auto-seeded playbook tasks that broke every test counting tasks or writes.
+export const FAR_RENEWAL = `${new Date().getFullYear() + 2}-01-01`;
 export function seedAccount(o = {}) {
   return {
     id: o.id || "t1", name: o.name || "Test Co", tier: "Mid", arr: 100000, currency: "USD",
-    industry: "Tech", csm: o.csm || "Priya", startDate: "2025-01-01", renewalDate: "2027-01-01",
+    industry: "Tech", csm: o.csm || "Priya", startDate: "2025-01-01", renewalDate: FAR_RENEWAL,
     contractStatus: "Active", inputs: o.inputs || { usage: 80, sentiment: 80, tickets: 0, nps: 40 },
     history: o.history || [], inputsUpdatedAt: "2026-07-01",
     ...(o.healthBand !== undefined ? { healthBand: o.healthBand } : {}),
