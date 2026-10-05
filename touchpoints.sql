@@ -57,3 +57,38 @@ end $$;
 
 revoke execute on function public.tp_addr(text), public.tp_domain(text), public.tp_generic(text),
   public.tp_body_addrs(text), public.tp_strip_quotes(text) from public, anon, authenticated;
+
+-- ---------- matching ----------
+-- Accounts in p_org whose contacts share a domain with p_addrs. One id = matched (or
+-- narrowed to one by an exact contact address -- the parent/subsidiary case); several =
+-- still ambiguous; none = no match. The caller tells them apart by cardinality.
+-- Churned accounts never match: mail with a former customer is not a touchpoint to score.
+create or replace function public.tp_match(p_org uuid, p_addrs text[], p_exclude text[])
+returns text[] language plpgsql stable security definer set search_path = public as $$
+declare v_domains text[]; v_all text[]; v_exact text[];
+begin
+  select coalesce(array_agg(distinct d), '{}') into v_domains
+  from (select public.tp_domain(a) as d from unnest(coalesce(p_addrs, '{}')) a) s
+  where d is not null
+    and not (d = any(coalesce(p_exclude, '{}')))
+    and not public.tp_generic(d);
+  if cardinality(v_domains) = 0 then return '{}'; end if;
+
+  select coalesce(array_agg(distinct a.id order by a.id), '{}') into v_all
+  from contacts c
+  join accounts a on a.org_id = c.org_id and a.id = c.data->>'accountId'
+  where c.org_id = p_org
+    and coalesce(a.data->>'contractStatus', '') <> 'Churned'
+    and public.tp_domain(c.data->>'email') = any(v_domains);
+  if cardinality(v_all) <= 1 then return v_all; end if;
+
+  select coalesce(array_agg(distinct a.id order by a.id), '{}') into v_exact
+  from contacts c
+  join accounts a on a.org_id = c.org_id and a.id = c.data->>'accountId'
+  where c.org_id = p_org
+    and a.id = any(v_all)
+    and public.tp_addr(c.data->>'email') = any(p_addrs);
+  return case when cardinality(v_exact) = 1 then v_exact else v_all end;
+end $$;
+
+revoke execute on function public.tp_match(uuid, text[], text[]) from public, anon, authenticated;
