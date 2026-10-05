@@ -48,6 +48,7 @@ import "./transition-date.test.mjs";
 import "./am-book.test.mjs";
 import "./orgs.test.mjs";
 import "./client-console.test.mjs";
+import "./touchpoint-activity.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the

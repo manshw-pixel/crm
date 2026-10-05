@@ -235,3 +235,30 @@ To change send times, edit the cron expressions at the end of `email-alerts-sche
 **Re-run `supabase-setup.sql` after pulling this change.** It adds the `error_log` table
 and the `log_error` function. Until you do, the app still works but records nothing, and
 the Settings error panel shows a permissions error.
+
+## Email touchpoints (inbound)
+
+Forward or Cc a customer thread to the touchpoints inbox and it is logged as an `email`
+activity on the account whose contacts share the customer's email domain.
+
+**Setup (once):**
+1. Run `touchpoints.sql` in the Supabase SQL editor, after `supabase-setup.sql` and
+   `email-alerts.sql`. It is safe to re-run.
+2. Set the shared secret and inbox address:
+   `update public.touchpoint_config set secret = '<long random string>', inbox_address = 'touchpoints@yourdomain' where id = 1;`
+3. Point an inbound-mail provider at the inbox (needs an MX record). Its webhook must call
+   `POST /rest/v1/rpc/ingest_touchpoint` with the anon key and a body of
+   `{ "p_secret": "<secret>", "p_message": { ... } }`, where `p_message` is:
+
+   ```json
+   { "message_id": "<id@mail>", "from": "csm@yourdomain", "to": ["touchpoints@yourdomain"],
+     "cc": ["customer@acme.com"], "date": "2026-10-05T09:12:00Z",
+     "subject": "Re: renewal", "text": "plain-text body",
+     "headers": { "auto-submitted": "no" } }
+   ```
+   Header names must be lower-case. Until a provider is connected the feature is dormant.
+
+**Rules:** only active OneVio users can file (anyone else is silently ignored); the account
+must have a contact at the customer's exact domain; Gmail/Outlook-style personal domains never
+match. If nothing matches, or two accounts match, the sender gets a "Not logged" reply saying
+why. Admins can see every received message and its outcome in the `ingest_log` table.
