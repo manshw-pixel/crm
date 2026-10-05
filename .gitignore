@@ -38,3 +38,6 @@ generate_ppt.py
 
 # third-party plugin checkout (not part of the CRM project)
 ponytail-main/
+
+# Cloudflare Worker bundle (built on demand)
+workers/touchpoints/dist/

@@ -36,6 +36,7 @@ app, runs the full test suite, and deploys only if the suite passes.
 1. Repo **Settings → Pages → Source**, choose **GitHub Actions** (not "Deploy from a branch").
 2. Push to `master`.
 3. Share the URL: `https://<your-user>.github.io/<repo>/`
+   Or use a custom domain (e.g. https://crm.onevio.in/): CNAME it to <your-user>.github.io (DNS only), set it in Settings → Pages → Custom domain, enforce HTTPS, then add it in Supabase → Authentication → URL Configuration as Site URL and as a Redirect URL.
 
 ### Building locally
 
@@ -246,17 +247,17 @@ activity on the account whose contacts share the customer's email domain.
    `email-alerts.sql`. It is safe to re-run.
 2. Set the shared secret and inbox address:
    `update public.touchpoint_config set secret = '<long random string>', inbox_address = 'touchpoints@yourdomain' where id = 1;`
-3. Point an inbound-mail provider at the inbox (needs an MX record). Its webhook must call
-   `POST /rest/v1/rpc/ingest_touchpoint` with the anon key and a body of
-   `{ "p_secret": "<secret>", "p_message": { ... } }`, where `p_message` is:
-
-   ```json
-   { "message_id": "<id@mail>", "from": "csm@yourdomain", "to": ["touchpoints@yourdomain"],
-     "cc": ["customer@acme.com"], "date": "2026-10-05T09:12:00Z",
-     "subject": "Re: renewal", "text": "plain-text body",
-     "headers": { "auto-submitted": "no" } }
-   ```
-   Header names must be lower-case. Until a provider is connected the feature is dormant.
+3. Cloudflare (domain on Cloudflare, Email Routing enabled):
+   - Run `npm run build:worker` and open `workers/touchpoints/dist/worker.js`.
+   - Workers & Pages → Create → Worker → name `onevio-touchpoints` → Deploy → Edit code →
+     replace everything with that file → Deploy.
+   - Worker → Settings → Variables and Secrets: `SUPABASE_URL` (text), `SUPABASE_ANON_KEY`
+     (secret), `TOUCHPOINT_SECRET` (secret, same value as in step 2).
+   - onevio.in → Email → Email Routing → Routing rules → edit `touchpoints` →
+     Action "Send to a Worker" → `onevio-touchpoints`.
+   - Test: forward a customer thread from your OneVio sign-in address; it appears on the
+     account's timeline. Email Routing's Activity log and the Worker's Logs tab show failures;
+     `select * from ingest_log order by received_at desc` shows the CRM's verdicts.
 
 **Rules:** only active OneVio users can file (anyone else is silently ignored); the account
 must have a contact at the customer's exact domain; Gmail/Outlook-style personal domains never
