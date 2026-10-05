@@ -25,6 +25,7 @@ export const ANON_KEY = process.env.SUPABASE_ANON_KEY
 
 const SETUP_SQL = fileURLToPath(new URL("../../supabase-setup.sql", import.meta.url));
 const ALERTS_SQL = fileURLToPath(new URL("../../email-alerts.sql", import.meta.url));
+const TOUCH_SQL = fileURLToPath(new URL("../../touchpoints.sql", import.meta.url));
 
 // Exported so a test can attempt a sign-in with a client that never had a session on it in
 // the first place -- sessions.admin/sessions.user already have their own tokens cached and
@@ -66,6 +67,8 @@ export async function resetStack() {
     // fail with "function does not exist" and look like a bug in the test rather than a
     // missing file.
     await client.query(readFileSync(ALERTS_SQL, "utf8"));
+    // Bounces reuse alert_config and alert_post, so this must come after email-alerts.sql.
+    await client.query(readFileSync(TOUCH_SQL, "utf8"));
     // PostgREST caches the schema. Without this the tables we just recreated come back as
     // PGRST205 "Could not find the table in the schema cache" on the very first request.
     await client.query(`notify pgrst, 'reload schema';`);
@@ -261,3 +264,4 @@ const seedEntity = table => (id, data, org = ORG_A) => sql(
 export const seedAccount  = seedEntity("accounts");
 export const seedTask     = seedEntity("tasks");
 export const seedActivity = seedEntity("activities");
+export const seedContact  = seedEntity("contacts");
