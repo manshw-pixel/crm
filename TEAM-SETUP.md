@@ -263,3 +263,9 @@ activity on the account whose contacts share the customer's email domain.
 must have a contact at the customer's exact domain; Gmail/Outlook-style personal domains never
 match. If nothing matches, or two accounts match, the sender gets a "Not logged" reply saying
 why. Admins can see every received message and its outcome in the `ingest_log` table.
+
+**Sender verification:** a forward is accepted only when Cloudflare verifies it passed DKIM or
+DMARC for the sender's domain, so a stranger cannot file by forging a CSM's From address. CSMs
+must send from a provider that signs mail (Gmail / Google Workspace, Microsoft 365, etc.), and
+any company domain CSMs send from should publish SPF, DKIM and DMARC records. A message that
+fails is ignored without a reply and shows as `rejected_sender` in `ingest_log`.

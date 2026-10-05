@@ -23,23 +23,44 @@ const sha256 = async buf => [...new Uint8Array(await crypto.subtle.digest("SHA-2
 // metadata into a function that has no use for it.
 const KEPT_HEADERS = ["auto-submitted", "precedence"];
 
+// Identity is the From header, which anyone can write. What makes it trustworthy is the
+// verdict Cloudflare Email Routing stamps on arrival. Only the FIRST Authentication-Results
+// header from mx.cloudflare.net counts: it is the one Cloudflare prepended, and headers
+// below it arrived with the message, so the sender could have forged them (RFC 8601 s5).
+// Pass = dmarc=pass, or a dkim=pass whose header.d is the From domain or a parent of it.
+export function authOk(headers, fromAddr) {
+  const h = (headers || []).find(x => (x.key || "").toLowerCase() === "authentication-results"
+    && /^\s*mx\.cloudflare\.net(\s|;|$)/i.test(x.value || ""));
+  if (!h) return false;
+  const fromDomain = String(fromAddr || "").toLowerCase().split("@").pop();
+  if (!fromDomain) return false;
+  return h.value.toLowerCase().split(";").slice(1).some(part => {
+    if (/^\s*dmarc\s*=\s*pass\b/.test(part)) return true;
+    if (!/^\s*dkim\s*=\s*pass\b/.test(part)) return false;
+    const d = (part.match(/\bheader\.d\s*=\s*"?([a-z0-9.-]+)/) || [])[1];
+    return !!d && (fromDomain === d || fromDomain.endsWith("." + d));
+  });
+}
+
 export async function toMessage(parsed, envelopeFrom, raw) {
   const headers = {};
   for (const h of parsed.headers || []) {
     const k = (h.key || "").toLowerCase();
     if (KEPT_HEADERS.includes(k)) headers[k] = h.value;
   }
+  const from = ((parsed.from && parsed.from.address) || envelopeFrom || "").toLowerCase();
   const date = parsed.date ? new Date(parsed.date) : null;
   return {
     // No Message-ID is rare but legal. A hash of the bytes keeps a retry idempotent.
     message_id: parsed.messageId || `<cf-${await sha256(raw)}@touchpoints>`,
-    from: ((parsed.from && parsed.from.address) || envelopeFrom || "").toLowerCase(),
+    from,
     to: addrs(parsed.to),
     cc: addrs(parsed.cc),
     date: date && !isNaN(date) ? date.toISOString() : null,
     subject: parsed.subject || "",
     text: parsed.text || htmlToText(parsed.html),
     headers,
+    auth_ok: authOk(parsed.headers, from),
   };
 }
 
@@ -63,5 +84,13 @@ export default {
     // Throwing makes Cloudflare refuse the message temporarily, so the sending server
     // retries later. Safe: ingest_touchpoint is idempotent on message_id.
     if (!res.ok) throw new Error(`ingest_touchpoint returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    // A 200 can still be a refusal ({ok:false, error:'bad secret'}). Swallowing it would drop
+    // the mail silently; throwing surfaces it in the Worker logs. The secret is never echoed.
+    let out = null;
+    try { out = await res.json(); } catch { /* not JSON: treated as a refusal below */ }
+    if (!out || typeof out !== "object" || out.ok !== true) {
+      const err = out && typeof out === "object" && out.error ? String(out.error).slice(0, 200) : "no ok:true in response";
+      throw new Error(`ingest_touchpoint refused the message: ${err.split(env.TOUCHPOINT_SECRET).join("***")}`);
+    }
   },
 };

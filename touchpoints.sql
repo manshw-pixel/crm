@@ -100,8 +100,10 @@ revoke execute on function public.tp_match(uuid, text[], text[]) from public, an
 create table if not exists public.touchpoint_config (
   id            int primary key default 1 check (id = 1),
   secret        text not null default 'CHANGE-ME',
-  inbox_address text not null default 'touchpoints@onevio.com'
+  inbox_address text not null default 'touchpoints@onevio.in'
 );
+-- A re-run on an existing table updates the default; existing rows are left as they are.
+alter table public.touchpoint_config alter column inbox_address set default 'touchpoints@onevio.in';
 alter table public.touchpoint_config enable row level security;
 revoke all on public.touchpoint_config from anon, authenticated;
 insert into public.touchpoint_config (id) values (1) on conflict (id) do nothing;
@@ -179,6 +181,17 @@ begin
     return jsonb_build_object('ok', true, 'verdict', 'duplicate');
   end if;
 
+  -- Identity is the From header, which anyone can write. What makes it trustworthy is
+  -- Cloudflare's DMARC/DKIM verdict, which the Worker reports as auth_ok. Enforced here, not
+  -- only in the Worker, so no future shim can skip it. A missing or junk value counts as a
+  -- fail (compared as text so a bad value cannot raise). Same row and no bounce as a stranger.
+  if lower(coalesce(p_message->>'auth_ok', '')) <> 'true' then
+    insert into ingest_log (message_id, org_id, sender, verdict)
+    values (v_mid, null, split_part(v_from, '@', 2), 'rejected_sender')
+    on conflict (message_id) do nothing;
+    return jsonb_build_object('ok', true, 'verdict', 'rejected_sender');
+  end if;
+
   -- Only an active CSM in an active org may file. Everyone else is dropped WITHOUT a reply:
   -- bouncing to strangers would turn this inbox into a spam relay.
   select p.id, p.name, p.org_id into v_sender
@@ -253,7 +266,7 @@ begin
     end if;
     v_reason := case v_verdict
       when 'no_match'  then 'No account in OneVio has a contact at any address on this thread.'
-      when 'ambiguous' then 'More than one account matched: ' || v_names || '.'
+      when 'ambiguous' then 'More than one account matched: ' || coalesce(v_names, '') || '.'
       else 'The message had no subject and no text.' end;
     if not public.tp_bounce(v_from,
          'Not logged: ' || coalesce(nullif(v_subject, ''), '(no subject)'),

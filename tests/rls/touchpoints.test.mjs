@@ -125,7 +125,9 @@ async function setup() {
 }
 
 let seq = 0;
-const msg = o => ({ message_id: `<tp-${Date.now()}-${++seq}@test>`, from: "user@test.local",
+// auth_ok: true is what the Worker reports for a Cloudflare-verified (DMARC/DKIM) sender;
+// defaulting it keeps every other test about what it was always about.
+const msg = o => ({ message_id: `<tp-${Date.now()}-${++seq}@test>`, from: "user@test.local", auth_ok: true,
   to: [INBOX], cc: [], date: "2026-10-01T09:00:00Z", subject: "Renewal chat", text: "Hi there", ...o });
 const ingest = async (m, secret = SECRET) => {
   const { data, error } = await sessions.anon.rpc("ingest_touchpoint", { p_secret: secret, p_message: m });
@@ -227,6 +229,28 @@ test("unknown, disabled, org-less and disabled-org senders are rejected silently
   // Control: the same thread from an active CSM logs.
   const ok = msg({ cc: ["contact@reject.example"] });
   assert((await ingest(ok)).verdict === "logged", "control: an active CSM did not log");
+});
+
+test("an active CSM's From without a verified sender auth is rejected silently", async () => {
+  await setup();
+  await seedCustomer("tpi-au1", "authcheck.example");
+  const failed = msg({ cc: ["contact@authcheck.example"], auth_ok: false });
+  const omitted = msg({ cc: ["contact@authcheck.example"] });
+  delete omitted.auth_ok;
+  const junk = msg({ cc: ["contact@authcheck.example"], auth_ok: "yes please" });
+  for (const [label, m] of [["auth_ok:false", failed], ["auth_ok omitted", omitted], ["auth_ok junk", junk]]) {
+    const out = await ingest(m);
+    assert(out.ok === true && out.verdict === "rejected_sender", `${label}: ${JSON.stringify(out)}`);
+    assert(await activityFor(m) === null, `${label}: an activity was written`);
+    const log = await logFor(m);
+    assert(log && log.sender === "test.local" && log.org_id === null && log.verdict === "rejected_sender",
+      `${label}: log row ${JSON.stringify(log)}`);
+  }
+  assert((await bouncesTo("user@test.local")).length === 0, "a spoofed sender triggered a bounce");
+  // Control: the same thread with auth_ok:true logs.
+  const ok = msg({ cc: ["contact@authcheck.example"], auth_ok: true });
+  assert((await ingest(ok)).verdict === "logged", "control: a verified active CSM did not log");
+  assert(await activityFor(ok), "control: no activity written");
 });
 
 test("a CSM cannot log onto another org's account", async () => {
