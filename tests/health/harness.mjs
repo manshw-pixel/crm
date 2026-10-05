@@ -107,7 +107,10 @@ const MOCK = `window.__sbFactory = () => {
     auth: {
       getSession: async () => ({ data: { session: { user: { id: "u1", email: "t@t.io" } } } }),
       getUser: async () => ({ data: { user: { id: "u1", email: "t@t.io" } } }),
-      signOut() {},
+      // Tests set __signOutResult to make sign-out fail the way supabase-js 2.45 does when
+      // the server answers 403 session_not_found (resolves { error }, session kept).
+      storageKey: "sb-test-auth-token",
+      async signOut() { window.__signOutCalls = (window.__signOutCalls || 0) + 1; return window.__signOutResult || { error: null }; },
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
     storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
@@ -246,7 +249,10 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
     auth: {
       getSession: async () => ({ data: { session: { user: { id: "u1", email: "t@t.io" } } } }),
       getUser: async () => ({ data: { user: { id: "u1", email: "t@t.io" } } }),
-      signOut() {},
+      // Tests set __signOutResult to make sign-out fail the way supabase-js 2.45 does when
+      // the server answers 403 session_not_found (resolves { error }, session kept).
+      storageKey: "sb-test-auth-token",
+      async signOut() { window.__signOutCalls = (window.__signOutCalls || 0) + 1; return window.__signOutResult || { error: null }; },
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
     storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },

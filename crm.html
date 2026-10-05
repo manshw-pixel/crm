@@ -83,6 +83,20 @@ const authRedirect = () => location.href.split("#")[0].split("?")[0];
 const sb = window.__sbFactory ? window.__sbFactory()
   : CONFIGURED ? supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 
+// supabase-js 2.45 keeps the stored session when the server answers sign-out with 403
+// session_not_found (the session already ended server-side): signOut() resolves { error },
+// SIGNED_OUT never fires, and the button looks dead. So on any failure clear the stored
+// session ourselves and reload -- the user asked to leave, and leaving must not depend on
+// the server agreeing the session still exists.
+const signOut = async () => {
+  let error = null;
+  try { ({ error } = (await sb.auth.signOut()) || {}); } catch (e) { error = e; }
+  if (!error) return;
+  try { localStorage.removeItem(sb.auth.storageKey); } catch {}
+  try { sessionStorage.removeItem("onevio.inClient"); } catch {}
+  location.reload();
+};
+
 const DAY = 86400000;
 const today = () => new Date();
 const iso = d => new Date(d).toISOString().slice(0, 10);
@@ -3677,7 +3691,7 @@ function ClientConsole({ me, onEnter }) {
           <h1 className="text-lg font-bold text-slate-900">OneVio Platform</h1>
           <div className="flex items-center gap-3 text-sm text-slate-600">
             <span>{me.name}</span>
-            <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+            <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={signOut}>Sign out</button>
           </div>
         </div>
         <Card title={`Clients (${orgs.length})`}>
@@ -4284,7 +4298,7 @@ function App({ user, onBackToClients }) {
             <div className="text-xs text-slate-500">{user.role}{loaded ? "" : " · loading…"}</div>
           </>}
           <button title={`Sign out (${user.name})`} className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "flex h-9 w-9 items-center justify-center" : "mt-3 w-full px-3 py-1.5"}`}
-            onClick={() => sb.auth.signOut()}>{collapsed ? "⎋" : "Sign out"}</button>
+            onClick={signOut}>{collapsed ? "⎋" : "Sign out"}</button>
         </div>
       </aside>
       <main className={`${collapsed ? "ml-14" : "ml-52"} min-w-0 flex-1 px-6 py-5 transition-all`}>
@@ -4414,7 +4428,7 @@ function Root() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
       <p className="font-semibold text-slate-900">Your access has been removed.</p>
       <p>Ask an administrator to re-enable your account.</p>
-      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={signOut}>Sign out</button>
     </div>
   );
   // The platform admin works from the client console and enters a client explicitly. Ahead
@@ -4427,14 +4441,14 @@ function Root() {
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
       <p className="font-semibold text-slate-900">Your account is not attached to a workspace yet.</p>
       <p>Ask your administrator to invite {profile.name ? "you" : "this email"}.</p>
-      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={signOut}>Sign out</button>
     </div>
   );
   if (orgDisabled) return (
     <div data-org-suspended className="flex min-h-screen flex-col items-center justify-center gap-3 text-sm text-slate-600">
       <p className="font-semibold text-slate-900">Your organisation's access is suspended.</p>
       <p>Contact your provider to restore it.</p>
-      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={() => sb.auth.signOut()}>Sign out</button>
+      <button className="nm-btn px-3 py-1.5 text-xs font-semibold" onClick={signOut}>Sign out</button>
     </div>
   );
   // Two boundaries, deliberately. The inner per-view one degrades gracefully: a crash in
