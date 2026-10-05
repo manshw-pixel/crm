@@ -35,6 +35,8 @@ jobs:
             package-lock.json
             tests/package-lock.json
       - run: npm ci                       # build deps (esbuild, tailwind)
+      # The Cloudflare Email Worker (touchpoints inbox). Plain node, no network.
+      - run: npm run test:worker
       - run: npm ci
         working-directory: tests
       - run: npx playwright install --with-deps chromium

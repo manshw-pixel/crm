@@ -2,9 +2,14 @@
   "name": "onevio-crm",
   "private": true,
   "type": "module",
-  "scripts": { "build": "node build.mjs" },
+  "scripts": {
+    "build": "node build.mjs",
+    "build:worker": "node workers/touchpoints/build.mjs",
+    "test:worker": "node tests/worker/touchpoints.test.mjs"
+  },
   "devDependencies": {
     "esbuild": "^0.25.0",
+    "postal-mime": "^4.0.4",
     "tailwindcss": "^3.4.17"
   }
 }

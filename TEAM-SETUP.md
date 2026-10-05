@@ -36,6 +36,7 @@ app, runs the full test suite, and deploys only if the suite passes.
 1. Repo **Settings → Pages → Source**, choose **GitHub Actions** (not "Deploy from a branch").
 2. Push to `master`.
 3. Share the URL: `https://<your-user>.github.io/<repo>/`
+   Or use a custom domain (e.g. https://crm.onevio.in/): CNAME it to <your-user>.github.io (DNS only), set it in Settings → Pages → Custom domain, enforce HTTPS, then add it in Supabase → Authentication → URL Configuration as Site URL and as a Redirect URL.
 
 ### Building locally
 
@@ -235,3 +236,36 @@ To change send times, edit the cron expressions at the end of `email-alerts-sche
 **Re-run `supabase-setup.sql` after pulling this change.** It adds the `error_log` table
 and the `log_error` function. Until you do, the app still works but records nothing, and
 the Settings error panel shows a permissions error.
+
+## Email touchpoints (inbound)
+
+Forward or Cc a customer thread to the touchpoints inbox and it is logged as an `email`
+activity on the account whose contacts share the customer's email domain.
+
+**Setup (once):**
+1. Run `touchpoints.sql` in the Supabase SQL editor, after `supabase-setup.sql` and
+   `email-alerts.sql`. It is safe to re-run.
+2. Set the shared secret and inbox address:
+   `update public.touchpoint_config set secret = '<long random string>', inbox_address = 'touchpoints@yourdomain' where id = 1;`
+3. Cloudflare (domain on Cloudflare, Email Routing enabled):
+   - Run `npm run build:worker` and open `workers/touchpoints/dist/worker.js`.
+   - Workers & Pages → Create → Worker → name `onevio-touchpoints` → Deploy → Edit code →
+     replace everything with that file → Deploy.
+   - Worker → Settings → Variables and Secrets: `SUPABASE_URL` (text), `SUPABASE_ANON_KEY`
+     (secret), `TOUCHPOINT_SECRET` (secret, same value as in step 2).
+   - onevio.in → Email → Email Routing → Routing rules → edit `touchpoints` →
+     Action "Send to a Worker" → `onevio-touchpoints`.
+   - Test: forward a customer thread from your OneVio sign-in address; it appears on the
+     account's timeline. Email Routing's Activity log and the Worker's Logs tab show failures;
+     `select * from ingest_log order by received_at desc` shows the CRM's verdicts.
+
+**Rules:** only active OneVio users can file (anyone else is silently ignored); the account
+must have a contact at the customer's exact domain; Gmail/Outlook-style personal domains never
+match. If nothing matches, or two accounts match, the sender gets a "Not logged" reply saying
+why. Admins can see every received message and its outcome in the `ingest_log` table.
+
+**Sender verification:** a forward is accepted only when Cloudflare verifies it passed DKIM or
+DMARC for the sender's domain, so a stranger cannot file by forging a CSM's From address. CSMs
+must send from a provider that signs mail (Gmail / Google Workspace, Microsoft 365, etc.), and
+any company domain CSMs send from should publish SPF, DKIM and DMARC records. A message that
+fails is ignored without a reply and shows as `rejected_sender` in `ingest_log`.
