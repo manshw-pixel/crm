@@ -2231,8 +2231,13 @@ const idb = () => new Promise((res, rej) => {
 const idbSet = async (k, v) => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
 const idbGet = async k => { const db = await idb(); return new Promise((res, rej) => { const rq = db.transaction("handles").objectStore("handles").get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); };
 const idbDel = async k => { const db = await idb(); return new Promise((res, rej) => { const tx = db.transaction("handles", "readwrite"); tx.objectStore("handles").delete(k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); }); };
-async function ensurePermission(handle, mode = "read") {
+// Chrome only lets requestPermission run inside a user gesture (a click). A folder handle
+// restored from IndexedDB after a reload is back at "prompt", so the 5-minute auto-scan must
+// only QUERY: asking from a timer throws "User activation is required", which used to land
+// in the sync log every 5 minutes while the folder silently stopped syncing.
+async function ensurePermission(handle, mode = "read", interactive = true) {
   if (await handle.queryPermission({ mode }) === "granted") return true;
+  if (!interactive) return false;
   return (await handle.requestPermission({ mode })) === "granted";
 }
 async function listCsvFiles(dirHandle) {
@@ -2244,12 +2249,20 @@ async function listCsvFiles(dirHandle) {
 function IntegrationsCard({ st, dispatch, user }) {
   const [handles, setHandles] = useState({ sales: null, finance: null });
   const [busy, setBusy] = useState(false);
+  // folders whose access lapsed (e.g. after a reload) and need one click to re-grant
+  const [needsGrant, setNeedsGrant] = useState({ sales: false, finance: false });
   const integ = st.settings.integrations || { processed: {}, log: [] };
   useEffect(() => { (async () => {
-    try { setHandles({ sales: await idbGet("sales") || null, finance: await idbGet("finance") || null }); } catch (e) {}
+    try {
+      const h = { sales: await idbGet("sales") || null, finance: await idbGet("finance") || null };
+      setHandles(h);
+      const lapsed = {};
+      for (const key of ["sales", "finance"]) lapsed[key] = !!h[key] && !(await ensurePermission(h[key], "read", false));
+      setNeedsGrant(lapsed);
+    } catch (e) {}
   })(); }, []);
   const pick = async key => {
-    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); }
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); setNeedsGrant(s => ({ ...s, [key]: false })); }
     catch (e) { /* user cancelled */ }
   };
   // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
@@ -2268,15 +2281,22 @@ function IntegrationsCard({ st, dispatch, user }) {
     download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
       ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(esc).join(","))].join("\n"));
   };
-  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); };
-  const sync = useCallback(async () => {
+  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); };
+  // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
+  // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
+  const sync = useCallback(async (interactive = true) => {
     if (busy) return; setBusy(true);
     const processed = { ...integ.processed }; const log = [...integ.log];
     const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
     for (const key of ["sales", "finance"]) {
       const h = handles[key]; if (!h) continue;
       try {
-        if (!await ensurePermission(h)) { note(key, "—", "permission denied", true); continue; }
+        if (!await ensurePermission(h, "read", interactive)) {
+          setNeedsGrant(s => ({ ...s, [key]: true }));
+          if (interactive) note(key, "—", "permission denied", true);
+          continue;
+        }
+        setNeedsGrant(s => ({ ...s, [key]: false }));
         for (const f of await listCsvFiles(h)) {
           const sig = `${f.name}|${f.lastModified}`;
           if (processed[sig]) continue;
@@ -2295,16 +2315,18 @@ function IntegrationsCard({ st, dispatch, user }) {
   }, [handles, st, busy, dispatch, user]);
   useEffect(() => { // auto-scan every 5 minutes while a folder is connected
     if (!handles.sales && !handles.finance) return;
-    const t = setInterval(sync, 5 * 60 * 1000);
+    const t = setInterval(() => sync(false), 5 * 60 * 1000);
     return () => clearInterval(t);
   }, [handles, sync]);
   if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
   return (
-    <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={sync}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
+    <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={() => sync(true)}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
       {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
         <div key={key} className="mb-2 flex items-center gap-2 text-sm">
           <span className="w-28 font-semibold">{label}</span>
           {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
+            {needsGrant[key] && <span data-grant={key} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
+              <Btn onClick={() => sync(true)}>Grant access</Btn></span>}
             <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
             : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
           <span className="ml-auto text-xs text-slate-400">{hint}</span>
