@@ -54,6 +54,7 @@ import "./signout.test.mjs";
 import "./mobile.test.mjs";
 import "./drive-permission.test.mjs";
 import "./csv-dates.test.mjs";
+import "./tab-icon.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
