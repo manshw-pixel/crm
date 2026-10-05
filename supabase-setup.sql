@@ -84,8 +84,10 @@ create unique index if not exists invites_one_open_per_email
 
 -- ---------- helper: which org is this request for? ----------
 -- The single source of tenancy. Every policy and every org-stamping RPC reads this.
--- Definer so it can read profiles regardless of the profiles policies; stable so the
--- planner evaluates it once per statement.
+-- Definer so it can read profiles regardless of the profiles policies. Stable alone does NOT
+-- make the planner evaluate it once per statement: a bare call in a policy runs per row. So
+-- every policy below wraps the helpers as (select public.current_org()), which Postgres
+-- hoists into an initplan evaluated once per query.
 create or replace function public.current_org()
 returns uuid language sql stable security definer set search_path = public as
 $$ select org_id from profiles where id = auth.uid() $$;
@@ -295,35 +297,35 @@ alter table public.opportunities enable row level security;
 -- leaving them stuck on "Loading profile..." -- the opposite of a clean sign-out.
 drop policy if exists profiles_select on public.profiles;
 create policy profiles_select on public.profiles for select to authenticated
-  using ((public.is_active() and org_id = public.current_org()) or id = auth.uid());
+  using (((select public.is_active()) and org_id = (select public.current_org())) or id = auth.uid());
 drop policy if exists profiles_update_admin on public.profiles;
 create policy profiles_update_admin on public.profiles for update to authenticated
-  using (public.is_admin() and org_id = public.current_org())
-  with check (public.is_admin() and org_id = public.current_org());
+  using ((select public.is_admin()) and org_id = (select public.current_org()))
+  with check ((select public.is_admin()) and org_id = (select public.current_org()));
 
 -- orgs: members see their own org (the sidebar shows its name); the platform admin sees all.
 -- No insert/update/delete from the browser: create_org() is the only writer.
 drop policy if exists orgs_select on public.orgs;
 create policy orgs_select on public.orgs for select to authenticated
-  using (id = public.current_org() or public.is_platform_admin());
+  using (id = (select public.current_org()) or (select public.is_platform_admin()));
 
 -- invites: org admins read and create their own org's invites. invite_user()/create_org()
 -- are the app's writers; the insert policy is the direct-API equivalent, pinned to the org.
 drop policy if exists invites_select on public.invites;
 create policy invites_select on public.invites for select to authenticated
-  using (public.is_admin() and org_id = public.current_org());
+  using ((select public.is_admin()) and org_id = (select public.current_org()));
 drop policy if exists invites_insert on public.invites;
 create policy invites_insert on public.invites for insert to authenticated
-  with check (public.is_admin() and org_id = public.current_org());
+  with check ((select public.is_admin()) and org_id = (select public.current_org()));
 
 -- settings: read all in org, write admin in org
 drop policy if exists settings_select on public.settings;
 create policy settings_select on public.settings for select to authenticated
-  using (public.is_active() and org_id = public.current_org());
+  using ((select public.is_active()) and org_id = (select public.current_org()));
 drop policy if exists settings_write on public.settings;
 create policy settings_write on public.settings for all to authenticated
-  using (public.is_admin() and org_id = public.current_org())
-  with check (public.is_admin() and org_id = public.current_org());
+  using ((select public.is_admin()) and org_id = (select public.current_org()))
+  with check ((select public.is_admin()) and org_id = (select public.current_org()));
 
 -- entity tables: read/insert/update for active users of the row's org
 do $$
@@ -331,24 +333,24 @@ declare t text;
 begin
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
-    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (public.is_active() and org_id = public.current_org())', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()))', t);
     execute format('drop policy if exists %1$s_insert on public.%1$I', t);
-    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check (public.is_active() and org_id = public.current_org())', t);
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check ((select public.is_active()) and org_id = (select public.current_org()))', t);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (public.is_active() and org_id = public.current_org()) with check (public.is_active() and org_id = public.current_org())', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using ((select public.is_active()) and org_id = (select public.current_org())) with check ((select public.is_active()) and org_id = (select public.current_org()))', t);
   end loop;
 end $$;
 
 -- deletes: accounts admin-only; child tables any active user -- within the org
 drop policy if exists accounts_delete on public.accounts;
 create policy accounts_delete on public.accounts for delete to authenticated
-  using (public.is_admin() and org_id = public.current_org());
+  using ((select public.is_admin()) and org_id = (select public.current_org()));
 do $$
 declare t text;
 begin
   foreach t in array array['contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_delete on public.%1$I', t);
-    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (public.is_active() and org_id = public.current_org())', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using ((select public.is_active()) and org_id = (select public.current_org()))', t);
   end loop;
 end $$;
 
@@ -551,13 +553,13 @@ drop policy if exists error_log_insert on public.error_log;
 -- Scoped to the caller's org: an unscoped check would let a client plant a row in another
 -- tenant's log. (log_error is definer and does not go through this policy.)
 create policy error_log_insert on public.error_log for insert to authenticated
-  with check (org_id = public.current_org());
+  with check (org_id = (select public.current_org()));
 
 -- select: admins only, their own org. Error messages quote application data. Null-org
 -- system rows are for the platform admin only.
 drop policy if exists error_log_select on public.error_log;
 create policy error_log_select on public.error_log for select to authenticated
-  using ((public.is_admin() and org_id = public.current_org()) or public.is_platform_admin());
+  using (((select public.is_admin()) and org_id = (select public.current_org())) or (select public.is_platform_admin()));
 
 -- NO update and NO delete policy, deliberately. log_error owns every mutation, so nobody
 -- can edit or delete a record -- including its count -- to erase their own errors.
@@ -679,7 +681,7 @@ alter table public.health_snapshots enable row level security;
 -- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
 drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
-  for select to authenticated using (public.is_active() and org_id = public.current_org());
+  for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()));
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
@@ -1045,19 +1047,19 @@ on conflict (id) do nothing;
 drop policy if exists attachments_read on storage.objects;
 create policy attachments_read on storage.objects
   for select to authenticated
-  using (bucket_id = 'attachments' and public.is_active()
-         and ((storage.foldername(name))[1] = public.current_org()::text
-              or (public.current_org() = '00000000-0000-0000-0000-000000000001'
+  using (bucket_id = 'attachments' and (select public.is_active())
+         and ((storage.foldername(name))[1] = (select public.current_org())::text
+              or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
                   and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'attachments' and public.is_active()
-              and (storage.foldername(name))[1] = public.current_org()::text);
+  with check (bucket_id = 'attachments' and (select public.is_active())
+              and (storage.foldername(name))[1] = (select public.current_org())::text);
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
   for delete to authenticated
-  using (bucket_id = 'attachments' and public.is_active()
-         and ((storage.foldername(name))[1] = public.current_org()::text
-              or (public.current_org() = '00000000-0000-0000-0000-000000000001'
+  using (bucket_id = 'attachments' and (select public.is_active())
+         and ((storage.foldername(name))[1] = (select public.current_org())::text
+              or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
                   and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));

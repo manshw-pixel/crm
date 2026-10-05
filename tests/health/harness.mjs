@@ -45,7 +45,8 @@ const MOCK = `window.__sbFactory = () => {
       const rows = window.__seedRows?.profiles || [window.__seedProfile || { id: "u1", name: "Test User", role: "admin", org_id: "org-a", platform_admin: false }];
       const p = Promise.resolve({ data: rows, error: null });
       p.eq = (_col, val) => ({
-        single: async () => ({ data: rows.find(r => r.id === val) || rows[0] || null, error: null }),
+        // __profileThrows: the root profile read rejects, as supabase-js does on a network failure.
+        single: async () => { if (window.__profileThrows) throw new Error("mock profile rejection"); return { data: rows.find(r => r.id === val) || rows[0] || null, error: null }; },
       });
       p.order = () => Promise.resolve({ data: rows, error: null });
       return p;
@@ -87,7 +88,7 @@ const MOCK = `window.__sbFactory = () => {
       }
       if (fn === "create_org") return Promise.resolve(window.__createOrgError ? { data: null, error: { message: window.__createOrgError } } : { data: "org-new", error: null });
       if (fn === "invite_user") return Promise.resolve({ data: window.__inviteResult ?? "invited", error: null });
-      if (fn === "switch_org") return Promise.resolve({ data: null, error: null });
+      if (fn === "switch_org") return window.__switchOrgThrows ? Promise.reject(new Error("mock switch_org rejection")) : Promise.resolve({ data: null, error: null });
       if (fn === "log_error" && window.__logErrorFails) {
         return Promise.reject(new Error("mock log_error rejection"));
       }
@@ -292,10 +293,14 @@ export function buildMockedHtml(seedJs) {
   return "file://" + file.replace(/\\/g, "/");
 }
 
+// Default renewal is Jan 1 two years out: always beyond the app's 90-day playbook window.
+// A fixed date (it was 2027-01-01) silently entered that window on 2026-10-03, and the app
+// then auto-seeded playbook tasks that broke every test counting tasks or writes.
+export const FAR_RENEWAL = `${new Date().getFullYear() + 2}-01-01`;
 export function seedAccount(o = {}) {
   return {
     id: o.id || "t1", name: o.name || "Test Co", tier: "Mid", arr: 100000, currency: "USD",
-    industry: "Tech", csm: o.csm || "Priya", startDate: "2025-01-01", renewalDate: "2027-01-01",
+    industry: "Tech", csm: o.csm || "Priya", startDate: "2025-01-01", renewalDate: FAR_RENEWAL,
     contractStatus: "Active", inputs: o.inputs || { usage: 80, sentiment: 80, tickets: 0, nps: 40 },
     history: o.history || [], inputsUpdatedAt: "2026-07-01",
     ...(o.healthBand !== undefined ? { healthBand: o.healthBand } : {}),
