@@ -268,3 +268,10 @@ end $$;
 revoke execute on function public.tp_bounce(text, text, text) from public, anon, authenticated;
 revoke execute on function public.ingest_touchpoint(text, jsonb) from public, anon, authenticated;
 grant execute on function public.ingest_touchpoint(text, jsonb) to anon;
+
+-- ---------- ingest_log access ----------
+-- Org admins only: it answers "why didn't my email show up?". Wrapped in (select ...) like
+-- every policy in supabase-setup.sql, so the helpers run once per query, not once per row.
+drop policy if exists ingest_log_select on public.ingest_log;
+create policy ingest_log_select on public.ingest_log for select to authenticated
+  using (org_id = (select public.current_org()) and (select public.is_admin()));

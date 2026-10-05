@@ -321,3 +321,39 @@ test("a bad date falls back to today and long text is truncated", async () => {
   await ingest(noDate);
   assert((await activityFor(noDate)).date === today, "a missing date did not fall back to today");
 });
+
+// ---------- access ----------
+test("org admins read their own org's ingest_log, and no one else's", async () => {
+  await setup();
+  const a = msg({ cc: ["x@nobody-acl.example"] });
+  const b = msg({ from: "userb@test.local", cc: ["x@nobody-acl.example"] });
+  await ingest(a); await ingest(b);
+
+  const own = await sessions.admin.from("ingest_log").select("message_id").eq("message_id", a.message_id);
+  assert(!own.error && own.data.length === 1, `org A admin could not read its own row: ${JSON.stringify(own)}`);
+  const cross = await sessions.admin.from("ingest_log").select("message_id").eq("message_id", b.message_id);
+  assert(!cross.error && cross.data.length === 0, "org A admin read org B's row");
+  const ownB = await sessions.adminB.from("ingest_log").select("message_id").eq("message_id", b.message_id);
+  assert(ownB.data.length === 1, "control: org B admin could not read its own row");
+  const plain = await sessions.user.from("ingest_log").select("message_id").eq("message_id", a.message_id);
+  assert(plain.data.length === 0, "a non-admin CSM read ingest_log");
+});
+
+test("no API role can write ingest_log or touchpoint_config", async () => {
+  const ins = await sessions.admin.from("ingest_log")
+    .insert({ message_id: "<forged@test>", sender: "x", verdict: "logged" });
+  assert(ins.error, "an admin inserted into ingest_log");
+  assert((await sql(`select 1 from ingest_log where message_id = '<forged@test>'`)).length === 0, "forged row exists");
+  const cfg = await sessions.admin.from("touchpoint_config").select("secret");
+  assert(cfg.error || cfg.data.length === 0, "an admin read the touchpoint secret");
+});
+
+test("only anon may call ingest_touchpoint, and nobody may call the helpers", async () => {
+  const asUser = await sessions.admin.rpc("ingest_touchpoint", { p_secret: SECRET, p_message: msg({}) });
+  assert(asUser.error, "an authenticated user could call ingest_touchpoint");
+  const helper = await sessions.anon.rpc("tp_match", { p_org: ORG_A, p_addrs: ["a@b.example"], p_exclude: [] });
+  assert(helper.error, "anon could call tp_match");
+  // Control: anon CAN call the entry point (a wrong secret still returns ok:false, not an error).
+  const { data, error } = await sessions.anon.rpc("ingest_touchpoint", { p_secret: "nope", p_message: msg({}) });
+  assert(!error && data.ok === false, `control: anon could not call ingest_touchpoint: ${error && error.message}`);
+});
