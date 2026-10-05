@@ -1003,3 +1003,275 @@ git commit -m "Prove ingested emails render on the timeline; document touchpoint
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+
+---
+
+### Task 6: Cloudflare Email Worker (the provider shim)
+
+Added 2026-10-05 after the user chose Cloudflare Email Routing for `touchpoints@onevio.in`
+(domain `onevio.in` is live on Cloudflare; routing currently forwards to the user's inbox).
+CSMs confirmed to send customer mail from their OneVio sign-in address, so no alias list.
+`crm.onevio.in/` needs no redirect page: `build.mjs` already writes `dist/index.html`.
+
+**Files:**
+- Create: `workers/touchpoints/src/index.js` (Worker source)
+- Create: `workers/touchpoints/build.mjs` (bundles to `workers/touchpoints/dist/worker.js`, one paste-able file)
+- Create: `tests/worker/touchpoints.test.mjs` (plain node, no browser, no network)
+- Modify: `package.json` (devDependency `postal-mime`; scripts `build:worker`, `test:worker`)
+- Modify: `.gitignore` (add `workers/touchpoints/dist/`)
+- Modify: `.github/workflows/pages.yml` (run the worker test in the `test` job)
+- Modify: `TEAM-SETUP.md` (Cloudflare steps; custom-domain note)
+
+**Interfaces:**
+- Consumes: `ingest_touchpoint(p_secret, p_message)` over PostgREST at `POST {SUPABASE_URL}/rest/v1/rpc/ingest_touchpoint`, headers `apikey` + `Authorization: Bearer <anon>`; the `p_message` shape from Task 3.
+- Produces:
+  - `export async function toMessage(parsed, envelopeFrom, raw)` → the `p_message` object. `parsed` is postal-mime's result; `raw` is an `ArrayBuffer` of the whole message (used only for a fallback id).
+  - `export default { async email(message, env) }` — Cloudflare Email Worker entry. `env` has `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `TOUCHPOINT_SECRET`.
+
+- [ ] **Step 1: Add the dependency and scripts**
+
+Run: `npm install --save-dev postal-mime`
+
+In `package.json` `scripts` add:
+
+```json
+"build:worker": "node workers/touchpoints/build.mjs",
+"test:worker": "node tests/worker/touchpoints.test.mjs"
+```
+
+Append `workers/touchpoints/dist/` to `.gitignore`.
+
+- [ ] **Step 2: Write the failing test**
+
+Create `tests/worker/touchpoints.test.mjs`:
+
+```js
+// The Cloudflare Email Worker under plain node: postal-mime parses a real MIME message and
+// fetch is replaced with a recorder, so this never touches the network.
+import assert from "node:assert/strict";
+import worker, { toMessage } from "../../workers/touchpoints/src/index.js";
+import PostalMime from "postal-mime";
+
+const RAW = [
+  'From: "Plain User" <User@Test.Local>',
+  "To: touchpoints@onevio.in",
+  "Cc: Jane Customer <jane@acme.example>, bob@acme.example",
+  "Subject: Re: renewal",
+  "Date: Mon, 05 Oct 2026 09:12:00 +0000",
+  "Message-ID: <abc123@mail.test>",
+  "Auto-Submitted: no",
+  "Content-Type: text/plain; charset=utf-8",
+  "",
+  "Quote attached.",
+  "",
+].join("\r\n");
+const bytes = s => new TextEncoder().encode(s).buffer;
+const ENV = { SUPABASE_URL: "https://x.supabase.co", SUPABASE_ANON_KEY: "anon", TOUCHPOINT_SECRET: "s3" };
+
+const cases = [];
+const test = (name, fn) => cases.push([name, fn]);
+
+test("toMessage maps a parsed email to the ingest shape", async () => {
+  const m = await toMessage(await PostalMime.parse(RAW), "user@test.local", bytes(RAW));
+  assert.equal(m.message_id, "<abc123@mail.test>");
+  assert.equal(m.from, "user@test.local");
+  assert.deepEqual(m.to, ["touchpoints@onevio.in"]);
+  assert.deepEqual(m.cc, ["jane@acme.example", "bob@acme.example"]);
+  assert.equal(m.subject, "Re: renewal");
+  assert.equal(m.date, "2026-10-05T09:12:00.000Z");
+  assert.match(m.text, /Quote attached\./);
+  assert.deepEqual(m.headers, { "auto-submitted": "no" });
+});
+
+test("a message with no Message-ID gets a stable id derived from its bytes", async () => {
+  const raw = RAW.replace("Message-ID: <abc123@mail.test>\r\n", "");
+  const parsed = await PostalMime.parse(raw);
+  const a = await toMessage(parsed, "user@test.local", bytes(raw));
+  const b = await toMessage(parsed, "user@test.local", bytes(raw));
+  assert.match(a.message_id, /^<cf-[0-9a-f]{64}@touchpoints>$/);
+  assert.equal(a.message_id, b.message_id, "a retry must produce the same id");
+});
+
+test("an HTML-only email still yields text", async () => {
+  const raw = RAW.replace("Content-Type: text/plain; charset=utf-8", "Content-Type: text/html; charset=utf-8")
+                 .replace("Quote attached.", "<p>Quote <b>attached</b>.</p>");
+  const m = await toMessage(await PostalMime.parse(raw), "user@test.local", bytes(raw));
+  assert.match(m.text, /Quote\s+attached\./);
+  assert.doesNotMatch(m.text, /<p>|<b>/);
+});
+
+test("email() posts to ingest_touchpoint with the secret and anon key", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, init) => { calls.push({ url, init }); return new Response('{"ok":true}', { status: 200 }); };
+  await worker.email({ from: "user@test.local", raw: new Response(RAW).body }, ENV);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://x.supabase.co/rest/v1/rpc/ingest_touchpoint");
+  assert.equal(calls[0].init.headers.apikey, "anon");
+  assert.equal(calls[0].init.headers.Authorization, "Bearer anon");
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(body.p_secret, "s3");
+  assert.equal(body.p_message.message_id, "<abc123@mail.test>");
+});
+
+test("email() throws on a non-2xx so the sending server retries", async () => {
+  globalThis.fetch = async () => new Response("boom", { status: 503 });
+  await assert.rejects(worker.email({ from: "user@test.local", raw: new Response(RAW).body }, ENV), /503/);
+});
+
+test("email() throws when settings are missing rather than posting to undefined", async () => {
+  let called = false;
+  globalThis.fetch = async () => { called = true; return new Response("{}"); };
+  await assert.rejects(worker.email({ from: "user@test.local", raw: new Response(RAW).body }, {}), /SUPABASE_URL/);
+  assert.equal(called, false);
+});
+
+let fail = 0;
+for (const [name, fn] of cases) {
+  try { await fn(); console.log("PASS", name); }
+  catch (e) { fail++; console.error("FAIL", name, "\n  ", e.message); }
+}
+console.log(`\n${cases.length - fail} passed, ${fail} failed`);
+process.exit(fail ? 1 : 0);
+```
+
+- [ ] **Step 3: Run to verify it fails**
+
+Run: `npm run test:worker`
+Expected: fails to import `workers/touchpoints/src/index.js` (module not found).
+
+- [ ] **Step 4: Implement the Worker**
+
+Create `workers/touchpoints/src/index.js`:
+
+```js
+// Cloudflare Email Worker for touchpoints@<domain>. It does no matching and keeps no state:
+// it turns the raw email into the p_message shape and hands it to ingest_touchpoint, where
+// every decision (who may file, which account, bounce or not) is made.
+// Design: docs/superpowers/specs/2026-10-05-email-touchpoint-ingest-design.md
+import PostalMime from "postal-mime";
+
+const addrs = list => (list || [])
+  .flatMap(a => (a.group ? a.group : [a]))
+  .map(a => (a.address || "").trim().toLowerCase())
+  .filter(Boolean);
+
+const htmlToText = html => (html || "")
+  .replace(/<(br|\/p|\/div|\/li)[^>]*>/gi, "\n")
+  .replace(/<[^>]+>/g, "")
+  .replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&")
+  .replace(/\n{3,}/g, "\n\n")
+  .trim();
+
+const sha256 = async buf => [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))]
+  .map(b => b.toString(16).padStart(2, "0")).join("");
+
+// Only the two headers the loop guard reads. Forwarding every header would ship customer
+// metadata into a function that has no use for it.
+const KEPT_HEADERS = ["auto-submitted", "precedence"];
+
+export async function toMessage(parsed, envelopeFrom, raw) {
+  const headers = {};
+  for (const h of parsed.headers || []) {
+    const k = (h.key || "").toLowerCase();
+    if (KEPT_HEADERS.includes(k)) headers[k] = h.value;
+  }
+  const date = parsed.date ? new Date(parsed.date) : null;
+  return {
+    // No Message-ID is rare but legal. A hash of the bytes keeps a retry idempotent.
+    message_id: parsed.messageId || `<cf-${await sha256(raw)}@touchpoints>`,
+    from: ((parsed.from && parsed.from.address) || envelopeFrom || "").toLowerCase(),
+    to: addrs(parsed.to),
+    cc: addrs(parsed.cc),
+    date: date && !isNaN(date) ? date.toISOString() : null,
+    subject: parsed.subject || "",
+    text: parsed.text || htmlToText(parsed.html),
+    headers,
+  };
+}
+
+export default {
+  async email(message, env) {
+    for (const k of ["SUPABASE_URL", "SUPABASE_ANON_KEY", "TOUCHPOINT_SECRET"]) {
+      if (!env || !env[k]) throw new Error(`Worker setting ${k} is missing`);
+    }
+    const raw = await new Response(message.raw).arrayBuffer();
+    const parsed = await PostalMime.parse(raw);
+    const p_message = await toMessage(parsed, message.from, raw);
+    const res = await fetch(`${env.SUPABASE_URL.replace(/\/$/, "")}/rest/v1/rpc/ingest_touchpoint`, {
+      method: "POST",
+      headers: {
+        apikey: env.SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${env.SUPABASE_ANON_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_secret: env.TOUCHPOINT_SECRET, p_message }),
+    });
+    // Throwing makes Cloudflare refuse the message temporarily, so the sending server
+    // retries later. Safe: ingest_touchpoint is idempotent on message_id.
+    if (!res.ok) throw new Error(`ingest_touchpoint returned ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  },
+};
+```
+
+Create `workers/touchpoints/build.mjs`:
+
+```js
+// Bundles the Worker and postal-mime into ONE file, so it can be pasted into the Cloudflare
+// dashboard editor (which cannot install npm packages). Output: workers/touchpoints/dist/worker.js
+import * as esbuild from "esbuild";
+import { fileURLToPath } from "node:url";
+
+const here = p => fileURLToPath(new URL(p, import.meta.url));
+await esbuild.build({
+  entryPoints: [here("./src/index.js")],
+  outfile: here("./dist/worker.js"),
+  bundle: true,
+  format: "esm",
+  target: "es2022",
+  platform: "neutral",
+  mainFields: ["module", "main"],
+  legalComments: "inline",
+});
+console.log("workers/touchpoints/dist/worker.js written - paste it into the Cloudflare Worker editor");
+```
+
+- [ ] **Step 5: Run to verify it passes, and that it bundles**
+
+Run: `npm run test:worker` — expected: 6 passed, exit 0.
+Run: `npm run build:worker` — expected: `workers/touchpoints/dist/worker.js` exists and has no top-level imports (`grep -c "^import" workers/touchpoints/dist/worker.js` prints `0`).
+
+- [ ] **Step 6: CI and docs**
+
+In `.github/workflows/pages.yml`, in the `test` job, directly after the first `- run: npm ci` line add:
+
+```yaml
+      # The Cloudflare Email Worker (touchpoints inbox). Plain node, no network.
+      - run: npm run test:worker
+```
+
+In `TEAM-SETUP.md`, replace step 3 of "Email touchpoints (inbound)" with:
+
+```markdown
+3. Cloudflare (domain on Cloudflare, Email Routing enabled):
+   - Run `npm run build:worker` and open `workers/touchpoints/dist/worker.js`.
+   - Workers & Pages → Create → Worker → name `onevio-touchpoints` → Deploy → Edit code →
+     replace everything with that file → Deploy.
+   - Worker → Settings → Variables and Secrets: `SUPABASE_URL` (text), `SUPABASE_ANON_KEY`
+     (secret), `TOUCHPOINT_SECRET` (secret, same value as in step 2).
+   - onevio.in → Email → Email Routing → Routing rules → edit `touchpoints` →
+     Action "Send to a Worker" → `onevio-touchpoints`.
+   - Test: forward a customer thread from your OneVio sign-in address; it appears on the
+     account's timeline. Email Routing's Activity log and the Worker's Logs tab show failures;
+     `select * from ingest_log order by received_at desc` shows the CRM's verdicts.
+```
+
+In the deploy section of `TEAM-SETUP.md`, after the line `3. Share the URL: ...github.io/<repo>/`, add: `   Or use a custom domain (e.g. https://crm.onevio.in/): CNAME it to <your-user>.github.io (DNS only), set it in Settings → Pages → Custom domain, enforce HTTPS, then add it in Supabase → Authentication → URL Configuration as Site URL and as a Redirect URL.`
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add workers/touchpoints/src/index.js workers/touchpoints/build.mjs tests/worker/touchpoints.test.mjs package.json package-lock.json .gitignore .github/workflows/pages.yml TEAM-SETUP.md
+git commit -m "Add the Cloudflare Email Worker for the touchpoints inbox
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+```
