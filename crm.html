@@ -2114,6 +2114,56 @@ function exportCSV(rows) {
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
 }
+/* ---- CSV dates ----
+ * The app exports YYYY-MM-DD, but a CSV re-saved in Excel on an Indian-locale machine comes
+ * back as DD-MM-YYYY. new Date() reads "05-07-2026" US-style (7 May, not 5 July) and rejects
+ * "26-08-2026" outright, so imports silently swapped day/month or dropped the date.
+ *
+ * Numeric d-m-y dates are read by ONE order per file, decided from the file itself: a first
+ * part over 12 proves day-first, a second part over 12 proves month-first. A file proving
+ * both is refused rather than half-misread. A file with no proof either way (every date
+ * <= 12/12) is read day-first, the Indian Excel default -- the import message says so.
+ * Dates are built as text (never via toISOString) so no timezone can shift them a day. */
+const CSV_DMY = /^(\d{1,2})[-/.](\d{1,2})[-/.](\d{2}|\d{4})$/;
+function csvDateOrder(values) {
+  let dayFirst = false, monthFirst = false;
+  values.forEach(v => { const m = CSV_DMY.exec(String(v || "").trim()); if (!m) return;
+    if (+m[1] > 12) dayFirst = true; if (+m[2] > 12) monthFirst = true; });
+  if (dayFirst && monthFirst) return null;
+  return monthFirst ? "mdy" : "dmy";
+}
+// -> "YYYY-MM-DD", "" for an empty cell, or null when the cell is not a readable date
+function parseCsvDate(v, order = "dmy") {
+  const t = String(v || "").trim();
+  if (!t) return "";
+  const out = (y, mo, d) => {
+    const dt = new Date(Date.UTC(y, mo - 1, d));
+    if (dt.getUTCFullYear() !== y || dt.getUTCMonth() !== mo - 1 || dt.getUTCDate() !== d) return null;
+    return `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  };
+  let m = /^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:[T ].*)?$/.exec(t);
+  if (m) return out(+m[1], +m[2], +m[3]);
+  if ((m = CSV_DMY.exec(t))) {
+    const y = m[3].length === 2 ? 2000 + +m[3] : +m[3];
+    return order === "mdy" ? out(y, +m[1], +m[2]) : out(y, +m[2], +m[1]);
+  }
+  if (/[a-z]/i.test(t)) { // "5 Jul 2026", "Jul 5, 2026": the month is a word, so no ambiguity
+    const d = new Date(t);
+    return isNaN(d) ? null : out(d.getFullYear(), d.getMonth() + 1, d.getDate());
+  }
+  return null;
+}
+// one-line summary of an accounts import, for the folder sync log
+function importSummary(r) {
+  if (r.err) return r.err;
+  const bits = [`imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`];
+  if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
+  if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
+  if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);
+  if (r.badStatus) bits.push(`⚠ ${r.badStatus} unrecognized status(es) set to Active`);
+  if (r.dateOrder === "dmy-assumed") bits.push("dates read as DD-MM-YYYY");
+  return bits.join(" · ");
+}
 function parseCSV(text) {
   const rows = []; let row = [], cur = "", inQ = false;
   for (let i = 0; i < text.length; i++) {
@@ -2144,12 +2194,23 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0;
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0;
+    const badDateRows = [], churnSkipped = [];
+    const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
+    const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
+    const order = csvDateOrder(allDates);
+    if (!order) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported. Use one format (YYYY-MM-DD is safest) and save again." });
+    // "dmy-assumed": numeric d-m-y dates present but none proved the order -- say so in the message
+    const proven = allDates.some(v => { const m = CSV_DMY.exec(String(v).trim()); return m && (+m[1] > 12 || +m[2] > 12); });
+    const dateOrder = proven ? order : allDates.some(v => CSV_DMY.test(String(v).trim())) ? "dmy-assumed" : "iso";
     rows.slice(1).forEach(r => {
       const name = col(r, "name");
       if (!name) { skipped++; return; }
       const num = (key, dflt) => { const v = parseFloat(col(r, key)); return isNaN(v) ? dflt : v; };
-      const date = v => { const d = new Date(v); return v && !isNaN(d) ? iso(d.getTime()) : null; };
+      // unreadable dates are counted and reported, never silently dropped
+      const date = v => { const d = parseCsvDate(v, order);
+        if (d === null) { badDate++; if (badDateRows.length < 5 && !badDateRows.includes(name)) badDateRows.push(name); }
+        return d || null; };
       const vals = { name };
       if (has("tier")) {
         const raw = col(r, "tier");
@@ -2168,8 +2229,10 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (has("contractstatus")) {
         const raw = col(r, "contractstatus");
         const match = ["Active", "Auto-renew", "In negotiation", "Churn risk"].find(s => s.toLowerCase() === raw.toLowerCase());
-        if (raw && !match) badStatus++;
-        vals.contractStatus = match || "Active";
+        // "Churned" is not a plain status: churn needs a date and reason and moves ARR, so it
+        // only happens from the account page. Coercing it to Active resurrected churned accounts.
+        if (raw.toLowerCase() === "churned") vals.churnedInFile = true;
+        else { if (raw && !match) badStatus++; vals.contractStatus = match || "Active"; }
       }
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
@@ -2179,6 +2242,11 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
+      if (vals.churnedInFile) {
+        delete vals.churnedInFile;
+        // already churned here: refresh the other fields, leave the churn alone
+        if (!existing?.churn) { churnSkipped.push(name); return; }
+      }
       if (existing) {
         dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
@@ -2196,7 +2264,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         ok++;
       }
     });
-    done({ ok, updated, skipped, badTier, badStatus });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badDateRows, churnSkipped, dateOrder });
   };
   reader.readAsText(file);
 }
@@ -2210,15 +2278,18 @@ function importBillingCSV(text, accounts, dispatch) {
   if (header.indexOf("billingcompleteddate") < 0) return { updated: 0, skipped: 0, err: 'needs a "billingCompletedDate" column' };
   const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
   const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-  let updated = 0, skipped = 0;
+  const order = csvDateOrder(rows.slice(1).map(r => col(r, "billingcompleteddate")));
+  if (!order) return { updated: 0, skipped: 0, err: "dates mix DD-MM-YYYY and MM-DD-YYYY — use one format (YYYY-MM-DD is safest)" };
+  let updated = 0, skipped = 0, badDate = 0;
   rows.slice(1).forEach(r => {
-    const d = new Date(col(r, "billingcompleteddate"));
+    const d = parseCsvDate(col(r, "billingcompleteddate"), order);
     const acct = (col(r, "accountno") && byNo.get(col(r, "accountno"))) || byName.get(col(r, "name").toLowerCase());
-    if (!acct || isNaN(d)) { skipped++; return; }
-    dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: iso(d.getTime()) } });
+    if (d === null) badDate++;
+    if (!acct || !d) { skipped++; return; }
+    dispatch({ type: "EDIT_ACCOUNT", id: acct.id, patch: { billingCompleted: true, billingCompletedDate: d } });
     updated++;
   });
-  return { updated, skipped };
+  return { updated, skipped, badDate };
 }
 
 /* ---------------------- shared-drive folder sync ---------------------- */
@@ -2240,11 +2311,24 @@ async function ensurePermission(handle, mode = "read", interactive = true) {
   if (!interactive) return false;
   return (await handle.requestPermission({ mode })) === "granted";
 }
+// Every CSV directly in the folder. A file that cannot be read (typically an online-only
+// OneDrive / Google Drive placeholder) comes back as { name, err } instead of aborting the
+// whole folder, so the card can say which file and why.
 async function listCsvFiles(dirHandle) {
   const out = [];
-  for await (const [name, h] of dirHandle.entries())
-    if (h.kind === "file" && /\.csv$/i.test(name)) out.push(await h.getFile());
-  return out;
+  for await (const [name, h] of dirHandle.entries()) {
+    if (h.kind !== "file" || !/\.csv$/i.test(name)) continue;
+    try { out.push(await h.getFile()); } catch (e) { out.push({ name, err: e.message || String(e) }); }
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+// processed[sig] was `true` in older data; it now holds the import date
+function fileSyncStatus(f, processed) {
+  if (f.err) return { kind: "error", text: "can't read — if it's online-only, set it to “Always keep on this device”" };
+  const done = processed[`${f.name}|${f.lastModified}`];
+  if (done) return { kind: "done", text: typeof done === "string" ? `imported ${fmtDate(done)}` : "imported" };
+  const older = Object.keys(processed).some(k => k.startsWith(f.name + "|"));
+  return { kind: "new", text: older ? "changed — imports on next sync" : "new — imports on next sync" };
 }
 function IntegrationsCard({ st, dispatch, user }) {
   const [handles, setHandles] = useState({ sales: null, finance: null });
@@ -2252,6 +2336,11 @@ function IntegrationsCard({ st, dispatch, user }) {
   // folders whose access lapsed (e.g. after a reload) and need one click to re-grant
   const [needsGrant, setNeedsGrant] = useState({ sales: false, finance: false });
   const integ = st.settings.integrations || { processed: {}, log: [] };
+  const [files, setFiles] = useState({ sales: null, finance: null }); // what is in each folder right now
+  const refreshFiles = async (key, h) => {
+    if (!h || await h.queryPermission({ mode: "read" }) !== "granted") return setFiles(s => ({ ...s, [key]: null }));
+    try { const list = await listCsvFiles(h); setFiles(s => ({ ...s, [key]: list })); } catch (e) { setFiles(s => ({ ...s, [key]: null })); }
+  };
   useEffect(() => { (async () => {
     try {
       const h = { sales: await idbGet("sales") || null, finance: await idbGet("finance") || null };
@@ -2259,10 +2348,11 @@ function IntegrationsCard({ st, dispatch, user }) {
       const lapsed = {};
       for (const key of ["sales", "finance"]) lapsed[key] = !!h[key] && !(await ensurePermission(h[key], "read", false));
       setNeedsGrant(lapsed);
+      for (const key of ["sales", "finance"]) await refreshFiles(key, h[key]);
     } catch (e) {}
   })(); }, []);
   const pick = async key => {
-    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); setNeedsGrant(s => ({ ...s, [key]: false })); }
+    try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); setNeedsGrant(s => ({ ...s, [key]: false })); refreshFiles(key, h); }
     catch (e) { /* user cancelled */ }
   };
   // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
@@ -2281,7 +2371,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
       ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(esc).join(","))].join("\n"));
   };
-  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); };
+  const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); setFiles(s => ({ ...s, [key]: null })); };
   // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
   // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
   const sync = useCallback(async (interactive = true) => {
@@ -2297,17 +2387,20 @@ function IntegrationsCard({ st, dispatch, user }) {
           continue;
         }
         setNeedsGrant(s => ({ ...s, [key]: false }));
-        for (const f of await listCsvFiles(h)) {
+        const list = await listCsvFiles(h);
+        for (const f of list) {
+          if (f.err) { note(key, f.name, fileSyncStatus(f, processed).text, true); continue; }
           const sig = `${f.name}|${f.lastModified}`;
           if (processed[sig]) continue;
           try {
             if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
-              { note(key, f.name, r.err || `imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`, !!r.err); res(); }, user));
+              { note(key, f.name, importSummary(r), !!r.err); res(); }, user));
             else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
-              note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}`, !!r.err); }
-            processed[sig] = true;
+              note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, !!r.err); }
+            processed[sig] = iso(Date.now());
           } catch (ex) { note(key, f.name, ex.message, true); }
         }
+        setFiles(s => ({ ...s, [key]: list }));
       } catch (ex) { note(key, "—", ex.message, true); }
     }
     dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
@@ -2322,7 +2415,8 @@ function IntegrationsCard({ st, dispatch, user }) {
   return (
     <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={() => sync(true)}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
       {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
-        <div key={key} className="mb-2 flex items-center gap-2 text-sm">
+        <React.Fragment key={key}>
+        <div className="mb-2 flex items-center gap-2 text-sm">
           <span className="w-28 font-semibold">{label}</span>
           {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
             {needsGrant[key] && <span data-grant={key} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
@@ -2331,6 +2425,16 @@ function IntegrationsCard({ st, dispatch, user }) {
             : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
           <span className="ml-auto text-xs text-slate-400">{hint}</span>
         </div>
+        {files[key] && <ul data-files={key} className="mb-2 ml-0 space-y-0.5 text-xs sm:ml-[7.5rem]">
+          {files[key].length === 0 && <li className="text-slate-400">No .csv files directly in this folder (subfolders aren't read).</li>}
+          {files[key].map(f => { const s = fileSyncStatus(f, integ.processed); return (
+            <li key={f.name} data-file={f.name} className="flex items-center gap-2">
+              <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
+              <span className="truncate font-medium text-slate-700">{f.name}</span>
+              <span className="shrink-0 text-slate-500">{s.text}</span>
+            </li>); })}
+        </ul>}
+        </React.Fragment>
       ))}
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Btn onClick={salesTemplate}>Export sales CSV</Btn>
@@ -2725,11 +2829,13 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <span data-live="import" aria-live="polite" className="sr-only">
         {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
       </span>
-      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus) ? "text-amber-700" : "text-emerald-700"}`}>
+      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
         {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
               rewritten row looked identical to a clean import */}
-          {(importMsg.badTier || importMsg.badStatus) && <span className="font-bold">
+          {(importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+            {importMsg.badDate ? ` ⚠ ${importMsg.badDate} unreadable date(s) left unchanged (${importMsg.badDateRows.join(", ")}).` : ""}
+            {importMsg.churnSkipped?.length ? ` ⚠ Not imported, marked Churned in the file: ${importMsg.churnSkipped.join(", ")} — churn them from the account page.` : ""}
             {importMsg.badTier ? ` ⚠ ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid).` : ""}
             {importMsg.badStatus ? ` ⚠ ${importMsg.badStatus} row(s) had an unrecognized status (set to Active).` : ""}
           </span>}</>}
@@ -4491,7 +4597,7 @@ function Root() {
   // throws before any view renders, and without this the user gets a blank white page.
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
-window.__health = { isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
+window.__health = { parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
   lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
