@@ -485,6 +485,8 @@ function persist(action, next, prev) {
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = next.accounts.find(x => x.id === action.item.id); return up("accounts", a || action.item); }
     case "ADD_CONTACT": return up("contacts", action.item);
+    case "EDIT_CONTACT": { const c = next.contacts.find(x => x.id === action.id); return c && up("contacts", c); }
+    case "DELETE_CONTACT": return writeQueue.enqueueDelete({ table: "contacts", column: "id", value: action.id });
     case "ADD_OPP": return up("opportunities", action.item);
     case "ADD_ACTIVITY": {
       if (action.item.type === "QBR") { const a = next.accounts.find(x => x.id === action.item.accountId); if (a && QBR_FREQ_MONTHS[a.qbrFrequency]) up("accounts", a); }
@@ -648,6 +650,8 @@ function reducer(state, action) {
       tasks: state.tasks.filter(t => t.accountId !== action.id),
       opportunities: state.opportunities.filter(o => o.accountId !== action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
+    case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
+    case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
     case "ADD_ACTIVITY": {
       let accounts = state.accounts;
@@ -1380,18 +1384,23 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
     </form>
   );
 }
-function AddContactForm({ acct, dispatch, onDone }) {
-  const [v, setV] = useState({ name: "", role: "", email: "", isChampion: false, sentiment: "Neutral" });
+function AddContactForm({ acct, existing, dispatch, onDone }) {
+  const [v, setV] = useState(existing
+    ? { name: existing.name || "", role: existing.role || "", email: existing.email || "", isChampion: !!existing.isChampion, sentiment: existing.sentiment || "Neutral" }
+    : { name: "", role: "", email: "", isChampion: false, sentiment: "Neutral" });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
-    <form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!v.name.trim()) return;
-      dispatch({ type: "ADD_CONTACT", item: { ...v, name: v.name.trim(), id: uid(), accountId: acct.id } }); onDone(); }}>
+    <form data-contact-form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!v.name.trim()) return;
+      const fields = { ...v, name: v.name.trim(), email: v.email.trim() };
+      if (existing) dispatch({ type: "EDIT_CONTACT", id: existing.id, patch: fields });
+      else dispatch({ type: "ADD_CONTACT", item: { ...fields, id: uid(), accountId: acct.id } });
+      onDone(); }}>
       <Input autoFocus placeholder="Name *" value={v.name} onChange={e => set("name", e.target.value)} className="w-36" />
       <Input placeholder="Role" value={v.role} onChange={e => set("role", e.target.value)} className="w-32" />
       <Input placeholder="Email" type="email" value={v.email} onChange={e => set("email", e.target.value)} className="w-44" />
       <Select value={v.sentiment} onChange={e => set("sentiment", e.target.value)} options={["Positive", "Neutral", "Negative"]} />
       <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" checked={v.isChampion} onChange={e => set("isChampion", e.target.checked)} />Champion</label>
-      <Btn kind="primary" type="submit">Add</Btn><Btn onClick={onDone}>Cancel</Btn>
+      <Btn kind="primary" type="submit">{existing ? "Save changes" : "Add"}</Btn><Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
 }
@@ -2845,6 +2854,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
+  const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
@@ -2984,6 +2994,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
       {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+        : form && form.t === "editContact" ? <AddContactForm key={form.item.id} acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} user={user} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -3025,7 +3036,9 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {contacts.map(c => (
             <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
               <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
-                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span></div>
+                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span>
+                <button title="Edit contact" data-edit-contact={c.id} className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
+                <button title="Delete contact" data-delete-contact={c.id} className="shrink-0 text-xs text-rose-500 hover:text-rose-700" onClick={() => setConfirmContact(c)}>🗑</button></div>
               <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
             </div>
           ))}
@@ -3079,6 +3092,12 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           ))}
         </Card>
       </div>
+      {confirmContact && <ConfirmDialog
+        title="Delete contact"
+        body={`Delete ${confirmContact.name}${confirmContact.email ? ` (${confirmContact.email})` : ""}? This cannot be undone. Email touchpoints will stop matching this address.`}
+        confirmLabel="Delete"
+        onConfirm={() => dispatch({ type: "DELETE_CONTACT", id: confirmContact.id })}
+        onClose={() => setConfirmContact(null)} />}
       {confirmOpp && <ConfirmDialog
         title={confirmOpp.kind === "won" ? "Book expansion ARR" : "Change a booked opportunity"}
         tone={confirmOpp.kind === "won" ? "normal" : "danger"}
