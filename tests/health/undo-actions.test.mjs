@@ -53,6 +53,7 @@ test("deleting an account no longer asks for confirmation and still restores on 
   await openAccount(page, "Alpha Corp");
   // No confirm() dialog: the click alone deletes. If a native confirm were still present,
   // Playwright would auto-dismiss it and the delete would never happen.
+  await page.click("[data-more-actions]"); // Delete account lives in the More menu
   await page.getByText("Delete account").first().click();
   await page.evaluate(() => new Promise(r => setTimeout(r, 50)));
   const gone = await page.evaluate(() => window.__store.getState().accounts.length);

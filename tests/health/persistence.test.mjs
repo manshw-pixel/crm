@@ -174,6 +174,8 @@ test("SMOKE: undoing a single-account delete survives a reload", async () => {
     if (!row) return { err: "Other Co row not found" };
     row.click();
     await new Promise(r => setTimeout(r, 250));
+    document.querySelector("[data-more-actions]")?.click(); // Delete account lives in the More menu
+    await new Promise(r => setTimeout(r, 100));
     const del = [...document.querySelectorAll("button")].find(b => b.textContent === "Delete account");
     if (!del) return { err: "no delete button" };
     del.click();

@@ -103,6 +103,7 @@ test("submitting the adjust form without changing ARR writes nothing", async () 
   await ready(page);
   await page.click('button[title="Accounts"]');
   await page.getByText("Alpha Corp").first().click();
+  await page.click("[data-more-actions]"); // Adjust ARR lives in the More menu
   await page.getByText("Adjust ARR").first().click();
   const before = await page.evaluate(() =>
     JSON.stringify(window.__store.getState().accounts.find(x => x.id === "a1")));
