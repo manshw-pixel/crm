@@ -119,3 +119,18 @@ test("SET_RECENCY_MIX and SET_VALUE_MIX update settings", async () => {
     assert(s[0] === true && s[1] === 1, "actions did not apply: " + JSON.stringify(s));
   } finally { await browser.close(); }
 });
+
+test("fetchAll merges an old-shape settings row and scores are unchanged", async () => {
+  const acct = seedAccount();
+  const { page, browser } = await launch(`window.__seedRows = { accounts: [${JSON.stringify(acct)}].map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [{ id: 1, data: { weights: { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 } } }] };`);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length);
+    const r = await page.evaluate(() => {
+      const st = window.__store.getState(), s = st.settings, H = window.__health, a = st.accounts[0];
+      return { v: s.weights.value, en: s.recencyMix.enabled, qbr: s.recencyMix.types.QBR.fullDays, cs: s.valueMix.caseStudy,
+        now: H.healthScore(a, st.activities, s.weights, s), old: H.healthScore(a, st.activities, { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 }) };
+    });
+    assert(r.v === 0 && r.en === false && r.qbr === 90 && r.cs === 34, "defaults not merged: " + JSON.stringify(r));
+    assert(r.now === r.old, "score moved: " + JSON.stringify(r));
+  } finally { await browser.close(); }
+});
