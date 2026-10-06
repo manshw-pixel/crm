@@ -998,7 +998,7 @@ function DistBar({ counts }) {
 }
 
 /* ------------------------------ UI atoms ------------------------------ */
-const Copyright = () => <div className="mt-6 pb-2 text-center text-[11px] text-slate-400">© 2026 OneVio Pvt Ltd. All Rights Reserved.</div>;
+const Copyright = () => <div className="mt-6 pb-2 text-center text-[11px] text-slate-500">© 2026 OneVio Pvt Ltd. All Rights Reserved.</div>;
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
@@ -1025,9 +1025,29 @@ const StatSm = ({ label, value, sub, tone, children }) => (
   <div className="nm-sm flex items-center justify-between gap-3 px-3 py-2">
     <div className="min-w-0">
       <div className="truncate text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
-      {sub && <div className="truncate text-[10px] text-slate-400">{sub}</div>}
+      {sub && <div className="truncate text-[10px] text-slate-500">{sub}</div>}
     </div>
     {children || <div className={`text-lg font-extrabold tabular-nums ${tone || "text-slate-700"}`}>{value}</div>}
+  </div>
+);
+// Days to renewal as a chip: rose when overdue or inside 30 days, amber to 60, slate beyond.
+const DAYS_CHIP = { overdue: "bg-rose-100 text-rose-700", urgent: "bg-rose-50 text-rose-700", soon: "bg-amber-50 text-amber-700", later: "bg-slate-100 text-slate-600" };
+const DaysChip = ({ days }) => {
+  const band = days < 0 ? "overdue" : days <= 30 ? "urgent" : days <= 60 ? "soon" : "later";
+  return <span data-days-chip={band} className={`whitespace-nowrap rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums ${DAYS_CHIP[band]}`}>{days < 0 ? `${-days}d overdue` : `${days}d`}</span>;
+};
+// Shown until the first fetch lands, so a full book never flashes as "Fresh start" / $0.
+const Bone = ({ className = "" }) => <div className={`animate-pulse rounded bg-slate-200/70 ${className}`} />;
+const LoadingSkeleton = ({ view }) => (
+  <div data-skeleton aria-busy="true" aria-label="Loading" className="space-y-3">
+    {view === "Dashboard" ? <>
+      {[3, 3, 4].map((n, r) => <div key={r} className="grid grid-cols-3 gap-3" style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
+        {Array.from({ length: n }, (_, i) => <div key={i} className="nm space-y-2 p-4"><Bone className="h-3 w-24" /><Bone className="h-7 w-32" /><Bone className="h-3 w-20" /></div>)}
+      </div>)}
+      <div className="grid grid-cols-3 gap-3">
+        {[0, 1, 2].map(i => <div key={i} className="nm space-y-2 p-3"><Bone className="h-3 w-28" />{[0, 1, 2, 3].map(k => <Bone key={k} className="h-5 w-full" />)}</div>)}
+      </div>
+    </> : <div className="nm space-y-2 p-4">{Array.from({ length: 8 }, (_, k) => <Bone key={k} className="h-6 w-full" />)}</div>}
   </div>
 );
 // A capped, scrollable dashboard list that says when more is hidden: a bottom fade and a
@@ -1149,7 +1169,7 @@ const KeptAttachments = ({ kept, setKept }) => kept.length === 0 ? null : (
     {kept.map(at => (
       <span key={at.path || at.url} className="nm-inset inline-flex items-center gap-1 !rounded-full px-2 py-0.5 text-[11px] font-bold text-indigo-600">
         📎 {at.name}
-        <button type="button" title="Remove attachment" className="text-rose-500 hover:text-rose-700"
+        <button type="button" title="Remove attachment" aria-label="Remove attachment" className="text-rose-500 hover:text-rose-700"
           onClick={() => setKept(kept.filter(k => k !== at))}>✕</button>
       </span>
     ))}
@@ -1250,9 +1270,9 @@ function DocumentsCard({ a, dispatch, user }) {
                   {docExpiryBadge(d)}
                   {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
                   {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}
-                  <button title="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
+                  <button title="Edit document" aria-label="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
                     onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
-                  <button title="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
+                  <button title="Delete document" aria-label="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
                     onClick={() => setConfirmDoc(d)}>✕</button>
                 </div>
                 {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
@@ -1865,7 +1885,7 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
           <tbody>
             {rows.map(r => (
               <tr key={r.key} className="border-b border-slate-100 last:border-0">
-                <td className="px-2 py-1.5 font-semibold text-slate-700">{r.key}{r.current && <span className="ml-1 text-[11px] font-normal text-slate-400">(so far)</span>}</td>
+                <td className="px-2 py-1.5 font-semibold text-slate-700">{r.key}{r.current && <span className="ml-1 text-[11px] font-normal text-slate-500">(so far)</span>}</td>
                 <td className="px-2 py-1.5 text-right">{r.renewedN ? <span className="text-emerald-700">{fmtMoney(r.renewed)} <span className="text-xs text-slate-500">· {r.renewedN}</span></span> : "—"}</td>
                 <td className="px-2 py-1.5 text-right">{r.churnedN ? <span className="text-rose-600">{fmtMoney(r.churned)} <span className="text-xs text-slate-500">· {r.churnedN}</span></span> : "—"}</td>
                 <td className="px-2 py-1.5 text-right">{r.slipped || "—"}</td>
@@ -1924,7 +1944,7 @@ function AmBookCard({ book, openAccount }) {
           return (
             <div key={key} className="mt-2">
               <Row label={`${label} (${sec.totals.count})`} r={sec.totals} pending={pending} />
-              {open && sec.accounts.length === 0 && <div className="pl-4 py-1 text-xs text-slate-400">None.</div>}
+              {open && sec.accounts.length === 0 && <div className="pl-4 py-1 text-xs text-slate-500">None.</div>}
               {open && sec.accounts.map(r => (
                 <Row key={r.id} indent onClick={() => openAccount(r.id)} label={r.name} pending={pending} r={r} />
               ))}
@@ -2019,7 +2039,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
               {list.map(a => (
                 <button key={a.id} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
                   <span>{a.name}</span>
-                  <span className="flex items-center gap-2 text-xs tabular-nums text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <span>{daysUntil(a.renewalDate)}d</span></span>
+                  <span className="flex items-center gap-2 text-xs tabular-nums text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <DaysChip days={daysUntil(a.renewalDate)} /></span>
                 </button>
               ))}
             </div>
@@ -2462,10 +2482,10 @@ function IntegrationsCard({ st, dispatch, user }) {
               <Btn onClick={() => sync(true)}>Grant access</Btn></span>}
             <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
             : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
-          <span className="ml-auto text-xs text-slate-400">{hint}</span>
+          <span className="ml-auto text-xs text-slate-500">{hint}</span>
         </div>
         {files[key] && <ul data-files={key} className="mb-2 ml-0 space-y-0.5 text-xs sm:ml-[7.5rem]">
-          {files[key].length === 0 && <li className="text-slate-400">No .csv files directly in this folder (subfolders aren't read).</li>}
+          {files[key].length === 0 && <li className="text-slate-500">No .csv files directly in this folder (subfolders aren't read).</li>}
           {files[key].map(f => { const s = fileSyncStatus(f, integ.processed); return (
             <li key={f.name} data-file={f.name} className="flex items-center gap-2">
               <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
@@ -2478,7 +2498,7 @@ function IntegrationsCard({ st, dispatch, user }) {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Btn onClick={salesTemplate}>Export sales CSV</Btn>
         <Btn onClick={financeTemplate}>Export finance CSV</Btn>
-        <span className="text-xs text-slate-400">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
+        <span className="text-xs text-slate-500">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
       </div>
       <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>
       {integ.log.length > 0 && <div className="max-h-32 overflow-y-auto border-t border-slate-100 pt-2 text-xs">
@@ -2878,7 +2898,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
             {importMsg.badTier ? ` ⚠ ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid).` : ""}
             {importMsg.badStatus ? ` ⚠ ${importMsg.badStatus} row(s) had an unrecognized status (set to Active).` : ""}
           </span>}</>}
-        <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)}>✕</button>
+        <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)} aria-label="Dismiss import message">✕</button>
       </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -2979,12 +2999,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                     {a._ret.isNew
                       ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">new</span>
                       : a._ret.delta === 0
-                        ? <span className="text-slate-400">─ flat</span>
+                        ? <span className="text-slate-500">─ flat</span>
                         : <span className={a._ret.delta > 0 ? "text-emerald-600" : "text-rose-600"}>
                             {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
                           </span>}
                   </td>
-                  <td className="px-2"><span className={d < 60 ? "font-semibold text-amber-600" : "text-slate-700"}>{fmtDate(a.renewalDate)} · {d}d</span></td>
+                  <td className="px-2"><span className="flex items-center gap-1.5 text-slate-700">{fmtDate(a.renewalDate)} <DaysChip days={d} /></span></td>
                   {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                     return qd === null ? <span className="text-xs text-slate-500">—</span>
                       : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}
@@ -3029,7 +3049,7 @@ function ChangeHistoryCard({ a }) {
 }
 const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
   <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{label}</span>
+    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
     <span className="text-sm font-semibold text-slate-700">{value}</span>
   </span>
 );
@@ -3065,7 +3085,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
         {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
           className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
-        <span className="ml-auto text-xs font-semibold text-slate-400">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
+        <span className="ml-auto text-xs font-semibold text-slate-500">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
       </div>
       {/* Meta row: systematic key facts */}
       <div className="nm-sm flex flex-wrap items-center gap-x-6 gap-y-1.5 p-3">
@@ -3084,7 +3104,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         const r = accountRetention(a, (st.settings && st.settings.rates) || {});
         return (
           <div data-retention-block className="nm-sm p-3">
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
               Retention since {r.baselineKey}
             </div>
             {r.isNew ? (
@@ -3123,7 +3143,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
         {/* Handoff from sales to account management. Unset is the normal state for accounts
             predating the field, so it reads as absent data, not as a risk flag. */}
-        <span data-transition-pill className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-400"}`}>
+        <span data-transition-pill className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-500"}`}>
           {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Handoff date not set"}</span>
         {(() => { const s = qbrStatus(a); return s && (
           <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
@@ -3211,7 +3231,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 <span className="text-xs text-slate-500">{t.owner}</span>
                 <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
                 <span className="text-xs text-slate-500">{t.priority}</span>
-                <button title="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>
+                <button title="Edit task" aria-label="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>
               </div>
               {t.details && <div className="ml-6 mt-1 whitespace-pre-wrap text-xs text-slate-600">{t.details}</div>}
               {t.attachments && t.attachments.length > 0 && <div className="ml-6 mt-1"><AttachmentLinks items={t.attachments} /></div>}
@@ -3223,8 +3243,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
               <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
                 <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span>
-                <button title="Edit contact" data-edit-contact={c.id} className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
-                <button title="Delete contact" data-delete-contact={c.id} className="shrink-0 text-xs text-rose-500 hover:text-rose-700" onClick={() => setConfirmContact(c)}>🗑</button></div>
+                <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
+                <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="shrink-0 text-xs text-rose-500 hover:text-rose-700" onClick={() => setConfirmContact(c)}>🗑</button></div>
               <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
             </div>
           ))}
@@ -3239,7 +3259,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
                 <span className="flex-1">{x.summary}</span>
                 <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
-                <button title="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>
+                <button title="Edit activity" aria-label="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>
               </div>
               {x.details && <div className="ml-[76px] mt-1 whitespace-pre-wrap text-xs text-slate-600">{x.details}</div>}
               {x.attachments && x.attachments.length > 0 && <div className="ml-[76px] mt-1"><AttachmentLinks items={x.attachments} /></div>}
@@ -3309,7 +3329,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                   <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
                   <span className="text-slate-800">{fmtDate(e.date)}</span>
                   <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
-                  <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-400"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
+                  <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-500"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
                   <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
                   <span className="text-xs text-slate-500">by {e.r.by}</span>
                 </>}
@@ -3419,7 +3439,7 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
         <div key={key} className="mb-3">
           <button className="mb-1 flex w-full items-center gap-2 text-left" onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
             <span className={`text-xs font-bold uppercase tracking-widest ${key === "overdue" ? "text-rose-600" : "text-slate-500"}`}>{label}</span>
-            <span className="text-xs text-slate-400">({buckets[key].length})</span>
+            <span className="text-xs text-slate-500">({buckets[key].length})</span>
             <span className="text-xs text-slate-400">{open[key] ? "▾" : "▸"}</span>
           </button>
           {open[key] && buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}
@@ -3469,7 +3489,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
           {m.items.map(a => (
             <div key={a.id} onClick={() => openAccount(a.id)} className="nm-sm mb-3 w-full cursor-pointer p-2.5 text-left hover:bg-slate-50">
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
-              <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · {daysUntil(a.renewalDate)}d</div>
+              <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · <DaysChip days={daysUntil(a.renewalDate)} /></div>
               <select value={renewalStageOf(a)} onClick={e => e.stopPropagation()}
                 onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
                 className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
@@ -3507,7 +3527,7 @@ function PlaybookCard({ st, dispatch }) {
             onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
           <span className="whitespace-nowrap text-xs text-slate-500">d before</span>
           <Select value={p.priority} onChange={e => edit(p.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
-          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setPb(pb.filter(x => x.id !== p.id))}>✕</button>
+          <button title="Remove step" aria-label="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setPb(pb.filter(x => x.id !== p.id))}>✕</button>
         </div>
       ))}
       <Btn onClick={() => setPb([...pb, { id: uid(), title: "", offsetDays: 30, priority: "Medium" }])}>+ Add step</Btn>
@@ -3595,7 +3615,7 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
             onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
           <span className="whitespace-nowrap text-xs text-slate-500">d after</span>
           <Select value={s.priority} onChange={e => editStep(band, s.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
-          <button title="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setBand(band, hpb[band].filter(x => x.id !== s.id))}>✕</button>
+          <button title="Remove step" aria-label="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setBand(band, hpb[band].filter(x => x.id !== s.id))}>✕</button>
         </div>
       ))}
       <Btn onClick={() => setBand(band, [...hpb[band], { id: uid(), title: "", dueDays: 3, priority: "Medium" }])}>+ Add step</Btn>
@@ -4021,7 +4041,7 @@ function UsersCard({ me }) {
             <span className="flex-1">
               <div>{u.name}{u.id === me.id && <span className="text-xs text-slate-500"> (you)</span>}
                 {u.disabled && <span data-user-disabled-badge className="ml-2 rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-600">disabled</span>}
-                <button title="Edit user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name, email: u.email || "" }); }}>✎</button>
+                <button title="Edit user" aria-label="Edit user" className="ml-2 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => { setErr(""); setMsg(""); setEditing({ id: u.id, name: u.name, email: u.email || "" }); }}>✎</button>
               </div>
               <div className="text-xs text-slate-500">{u.email}</div>
             </span>
@@ -4170,7 +4190,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
 function SyncStatus() {
   const [s, setS] = useState(() => writeQueue.queueState());
   useEffect(() => { window.__onQueueChange = setS; return () => { window.__onQueueChange = null; }; }, []);
-  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-400">Saved</span>;
+  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-500">Saved</span>;
   if (s.status === "saving") return <span data-sync-status="saving" className="text-xs text-slate-500">Saving…</span>;
   // Deliberately persistent. A toast scrolls away; an unsaved change must not. This is also
   // the first honest answer to the observability gap -- an error state that STAYS on screen.
@@ -4216,6 +4236,8 @@ function App({ user, onBackToClients }) {
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
+  // a failed first load falls back to rendering the (empty) views, as before the skeleton existed
+  const [loadFailed, setLoadFailed] = useState(false);
   const [view, setView] = useState("Dashboard");
   const [acctId, setAcctId] = useState(null);
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
@@ -4252,6 +4274,7 @@ function App({ user, onBackToClients }) {
     .then(s => { setSt(s); setLoaded(true); })
     .catch(e => {
       console.error(e);
+      setLoadFailed(true);
       reportError("load_failed", e, { where: "fetchAll" });
       toast({ text: "Could not load shared data: " + e.message, tone: "error" });
     }), []);
@@ -4447,7 +4470,7 @@ function App({ user, onBackToClients }) {
       <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${mobileNav ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 ${collapsed ? "w-14" : "w-52"}`}>
         <div className={`flex items-center pb-4 pt-5 ${collapsed ? "justify-center px-0" : "justify-between px-5"}`}>
           {!collapsed && <span className="text-lg font-extrabold tracking-tight text-slate-900">One<span className="text-indigo-600">Vio</span></span>}
-          <button title={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(c => !c)}
+          <button title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(c => !c)}
             className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {collapsed ? <polyline points="9 18 15 12 9 6" /> : <polyline points="15 18 9 12 15 6" />}
@@ -4491,8 +4514,10 @@ function App({ user, onBackToClients }) {
         </div>}
         <div className="ml-1"><SyncStatus /></div>
         <div className="relative ml-1">
-          <button onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
-            className="nm-btn relative flex h-9 w-9 items-center justify-center text-base">🔔
+          <button data-bell onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
+            aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notifOpen}
+            className="nm-btn relative flex h-9 w-9 items-center justify-center text-slate-600">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
             {unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{unreadCount}</span>}
           </button>
           {notifOpen && (
@@ -4533,6 +4558,7 @@ function App({ user, onBackToClients }) {
         </div>
       </div>
       <ViewBoundary key={view} view={view}>
+        {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
         {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
         {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
         {view === "Accounts" && (acctId
@@ -4540,6 +4566,7 @@ function App({ user, onBackToClients }) {
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
         {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+        </>}
       </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
         go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
