@@ -1,6 +1,7 @@
-/* ------------------------------- Dashboard ------------------------------- */
+import { DAY, iso } from "./dates.js";
+import { toUSD } from "./money.js";
 /* trailing-12-month revenue retention (USD) from churn events, renewal deltas and ARR events */
-function retentionStats(accounts, rates) {
+export function retentionStats(accounts, rates) {
   const yearAgo = Date.now() - 365 * DAY;
   let churnedARR = 0, expansion = 0, contraction = 0;
   accounts.forEach(a => {
@@ -34,7 +35,7 @@ function retentionStats(accounts, rates) {
 // The last 31 December that has actually finished. December itself counts as complete
 // on the 31st. Rolling by design: this reads Dec'25 through 2026 and Dec'26 from 2027,
 // so the comparison never silently decays into an irrelevant baseline.
-function lastCompletedDecember(now = iso(Date.now())) {
+export function lastCompletedDecember(now = iso(Date.now())) {
   const [y, m, d] = String(now).slice(0, 10).split("-").map(Number);
   const year = (m === 12 && d === 31) ? y : y - 1;
   return `${year}-12-31`;
@@ -46,7 +47,7 @@ function lastCompletedDecember(now = iso(Date.now())) {
 //
 // Both sides convert at TODAY's rates, deliberately: the delta should show revenue
 // movement, not FX drift. An EUR account whose local ARR never moved must read as flat.
-function arrAsOf(account, isoDate, rates) {
+export function arrAsOf(account, isoDate, rates) {
   const cut = String(isoDate).slice(0, 10);
   const after = when => String(when || "").slice(0, 10) > cut;
   // Already churned AT the baseline: it carried no ARR then, so the baseline is zero.
@@ -81,7 +82,7 @@ function arrAsOf(account, isoDate, rates) {
 // An account that started after the baseline has no prior close, so a percentage would be
 // meaningless: it is flagged `isNew` and left out of the maths. New logos belong to new
 // business, not to retention.
-function accountRetention(account, rates, now = iso(Date.now())) {
+export function accountRetention(account, rates, now = iso(Date.now())) {
   const baselineDate = lastCompletedDecember(now);
   const baselineKey = `Dec'${baselineDate.slice(2, 4)}`;
   const isNew = String(account.startDate || "").slice(0, 10) > baselineDate;
@@ -107,7 +108,7 @@ function accountRetention(account, rates, now = iso(Date.now())) {
 // The year opens at the prior 31 December close, so `opening` here is the balance on
 // 1 January and a movement "in the year" is anything dated after that close. Both
 // cohorts share that baseline, which is what lets their openings be added together.
-function amBookMovement(accounts, rates, now = iso(Date.now())) {
+export function amBookMovement(accounts, rates, now = iso(Date.now())) {
   const today = String(now).slice(0, 10);
   const priorClose = `${+today.slice(0, 4) - 1}-12-31`;
   const inYear = when => { const d = String(when || "").slice(0, 10); return d > priorClose && d <= today; };
