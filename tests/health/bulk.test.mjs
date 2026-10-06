@@ -480,6 +480,8 @@ test("deleting a single account offers an undo that restores it with its childre
     if (!row) return { err: "parent row not found" };
     row.click();
     await new Promise(r => setTimeout(r, 250));
+    document.querySelector("[data-more-actions]")?.click(); // Delete account lives in the More menu
+    await new Promise(r => setTimeout(r, 100));
     const del = [...document.querySelectorAll("button")].find(b => b.textContent === "Delete account");
     if (!del) return { err: "no delete button — is the seeded user an admin?" };
     del.click();

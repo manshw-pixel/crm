@@ -169,6 +169,7 @@ test("the dashboard card shows the three section totals and expands to accounts"
     scored({ id: "pending", name: "Pending Co", arr: 250000 }),
   ];
   const { page, browser } = await launch(seedWithUser(book));
+  await page.click("[data-analytics-toggle]"); // the card sits in the collapsed Analytics section
   await page.waitForSelector("[data-am-book]");
   const collapsed = await page.textContent("[data-am-book]");
   assert(/Owned before/i.test(collapsed), `no section 1 header: ${collapsed}`);
@@ -187,6 +188,7 @@ test("the dashboard card shows the three section totals and expands to accounts"
 test("the card sits above Recently declined", async () => {
   const book = [scored({ id: "old", name: "Oldbook Co", arr: 500000, transitionDate: "2024-01-01" })];
   const { page, browser } = await launch(seedWithUser(book));
+  await page.click("[data-analytics-toggle]"); // the card sits in the collapsed Analytics section
   await page.waitForSelector("[data-am-book]");
   const declinedFollows = await page.evaluate(() => {
     const card = document.querySelector("[data-am-book]");
@@ -202,6 +204,7 @@ test("the card sits above Recently declined", async () => {
 test("a scheduled handover shows an ARR figure only under Today, never under 1 Jan", async () => {
   const book = [scored({ id: "pending", name: "Pending Co", arr: 250000 })];
   const { page, browser } = await launch(seedWithUser(book));
+  await page.click("[data-analytics-toggle]"); // the card sits in the collapsed Analytics section
   await page.waitForSelector("[data-am-book]");
   await page.click("[data-am-book-toggle]");
   await page.waitForFunction(() => /Pending Co/.test(document.querySelector("[data-am-book]").textContent));
@@ -257,6 +260,7 @@ test("a handover still in the future this year is AM-owned once that year has pa
 test("the card labels name the current year rather than a hardcoded one", async () => {
   const book = [scored({ id: "old", name: "Oldbook Co", arr: 500000, transitionDate: "2024-01-01" })];
   const { page, browser } = await launch(seedWithUser(book));
+  await page.click("[data-analytics-toggle]"); // the card sits in the collapsed Analytics section
   await page.waitForSelector("[data-am-book]");
   const year = new Date().getFullYear();
   const txt = await page.textContent("[data-am-book]");

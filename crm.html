@@ -1050,6 +1050,76 @@ const LoadingSkeleton = ({ view }) => (
     </> : <div className="nm space-y-2 p-4">{Array.from({ length: 8 }, (_, k) => <Bone key={k} className="h-6 w-full" />)}</div>}
   </div>
 );
+// The dashboard's analysis cards, collapsed by default (remembered per user). Collapsed
+// hides rather than unmounts, so nothing inside recomputes or loses state on toggle.
+const AnalyticsSection = ({ user, children }) => {
+  const key = "dashAnalytics_" + (user?.name || "");
+  const [open, setOpen] = useState(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
+  const toggle = () => setOpen(o => { try { localStorage.setItem(key, o ? "0" : "1"); } catch {} return !o; });
+  return (
+    <div className="space-y-3">
+      <button data-analytics-toggle aria-expanded={open} onClick={toggle}
+        className="flex w-full items-center gap-2 border-t border-slate-200 pt-3 text-left text-xs font-bold uppercase tracking-widest text-slate-600 hover:text-indigo-600">
+        <span>{open ? "▾" : "▸"}</span> Analytics <span className="font-normal normal-case tracking-normal text-slate-500">AM book, declines, trends, cohorts, churn</span>
+      </button>
+      <div data-analytics className={open ? "space-y-3" : "hidden"}>{children}</div>
+    </div>
+  );
+};
+// "More ▾" overflow menu for secondary actions. Falsy items are skipped; Escape or an
+// outside click closes it; items are real buttons, so Tab/Enter work.
+const MoreMenu = ({ items }) => {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    // stopPropagation: the App's window-level Escape means "back to list" -- closing the menu must not also leave the account
+    const onKey = e => { if (e.key === "Escape") { e.stopPropagation(); setOpen(false); } };
+    const onDown = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("keydown", onKey); document.addEventListener("mousedown", onDown);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onDown); };
+  }, [open]);
+  const list = items.filter(Boolean);
+  return (
+    <div ref={ref} className="relative">
+      <Btn data-more-actions aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)}>More ▾</Btn>
+      {open && <div data-more-menu role="menu" className="nm absolute left-0 z-20 mt-1 w-56 p-1">
+        {list.map(it => <button key={it.label} role="menuitem"
+          className={`block w-full rounded px-3 py-1.5 text-left text-xs font-semibold hover:bg-slate-50 ${it.separate ? "mt-1 border-t border-slate-100 pt-2" : ""} ${it.danger ? "text-rose-600" : "text-slate-700"}`}
+          onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>)}
+      </div>}
+    </div>
+  );
+};
+// A horizontal scroller that says when columns sit past its right edge: a fade and a
+// "→ N more" pill, gone once the last column is in view. Columns opt in with data-col.
+const HScroll = ({ className = "", children }) => {
+  const ref = useRef(null);
+  const [more, setMore] = useState(0);
+  const measure = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    if (el.scrollWidth - el.scrollLeft - el.clientWidth <= 1) { setMore(0); return; }
+    const right = el.getBoundingClientRect().right;
+    setMore(Array.from(el.querySelectorAll("[data-col]")).filter(c => c.getBoundingClientRect().right > right + 1).length);
+  }, []);
+  useEffect(() => {
+    measure();
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  return (
+    <div className="relative">
+      <div ref={ref} data-board onScroll={measure} className={className}>{children}</div>
+      {more > 0 && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 flex w-24 items-center justify-end bg-gradient-to-l from-[#f6f8fb] to-transparent">
+        <span data-board-more={more} className="mr-1 whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 shadow-sm">→ {more} more</span>
+      </div>}
+    </div>
+  );
+};
 // A capped, scrollable dashboard list that says when more is hidden: a bottom fade and a
 // "N more" pill while rows sit below the fold, nothing at all when the list fits.
 // Rows opt in with data-row, so a row holding its own buttons still counts once.
@@ -2114,6 +2184,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </ScrollList>
       </Card>
       </div>
+      <AnalyticsSection user={user}>
       <AmBookCard book={amBook} openAccount={openAccount} />
       <Card title="Recently declined" className="!p-3">
         <ScrollList label="Recently declined">
@@ -2147,6 +2218,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       </Card>}
       <CohortGrid accounts={scope === "all" ? allAccounts : all} />
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
+      </AnalyticsSection>
     </div>
   );
 }
@@ -2928,13 +3000,11 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           setActiveSeg("");
         }}>Delete segment</Btn>}
         <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
-        <Select aria-label="Filter by tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} />
-        <Select aria-label="Filter by health risk" value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} />
-        <Select aria-label="Filter by CSM" value={csm} onChange={e => setCsm(e.target.value)} options={csms} />
-        <Select aria-label="Filter by renewal window in days" value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} />
-        <span className="text-xs text-slate-500">renew ≤ days</span>
-        <Select aria-label="Filter by billing status" value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} />
-        <span className="text-xs text-slate-500">billing</span>
+        <Select aria-label="Filter by tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} labels={{ All: "Tier: All" }} />
+        <Select aria-label="Filter by health risk" value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} labels={{ All: "Health: All" }} />
+        <Select aria-label="Filter by CSM" value={csm} onChange={e => setCsm(e.target.value)} options={csms} labels={{ All: "CSM: All" }} />
+        <Select aria-label="Filter by renewal window in days" value={renew} onChange={e => setRenew(e.target.value)} options={["All", "30", "60", "90"]} labels={{ All: "Renewal: any", 30: "Renewal ≤ 30d", 60: "Renewal ≤ 60d", 90: "Renewal ≤ 90d" }} />
+        <Select aria-label="Filter by billing status" value={billing} onChange={e => setBilling(e.target.value)} options={["All", "Completed", "Pending"]} labels={{ All: "Billing: All", Completed: "Billing: Completed", Pending: "Billing: Pending" }} />
         {churnedCount > 0 && <label className="ml-2 flex items-center gap-1.5 text-xs text-slate-600">
           <input type="checkbox" checked={showChurned} onChange={e => { setShowChurned(e.target.checked); if (!e.target.checked) setOnlyChurned(false); }} />show churned ({churnedCount})</label>}
         {onlyChurned && <button className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600" onClick={() => setOnlyChurned(false)} title="Remove churned-only filter">churned only ✕</button>}
@@ -3085,6 +3155,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
         {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
           className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
+        {a.flags.map(f => <span key={f} data-flag className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         <span className="ml-auto text-xs font-semibold text-slate-500">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
       </div>
       {/* Meta row: systematic key facts */}
@@ -3153,14 +3224,9 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
         <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
-        <Btn kind="primary" onClick={() => setForm("health")}>✎ Update health</Btn>
-        {!a.churn && <Btn kind="primary" onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
-        {!a.churn && !a.billingCompleted && <Btn kind="primary" onClick={() => setForm("billing")}>$ Mark billing completed</Btn>}
+        <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
+        {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
         <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
-        <Btn onClick={() => setForm("contact")}>+ Contact</Btn>
-        <Btn onClick={() => setForm("opp")}>+ Opportunity</Btn>
-        {!a.churn && <Btn onClick={() => setForm("adjust")}>⇄ Adjust ARR</Btn>}
-        {!a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-rose-500" onClick={() => setForm("churn")}>✖ Mark churned</button>}
         {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
           onClick={() => {
             // Reversible in one dispatch, so no dialog: act, then offer Undo.
@@ -3170,9 +3236,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             toast({ text: `Reactivated ${a.name}.`, tone: "success",
               undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
           }}>↻ Reactivate</button>}
-        {a.flags.map(f => <span key={f} className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
-        {user.role === "admin" && <button className="nm-btn ml-auto px-3 py-1.5 text-xs font-bold text-rose-500"
-          onClick={() => {
+        <MoreMenu items={[
+          { label: "+ Contact", onClick: () => setForm("contact") },
+          { label: "+ Opportunity", onClick: () => setForm("opp") },
+          !a.churn && { label: "⇄ Adjust ARR", onClick: () => setForm("adjust") },
+          !a.churn && !a.billingCompleted && { label: "$ Mark billing completed", onClick: () => setForm("billing") },
+          !a.churn && { label: "✖ Mark churned", onClick: () => setForm("churn"), danger: true },
+          user.role === "admin" && { label: "Delete account", danger: true, separate: true, onClick: () => {
             // No dialog: the Undo toast below is the guard, and it is a better one --
             // a confirm people click through protects nothing.
             // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
@@ -3182,7 +3252,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             toast({ text: `Deleted ${a.name}.`, tone: "success",
               undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
             back();
-          }}>Delete account</button>}
+          } },
+        ]} />
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
@@ -3376,13 +3447,13 @@ function TaskRow({ t, a, dispatch, openAccount }) {
       <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
       <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
       <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
-      <select value="" title="Reschedule" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
+      <select value="" title="Reschedule" aria-label="Reschedule task" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
         onChange={e => {
           const v = e.target.value;
           if (v === "custom") { setCustom(true); return; }
           if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
         }}>
-        <option value="">⋯</option>
+        <option value="">Reschedule</option>
         <option value="0">Today</option>
         <option value="1">Tomorrow</option>
         <option value="7">+1 week</option>
@@ -3479,9 +3550,9 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
         <Stat label="Best case (90d)" value={fmtMoney(best)} sub="everything except At risk" />
         <Stat label="At risk (90d)" value={fmtMoney(atRisk)} tone={atRisk ? "text-rose-600" : undefined} sub={`${notStarted.length} not started yet`} />
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-3">
+      <HScroll className="flex gap-3 overflow-x-auto pb-3">
       {months.map(m => (
-        <div key={m.key} className="nm w-56 shrink-0 p-4">
+        <div key={m.key} data-col className="nm w-56 shrink-0 p-4">
           <div className="mb-2 flex justify-between text-xs font-semibold text-slate-700">
             <span>{m.label}</span><span>{m.items.length ? fmtMoney(m.items.reduce((s, a) => s + a.arrUSD, 0)) + " USD" : ""}</span>
           </div>
@@ -3507,7 +3578,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
           ))}
         </div>
       ))}
-      </div>
+      </HScroll>
       <RenewalOutcomes accounts={allBook} rates={rates} snapshots={snapshots} />
     </div>
   );
@@ -3691,8 +3762,14 @@ function Settings({ st, dispatch, user, scored }) {
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
           <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
           <input ref={fileRef} type="file" accept=".json" className="hidden" onChange={doImport} />
-          <Btn onClick={() => setConfirmData("sample")}>Load sample data</Btn>
-          <Btn onClick={() => setConfirmData("clear")}>Clear all data</Btn>
+        </div>
+        <div data-danger-zone className="mt-4 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
+          <div className="text-[11px] font-bold uppercase tracking-widest text-rose-600">Danger zone</div>
+          <p className="mt-1 text-xs text-slate-600">Both replace the whole team's data and cannot be undone.</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <button className="nm-btn px-3.5 py-1.5 text-xs font-bold text-rose-600" onClick={() => setConfirmData("sample")}>Load sample data</button>
+            <button className="nm-btn px-3.5 py-1.5 text-xs font-bold text-rose-600" onClick={() => setConfirmData("clear")}>Clear all data</button>
+          </div>
         </div>
         {confirmData && <ConfirmDialog
           title={confirmData === "sample" ? "Replace all team data" : "Delete all team data"}
@@ -4505,7 +4582,9 @@ function App({ user, onBackToClients }) {
           className="nm-btn flex h-9 w-9 items-center justify-center text-slate-600 lg:hidden">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" /></svg>
         </button>
-        <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId ? "Account detail" : view}</h1>
+        <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId
+          ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
+          : view}</h1>
         {view !== "Tasks" && <div className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
