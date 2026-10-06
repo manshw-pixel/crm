@@ -1,6 +1,6 @@
 # CS CRM — Team Setup (one-time, ~10 minutes)
 
-The CRM is a single file (`crm.html`) that stores shared data in a free [Supabase](https://supabase.com) project. Everyone on the team sees and edits the same accounts.
+The CRM is a single page (built from `crm.html` and `src/`) that stores shared data in a free [Supabase](https://supabase.com) project. Everyone on the team sees and edits the same accounts.
 
 ## 1. Create the Supabase project
 
@@ -17,7 +17,7 @@ The CRM is a single file (`crm.html`) that stores shared data in a free [Supabas
 1. In Supabase, go to **Project Settings → API** and copy:
    - **Project URL** (looks like `https://abcd1234.supabase.co`)
    - **anon public** key (a long string)
-2. Open `crm.html` in a text editor, find the `TEAM CONFIG` block near the top, and paste both values:
+2. Open `src/00-core-config.jsx` in a text editor, find the `TEAM CONFIG` block near the top, and paste both values:
    ```js
    const SUPABASE_URL = "https://abcd1234.supabase.co";
    const SUPABASE_ANON_KEY = "eyJhbGciOi...";
@@ -40,8 +40,8 @@ app, runs the full test suite, and deploys only if the suite passes.
 
 ### Building locally
 
-`crm.html` is the source you edit; it is **not** what gets served. `node build.mjs`
-compiles its JSX ahead of time and inlines every dependency into `dist/crm.html`, a
+`crm.html` (the page shell) and `src/*.jsx` (the app code) are the source you edit; they are
+**not** what gets served. `node build.mjs` compiles the JSX ahead of time and inlines every dependency into `dist/crm.html`, a
 single self-contained file that loads nothing from the network.
 
 ```sh

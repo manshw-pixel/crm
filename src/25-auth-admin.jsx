@@ -8,7 +8,7 @@ function SetupScreen() {
           <li>Create a free project at <b>supabase.com</b> (pick a region near your team).</li>
           <li>Open its <b>SQL Editor</b>, paste the contents of <code>supabase-setup.sql</code>, and click Run.</li>
           <li>In <b>Project Settings → API</b>, copy the <b>Project URL</b> and <b>anon public</b> key.</li>
-          <li>Open <code>crm.html</code> in a text editor and paste both into the <code>TEAM CONFIG</code> block near the top.</li>
+          <li>Open <code>src/00-core-config.jsx</code> in a text editor and paste both into the <code>TEAM CONFIG</code> block near the top.</li>
           <li>Reload this page — you'll see the sign-up screen. The first person to sign up becomes admin.</li>
         </ol>
         <p className="mt-4 text-xs text-slate-500">Full instructions: <code>TEAM-SETUP.md</code> in the repository.</p>
