@@ -43,3 +43,37 @@ test("blank leaves a value alone; an unreadable value is counted for the banner"
     assert(res.badValue === 1, "badValue: " + res.badValue);
   } finally { await browser.close(); }
 });
+
+test("re-importing our own export adds no history point and keeps inputsUpdatedAt", async () => {
+  const { page, browser } = await launch(seed);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1);
+    const before = await page.evaluate(() => { const a = window.__store.getState().accounts[0]; return { h: (a.history || []).length, u: a.inputsUpdatedAt, v: JSON.stringify(a.inputs.value) }; });
+    const csv = await page.evaluate(() => window.__health.accountsCSVText(window.__store.getState().accounts));
+    const { a } = await importText(page, csv);
+    assert((a.history || []).length === before.h, "history " + before.h + " -> " + (a.history || []).length);
+    assert(a.inputsUpdatedAt === before.u, "inputsUpdatedAt " + before.u + " -> " + a.inputsUpdatedAt);
+    assert(JSON.stringify(a.inputs.value) === before.v, "value: " + JSON.stringify(a.inputs.value));
+  } finally { await browser.close(); }
+});
+
+test("a CSV that changes one answer updates it and logs exactly one history point", async () => {
+  const { page, browser } = await launch(seed);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1);
+    const h0 = await page.evaluate(() => (window.__store.getState().accounts[0].history || []).length);
+    const { a } = await importText(page, "accountNo,name,approvedSavings\n7,Csv Co,no\n");
+    assert(JSON.stringify(a.inputs.value) === JSON.stringify({ caseStudy: true, savings: false, roi: false }), "value: " + JSON.stringify(a.inputs.value));
+    assert((a.history || []).length === h0 + 1, "history " + h0 + " -> " + (a.history || []).length);
+  } finally { await browser.close(); }
+});
+
+test("a new account from a CSV with one Value column stores all three booleans", async () => {
+  const { page, browser } = await launch(seed);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1);
+    await importText(page, "name,approvedRoi\nBrand New,yes\n");
+    const v = await page.evaluate(() => window.__store.getState().accounts.find(x => x.name === "Brand New").inputs.value);
+    assert(JSON.stringify(v) === JSON.stringify({ caseStudy: false, savings: false, roi: true }), "value: " + JSON.stringify(v));
+  } finally { await browser.close(); }
+});

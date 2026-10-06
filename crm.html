@@ -2469,14 +2469,17 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (existing) {
         dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
-        const patchIn = hasVal ? { ...inputPatch, value: { ...(existing.inputs?.value || {}), ...valPatch } } : inputPatch;
+        // keep only answers that differ from the stored one, so re-importing our own export logs nothing
+        const stored = existing.inputs?.value || {};
+        const changed = Object.fromEntries(Object.entries(valPatch).filter(([k, v]) => v !== !!stored[k]));
+        const patchIn = Object.keys(changed).length ? { ...inputPatch, value: { ...stored, ...changed } } : inputPatch;
         if (Object.keys(patchIn).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: patchIn });
         updated++;
       } else {
         const item = { id: uid(), tier: "Mid", arr: 0, currency: "USD", industry: "", csm: "",
           startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active",
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
-          inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? { value: valPatch } : {}) },
+          inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()) };
         dispatch({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
