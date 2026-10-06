@@ -32,6 +32,7 @@ import "./second-pass.test.mjs";
 import "./page-polish.test.mjs";
 import "./tier3-polish.test.mjs";
 import "./dashboard-polish.test.mjs";
+import "./health-mix.test.mjs";
 import "./confirm-dialog.test.mjs";
 import "./undo-actions.test.mjs";
 import "./boundary.test.mjs";
@@ -59,6 +60,8 @@ import "./mobile.test.mjs";
 import "./drive-permission.test.mjs";
 import "./csv-dates.test.mjs";
 import "./tab-icon.test.mjs";
+import "./health-mix-ui.test.mjs";
+import "./health-mix-csv.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the

@@ -44,12 +44,13 @@
  * HEALTH SCORE LOGIC
  * ----------------------------------------------------------------------------
  * score = w.usage*usage + w.sentiment*sentiment + w.tickets*ticketScore
- *       + w.recency*recencyScore + w.nps*npsNorm          (weights sum to 1)
+ *       + w.recency*recencyScore + w.nps*npsNorm + w.value*valueScore   (weights sum to 1)
  *
  *   usage, sentiment : stored per-account, 0..100
  *   ticketScore      : 100 - min(openTickets*10, 100)
  *   recencyScore     : 100 if last activity <=7 days ago, linear to 0 at 60d
  *   npsNorm          : (nps + 100) / 2   (NPS -100..100 -> 0..100)
+ *   valueScore       : sub-weighted Yes/No answers (inputs.value); recency: per-type blend when settings.recencyMix.enabled
  *
  * Risk: score >=70 Green | 40..69 Yellow | <40 Red
  *
@@ -142,8 +143,26 @@ function qbrStatus(a) {
   return d < 0 ? { kind: "overdue", d: -d } : d <= 30 ? { kind: "due", d } : { kind: "scheduled", d };
 }
 
-const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
-const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
+const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15, value: 0 };
+const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS", value: "Value" };
+/* Engagement recency sub-options: one per activity type, each scored from that type's own
+   last date against its own window. Ships disabled -- see the rollout note in the spec:
+   the blend can only be <= today's any-activity rule, so turning it on moves scores. */
+const ACTIVITY_TYPES = ["call", "email", "QBR", "ticket", "note", "renewal", "churn"];
+const DEFAULT_RECENCY_MIX = { enabled: false, types: {
+  call: { weight: 25, fullDays: 7, zeroDays: 60 }, email: { weight: 20, fullDays: 7, zeroDays: 60 },
+  QBR: { weight: 25, fullDays: 90, zeroDays: 180 }, ticket: { weight: 10, fullDays: 7, zeroDays: 60 },
+  note: { weight: 10, fullDays: 7, zeroDays: 60 }, renewal: { weight: 10, fullDays: 365, zeroDays: 730 },
+  churn: { weight: 0, fullDays: 365, zeroDays: 730 } } };
+/* Value: Yes/No per account, blended by sub-weight. Ships at weight 0 (DEFAULT_WEIGHTS.value). */
+const VALUE_ITEMS = [["caseStudy", "Case study published"], ["savings", "Savings approved by customer"], ["roi", "ROI approved by customer"]];
+const DEFAULT_VALUE_MIX = { caseStudy: 34, savings: 33, roi: 33 };
+function mergeSettings(saved) {
+  const s = saved || {}, rm = s.recencyMix || {}, types = {};
+  ACTIVITY_TYPES.forEach(t => { types[t] = { ...DEFAULT_RECENCY_MIX.types[t], ...((rm.types || {})[t] || {}) }; });
+  return { weights: { ...DEFAULT_WEIGHTS, ...(s.weights || {}) },
+    recencyMix: { enabled: !!rm.enabled, types }, valueMix: { ...DEFAULT_VALUE_MIX, ...(s.valueMix || {}) } };
+}
 const INPUT_RANGE = { usage: [0, 100], sentiment: [0, 100], tickets: [0, 50], nps: [-100, 100] };
 const DEFAULT_INPUTS = { usage: 70, sentiment: 70, tickets: 0, nps: 0 };
 /* keep health inputs numeric and in range — drops blanks/NaN, clamps the rest */
@@ -153,6 +172,10 @@ const clampInputs = raw => {
     const n = parseFloat(raw?.[k]);
     if (!isNaN(n)) { const [lo, hi] = INPUT_RANGE[k]; out[k] = Math.min(hi, Math.max(lo, n)); }
   });
+  if (raw && typeof raw.value === "object" && raw.value) {
+    out.value = {};
+    VALUE_ITEMS.forEach(([k]) => { out.value[k] = raw.value[k] === true; });
+  }
   return out;
 };
 
@@ -160,22 +183,62 @@ function lastActivityDate(accountId, activities) {
   const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
   return a.length ? a[0].date : null;
 }
-function scoreComponents(acct, activities) {
+// Score 0-100 from days since the last activity: 100 within the full window, falling
+// linearly to 0 at the zero day; a future date counts as 0 days, and no activity scores 0.
+const windowScore = (ds, full, zero) => {
+  if (ds === null || ds === undefined) return 0;
+  const d = Math.max(0, ds);
+  if (d <= full) return 100;
+  if (zero <= full || d >= zero) return 0;
+  return Math.round(100 * (1 - (d - full) / (zero - full)));
+};
+function recencyBreakdown(acct, activities, recencyMix) {
+  const mix = recencyMix || DEFAULT_RECENCY_MIX;
+  return ACTIVITY_TYPES.map(type => {
+    const c = { ...DEFAULT_RECENCY_MIX.types[type], ...((mix.types || {})[type] || {}) };
+    const last = activities.filter(x => x.accountId === acct.id && x.type === type).map(x => x.date).sort().pop() || null;
+    return { type, weight: +c.weight || 0, score: windowScore(last ? daysSince(last) : null, +c.fullDays || 0, +c.zeroDays || 0), lastDate: last };
+  });
+}
+function scoreComponents(acct, activities, settings) {
   const la = lastActivityDate(acct.id, activities);
   const ds = la ? daysSince(la) : 999;
   const inp = { ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) }; // tolerate missing/bad stored inputs
+  const legacyRecency = ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53));
+  const rm = settings && settings.recencyMix;
+  let recency = legacyRecency;
+  if (rm && rm.enabled) {
+    const parts = recencyBreakdown(acct, activities, rm).filter(p => p.weight > 0);
+    const tw = parts.reduce((s, p) => s + p.weight, 0);
+    if (tw > 0) recency = Math.round(parts.reduce((s, p) => s + p.weight * p.score, 0) / tw);
+  }
+  const vm = { ...DEFAULT_VALUE_MIX, ...((settings && settings.valueMix) || {}) };
+  const vw = VALUE_ITEMS.reduce((s, [k]) => s + (+vm[k] || 0), 0);
+  const ans = inp.value || {};
+  const value = vw > 0 ? Math.round(VALUE_ITEMS.reduce((s, [k]) => s + (+vm[k] || 0) * (ans[k] === true ? 100 : 0), 0) / vw) : 0;
   return {
     usage: inp.usage,
     sentiment: inp.sentiment,
     tickets: 100 - Math.min(inp.tickets * 10, 100),
-    recency: ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53)),
+    recency,
     nps: Math.round((inp.nps + 100) / 2),
+    value,
   };
 }
-function healthScore(acct, activities, weights) {
-  const c = scoreComponents(acct, activities);
+function healthScore(acct, activities, weights, settings) {
+  const c = scoreComponents(acct, activities, settings);
   const tw = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
   return Math.round(Object.keys(weights).reduce((s, k) => s + (weights[k] / tw) * (c[k] ?? 0), 0));
+}
+/* How many (non-churned) accounts would drop a band if `to` settings replaced `from`.
+   Uses healthScore itself, so the preview cannot disagree with what saving does. */
+function bandImpact(accounts, activities, from, to) {
+  const out = { down: 0, toYellow: 0, toRed: 0 };
+  accounts.filter(a => !a.churn).forEach(a => {
+    const b0 = riskOf(healthScore(a, activities, from.weights, from)), b1 = riskOf(healthScore(a, activities, to.weights, to));
+    if (BAND_RANK[b1] > BAND_RANK[b0]) { out.down++; if (b1 === "Yellow") out.toYellow++; else out.toRed++; }
+  });
+  return out;
 }
 const riskOf = s => (s >= 70 ? "Green" : s >= 40 ? "Yellow" : "Red");
 const RISK_STYLE = {
@@ -261,10 +324,10 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 
 /* ------------------------------ audit trail ------------------------------ */
 const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage", "currency"];
@@ -454,7 +517,7 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
-    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
+    settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
       segments: saved.segments || [] },
   };
@@ -563,7 +626,7 @@ function persist(action, next, prev) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
     case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
       return writeQueue.enqueue({ table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
@@ -692,7 +755,7 @@ function reducer(state, action) {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
         const upd = { ...a, inputs: { ...a.inputs, ...clampInputs(action.inputs) }, inputsUpdatedAt: iso(Date.now()) };
-        const s = healthScore(upd, state.activities, state.settings.weights);
+        const s = healthScore(upd, state.activities, state.settings.weights, state.settings);
         return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }
@@ -761,6 +824,8 @@ function reducer(state, action) {
         opportunities: merge(state.opportunities, s.opportunities) };
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
+    case "SET_RECENCY_MIX": return { ...state, settings: { ...state.settings, recencyMix: action.mix } };
+    case "SET_VALUE_MIX": return { ...state, settings: { ...state.settings, valueMix: action.mix } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
@@ -1470,8 +1535,17 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
   const [v, setV] = useState({ ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) });
   const num = (k, min, max) => <label className="text-xs text-slate-700">{k} ({min}–{max})<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: e.target.value })} className="w-20" /></label>;
   return (
-    <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: v }); onDone(); }}>
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: { ...v, value: Object.fromEntries(VALUE_ITEMS.map(([k]) => [k, !!(v.value || {})[k]])) } }); onDone(); }}>
       {num("usage", 0, 100)}{num("sentiment", 0, 100)}{num("tickets", 0, 50)}{num("nps", -100, 100)}
+      <fieldset className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+        <legend className="mb-1 font-semibold">Value</legend>
+        {VALUE_ITEMS.map(([k, label]) => (
+          <label key={k} className="flex items-center gap-1.5">
+            <input type="checkbox" data-value-check={k} checked={!!(v.value || {})[k]}
+              onChange={e => setV({ ...v, value: { ...(v.value || {}), [k]: e.target.checked } })} />{label}
+          </label>
+        ))}
+      </fieldset>
       <Btn kind="primary" type="submit">Save</Btn><Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
@@ -2236,10 +2310,11 @@ function subNumbers(accounts) {
   });
   return m;
 }
+const VALUE_COL = { caseStudy: "caseStudy", approvedSavings: "savings", approvedRoi: "roi" };
 function accountsCSVText(rows) {
-  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate"];
+  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
   const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : a[c];
+  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   return [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
 }
 function exportCSV(rows) {
@@ -2291,6 +2366,7 @@ function importSummary(r) {
   if (r.err) return r.err;
   const bits = [`imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`];
   if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
+  if (r.badValue) bits.push(`⚠ ${r.badValue} unreadable Value answer(s) left unchanged (use yes/no)`);
   if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
   if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);
   if (r.badStatus) bits.push(`⚠ ${r.badStatus} unrecognized status(es) set to Active`);
@@ -2327,7 +2403,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0;
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0;
     const badDateRows = [], churnSkipped = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
     const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
@@ -2373,6 +2449,17 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
       if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));
       const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
+      // Value answers: blank = leave alone, unreadable = count it and leave alone
+      const valPatch = {};
+      Object.entries(VALUE_COL).forEach(([header, key]) => {
+        if (!has(header.toLowerCase())) return;
+        const raw = col(r, header.toLowerCase()).trim().toLowerCase();
+        if (raw === "") return;
+        if (["yes", "true", "1"].includes(raw)) valPatch[key] = true;
+        else if (["no", "false", "0"].includes(raw)) valPatch[key] = false;
+        else badValue++;
+      });
+      const hasVal = Object.keys(valPatch).length > 0;
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
       if (vals.churnedInFile) {
@@ -2383,13 +2470,17 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (existing) {
         dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
-        if (Object.keys(inputPatch).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: inputPatch });
+        // keep only answers that differ from the stored one, so re-importing our own export logs nothing
+        const stored = existing.inputs?.value || {};
+        const changed = Object.fromEntries(Object.entries(valPatch).filter(([k, v]) => v !== !!stored[k]));
+        const patchIn = Object.keys(changed).length ? { ...inputPatch, value: { ...stored, ...changed } } : inputPatch;
+        if (Object.keys(patchIn).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: patchIn });
         updated++;
       } else {
         const item = { id: uid(), tier: "Mid", arr: 0, currency: "USD", industry: "", csm: "",
           startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active",
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
-          inputs: { ...DEFAULT_INPUTS, ...inputPatch },
+          inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()) };
         dispatch({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
@@ -2397,7 +2488,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         ok++;
       }
     });
-    done({ ok, updated, skipped, badTier, badStatus, badDate, badDateRows, churnSkipped, dateOrder });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badDateRows, churnSkipped, dateOrder });
   };
   reader.readAsText(file);
 }
@@ -2495,7 +2586,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     el.click(); URL.revokeObjectURL(url);
   };
   const salesTemplate = () => {
-    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights);
+    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
       return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
     download("sales-accounts.csv", accountsCSVText(rows));
   };
@@ -2962,11 +3053,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <span data-live="import" aria-live="polite" className="sr-only">
         {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
       </span>
-      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.
+      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps, caseStudy, approvedSavings, approvedRoi.
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
               rewritten row looked identical to a clean import */}
-          {(importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+          {(importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+            {importMsg.badValue ? ` ⚠ ${importMsg.badValue} unreadable Value answer(s) left unchanged (use yes/no).` : ""}
             {importMsg.badDate ? ` ⚠ ${importMsg.badDate} unreadable date(s) left unchanged (${importMsg.badDateRows.join(", ")}).` : ""}
             {importMsg.churnSkipped?.length ? ` ⚠ Not imported, marked Churned in the file: ${importMsg.churnSkipped.join(", ")} — churn them from the account page.` : ""}
             {importMsg.badTier ? ` ⚠ ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid).` : ""}
@@ -3149,7 +3241,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hEpisode = healthAll.filter(t => t.healthFor === hLatest);
   const hDone = hEpisode.filter(t => t.status === "Done").length;
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
-  const comps = scoreComponents(a, st.activities);
+  const comps = scoreComponents(a, st.activities, st.settings);
   return (
     <div className="space-y-4">
       {/* Title row: identity + health + playbook progress */}
@@ -3289,11 +3381,20 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             </div>); })()}
           <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
-            {Object.keys(comps).map(k => <div key={k} className="flex items-center gap-2">
-              <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
-              <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
-              <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
-            </div>)}
+            {Object.keys(comps).filter(k => k !== "value" || st.settings.weights?.value > 0).map(k => <React.Fragment key={k}>
+              <div className="flex items-center gap-2">
+                <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
+                <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
+                <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
+              </div>
+              {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="mb-1 ml-4 space-y-0.5 text-[11px] text-slate-500">
+                {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
+                  <div key={b.type} data-recency-type={b.type} className="flex justify-between">
+                    <span>{b.type}</span>
+                    <span className="tabular-nums">{b.score} · {b.lastDate ? `last ${daysSince(b.lastDate)}d ago` : "never"}</span>
+                  </div>)}
+              </div>}
+            </React.Fragment>)}
           </div>
         </Card>
         <Card title={`Open tasks (${tasks.length})`}>
@@ -3712,6 +3813,33 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
   );
 }
 
+/* Day-window inputs for one activity type. Edits live in local string drafts and are
+   committed only on blur/Enter, and only when the window is valid (whole days >= 0 and
+   zeroDays > fullDays) -- a half-typed or cleared field must never reach the store, since
+   every dispatch rescored accounts and let the auto-seeder persist crossings and tasks. */
+function RecencyWindowInputs({ type, cfg, onCommit }) {
+  const [draft, setDraft] = useState({ fullDays: String(cfg.fullDays), zeroDays: String(cfg.zeroDays) });
+  const [bad, setBad] = useState(false);
+  useEffect(() => { setDraft({ fullDays: String(cfg.fullDays), zeroDays: String(cfg.zeroDays) }); }, [cfg.fullDays, cfg.zeroDays]);
+  const commit = field => {
+    const text = draft[field].trim();
+    if (text === String(cfg[field])) return;
+    const n = Number(text);
+    const next = { ...cfg, [field]: n };
+    if (text === "" || !Number.isInteger(n) || n < 0 || !(next.zeroDays > next.fullDays)) {
+      setBad(true); setDraft(d => ({ ...d, [field]: String(cfg[field]) })); return;
+    }
+    setBad(false); onCommit({ [field]: n });
+  };
+  // !w-20 + shrink-0: Input is w-full by default, and 3-digit windows (365, 730) need the room
+  const box = (field, label) => <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
+    {label}<Input type="number" min="0" {...{ ["data-" + (field === "fullDays" ? "full" : "zero") + "-days"]: type }} value={draft[field]}
+      onChange={e => { setBad(false); setDraft(d => ({ ...d, [field]: e.target.value })); }}
+      onBlur={() => commit(field)} onKeyDown={e => { if (e.key === "Enter") commit(field); }} className="!w-20 shrink-0 !px-2" />d</span>;
+  return <>{box("fullDays", "full ≤")}{box("zeroDays", "zero ≥")}
+    {bad && <span data-window-error={type} className="text-rose-600">zero must be after full</span>}</>;
+}
+
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user, scored }) {
   const toast = useToast();
@@ -3721,6 +3849,20 @@ function Settings({ st, dispatch, user, scored }) {
   const fileRef = useRef();
   const [confirmData, setConfirmData] = useState(null); // "sample" | "clear"
   const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
+  const rmix = st.settings.recencyMix || mergeSettings({}).recencyMix;
+  const vmix = st.settings.valueMix || mergeSettings({}).valueMix;
+  const [openSub, setOpenSub] = useState({ recency: false, value: false });
+  const setType = (t, patch) => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, types: { ...rmix.types, [t]: { ...rmix.types[t], ...patch } } } });
+  const impactText = r => r.down === 0 ? "No account changes band." : `Moves ${r.down} account${r.down > 1 ? "s" : ""} down a band (${r.toYellow} → Yellow, ${r.toRed} → Red).`;
+  // Impact previews rescore every account, so compute them only while they are visible.
+  const NO_IMPACT = { down: 0, toYellow: 0, toRed: 0 };
+  const recencyOpen = openSub.recency, valueLive = w.value > 0;
+  const recencyImpact = useMemo(() => !recencyOpen ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+    { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }),
+    [st.accounts, st.activities, st.settings, recencyOpen]);
+  const valueImpact = useMemo(() => !valueLive ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+    { ...st.settings, weights: { ...w, value: 0 } }, st.settings),
+    [st.accounts, st.activities, st.settings, valueLive]);
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
     const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
@@ -3748,11 +3890,42 @@ function Settings({ st, dispatch, user, scored }) {
           score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}
         </div>
         {Object.keys(w).map(k => (
-          <div key={k} className="mb-2 flex items-center gap-3 text-sm">
+          <React.Fragment key={k}>
+          <div className="mb-2 flex items-center gap-3 text-sm">
             <span className="w-40">{WEIGHT_LABELS[k]}</span>
             <input type="range" min="0" max="100" value={w[k]} onChange={e => setW(k, e.target.value)} className="flex-1" />
             <span className="w-12 text-right font-mono text-xs">{(100 * w[k] / total).toFixed(0)}%</span>
           </div>
+            {k === "recency" && <div className="mb-3 ml-4">
+              <button data-recency-panel-toggle className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpenSub(o => ({ ...o, recency: !o.recency }))}>
+                {openSub.recency ? "▾" : "▸"} Sub-options (by activity type)</button>
+              {openSub.recency && <div data-recency-panel className="mt-2 space-y-1.5 text-xs">
+                <label className="flex items-center gap-2 font-semibold">
+                  <input type="checkbox" data-recency-enabled checked={!!rmix.enabled} onChange={e => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, enabled: e.target.checked } })} />
+                  Score recency per activity type
+                </label>
+                <div data-impact="recency" className="text-slate-500">{rmix.enabled ? "Compared with any-activity recency: " : "Turning this on: "}{impactText(recencyImpact)}</div>
+                {ACTIVITY_TYPES.map(t => <div key={t} className="flex items-center gap-2">
+                  <span className="w-16">{t}</span>
+                  <input type="range" min="0" max="100" data-sub-weight={t} value={rmix.types[t].weight} onChange={e => setType(t, { weight: +e.target.value })} className="flex-1" />
+                  <span className="w-8 text-right tabular-nums">{rmix.types[t].weight}</span>
+                  <RecencyWindowInputs type={t} cfg={rmix.types[t]} onCommit={patch => setType(t, patch)} />
+                </div>)}
+              </div>}
+            </div>}
+            {k === "value" && <div className="mb-3 ml-4">
+              <div data-impact="value" className="text-xs text-slate-500">{w.value > 0 ? impactText(valueImpact) : "Weight 0% — Value does not affect scores yet."}</div>
+              <button data-value-panel-toggle className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpenSub(o => ({ ...o, value: !o.value }))}>
+                {openSub.value ? "▾" : "▸"} Sub-options</button>
+              {openSub.value && <div data-value-panel className="mt-2 space-y-1.5 text-xs">
+                {VALUE_ITEMS.map(([vk, label]) => <div key={vk} className="flex items-center gap-2">
+                  <span className="w-48">{label}</span>
+                  <input type="range" min="0" max="100" data-value-weight={vk} value={vmix[vk]} onChange={e => dispatch({ type: "SET_VALUE_MIX", mix: { ...vmix, [vk]: +e.target.value } })} className="flex-1" />
+                  <span className="w-8 text-right tabular-nums">{vmix[vk]}</span>
+                </div>)}
+              </div>}
+            </div>}
+          </React.Fragment>
         ))}
         <div className="mt-2 text-xs text-slate-500">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
       </Card>
@@ -4414,7 +4587,7 @@ function App({ user, onBackToClients }) {
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
   const scored = useMemo(() => st.accounts.map(a => {
-    const score = healthScore(a, st.activities, st.settings.weights);
+    const score = healthScore(a, st.activities, st.settings.weights, st.settings);
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
   // Record today's health baseline once per session. This is the ONLY writer of
@@ -4757,7 +4930,7 @@ function Root() {
   // throws before any view renders, and without this the user gets a blank white page.
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
-window.__health = { parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
+window.__health = { bandImpact, windowScore, recencyBreakdown, scoreComponents, healthScore, mergeSettings, ACTIVITY_TYPES, VALUE_ITEMS, parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
   lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
