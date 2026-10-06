@@ -44,12 +44,13 @@
  * HEALTH SCORE LOGIC
  * ----------------------------------------------------------------------------
  * score = w.usage*usage + w.sentiment*sentiment + w.tickets*ticketScore
- *       + w.recency*recencyScore + w.nps*npsNorm          (weights sum to 1)
+ *       + w.recency*recencyScore + w.nps*npsNorm + w.value*valueScore   (weights sum to 1)
  *
  *   usage, sentiment : stored per-account, 0..100
  *   ticketScore      : 100 - min(openTickets*10, 100)
  *   recencyScore     : 100 if last activity <=7 days ago, linear to 0 at 60d
  *   npsNorm          : (nps + 100) / 2   (NPS -100..100 -> 0..100)
+ *   valueScore       : sub-weighted Yes/No answers (inputs.value); recency: per-type blend when settings.recencyMix.enabled
  *
  * Risk: score >=70 Green | 40..69 Yellow | <40 Red
  *
@@ -142,8 +143,26 @@ function qbrStatus(a) {
   return d < 0 ? { kind: "overdue", d: -d } : d <= 30 ? { kind: "due", d } : { kind: "scheduled", d };
 }
 
-const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15 };
-const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS" };
+const DEFAULT_WEIGHTS = { usage: 30, sentiment: 20, tickets: 15, recency: 20, nps: 15, value: 0 };
+const WEIGHT_LABELS = { usage: "Product usage", sentiment: "Sentiment", tickets: "Support tickets", recency: "Engagement recency", nps: "NPS", value: "Value" };
+/* Engagement recency sub-options: one per activity type, each scored from that type's own
+   last date against its own window. Ships disabled -- see the rollout note in the spec:
+   the blend can only be <= today's any-activity rule, so turning it on moves scores. */
+const ACTIVITY_TYPES = ["call", "email", "QBR", "ticket", "note", "renewal", "churn"];
+const DEFAULT_RECENCY_MIX = { enabled: false, types: {
+  call: { weight: 25, fullDays: 7, zeroDays: 60 }, email: { weight: 20, fullDays: 7, zeroDays: 60 },
+  QBR: { weight: 25, fullDays: 90, zeroDays: 180 }, ticket: { weight: 10, fullDays: 7, zeroDays: 60 },
+  note: { weight: 10, fullDays: 7, zeroDays: 60 }, renewal: { weight: 10, fullDays: 365, zeroDays: 730 },
+  churn: { weight: 0, fullDays: 365, zeroDays: 730 } } };
+/* Value: Yes/No per account, blended by sub-weight. Ships at weight 0 (DEFAULT_WEIGHTS.value). */
+const VALUE_ITEMS = [["caseStudy", "Case study published"], ["savings", "Savings approved by customer"], ["roi", "ROI approved by customer"]];
+const DEFAULT_VALUE_MIX = { caseStudy: 34, savings: 33, roi: 33 };
+function mergeSettings(saved) {
+  const s = saved || {}, rm = s.recencyMix || {}, types = {};
+  ACTIVITY_TYPES.forEach(t => { types[t] = { ...DEFAULT_RECENCY_MIX.types[t], ...((rm.types || {})[t] || {}) }; });
+  return { weights: { ...DEFAULT_WEIGHTS, ...(s.weights || {}) },
+    recencyMix: { enabled: !!rm.enabled, types }, valueMix: { ...DEFAULT_VALUE_MIX, ...(s.valueMix || {}) } };
+}
 const INPUT_RANGE = { usage: [0, 100], sentiment: [0, 100], tickets: [0, 50], nps: [-100, 100] };
 const DEFAULT_INPUTS = { usage: 70, sentiment: 70, tickets: 0, nps: 0 };
 /* keep health inputs numeric and in range — drops blanks/NaN, clamps the rest */
@@ -153,6 +172,10 @@ const clampInputs = raw => {
     const n = parseFloat(raw?.[k]);
     if (!isNaN(n)) { const [lo, hi] = INPUT_RANGE[k]; out[k] = Math.min(hi, Math.max(lo, n)); }
   });
+  if (raw && typeof raw.value === "object" && raw.value) {
+    out.value = {};
+    VALUE_ITEMS.forEach(([k]) => { out.value[k] = raw.value[k] === true; });
+  }
   return out;
 };
 
@@ -160,20 +183,49 @@ function lastActivityDate(accountId, activities) {
   const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
   return a.length ? a[0].date : null;
 }
-function scoreComponents(acct, activities) {
+// Days since a date, floored at 0 so a future-dated activity counts as "today".
+const windowScore = (ds, full, zero) => {
+  if (ds === null || ds === undefined) return 0;
+  const d = Math.max(0, ds);
+  if (d <= full) return 100;
+  if (zero <= full || d >= zero) return 0;
+  return Math.round(100 * (1 - (d - full) / (zero - full)));
+};
+function recencyBreakdown(acct, activities, recencyMix) {
+  const mix = recencyMix || DEFAULT_RECENCY_MIX;
+  return ACTIVITY_TYPES.map(type => {
+    const c = { ...DEFAULT_RECENCY_MIX.types[type], ...((mix.types || {})[type] || {}) };
+    const last = activities.filter(x => x.accountId === acct.id && x.type === type).map(x => x.date).sort().pop() || null;
+    return { type, weight: +c.weight || 0, score: windowScore(last ? daysSince(last) : null, +c.fullDays || 0, +c.zeroDays || 0), lastDate: last };
+  });
+}
+function scoreComponents(acct, activities, settings) {
   const la = lastActivityDate(acct.id, activities);
   const ds = la ? daysSince(la) : 999;
   const inp = { ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) }; // tolerate missing/bad stored inputs
+  const legacyRecency = ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53));
+  const rm = settings && settings.recencyMix;
+  let recency = legacyRecency;
+  if (rm && rm.enabled) {
+    const parts = recencyBreakdown(acct, activities, rm).filter(p => p.weight > 0);
+    const tw = parts.reduce((s, p) => s + p.weight, 0);
+    if (tw > 0) recency = Math.round(parts.reduce((s, p) => s + p.weight * p.score, 0) / tw);
+  }
+  const vm = { ...DEFAULT_VALUE_MIX, ...((settings && settings.valueMix) || {}) };
+  const vw = VALUE_ITEMS.reduce((s, [k]) => s + (+vm[k] || 0), 0);
+  const ans = inp.value || {};
+  const value = vw > 0 ? Math.round(VALUE_ITEMS.reduce((s, [k]) => s + (+vm[k] || 0) * (ans[k] === true ? 100 : 0), 0) / vw) : 0;
   return {
     usage: inp.usage,
     sentiment: inp.sentiment,
     tickets: 100 - Math.min(inp.tickets * 10, 100),
-    recency: ds <= 7 ? 100 : ds >= 60 ? 0 : Math.round(100 * (1 - (ds - 7) / 53)),
+    recency,
     nps: Math.round((inp.nps + 100) / 2),
+    value,
   };
 }
-function healthScore(acct, activities, weights) {
-  const c = scoreComponents(acct, activities);
+function healthScore(acct, activities, weights, settings) {
+  const c = scoreComponents(acct, activities, settings);
   const tw = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
   return Math.round(Object.keys(weights).reduce((s, k) => s + (weights[k] / tw) * (c[k] ?? 0), 0));
 }
@@ -261,10 +313,10 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 
 /* ------------------------------ audit trail ------------------------------ */
 const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage", "currency"];
@@ -454,7 +506,7 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
-    settings: { weights: { ...DEFAULT_WEIGHTS, ...(saved.weights || {}) }, rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
+    settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
       segments: saved.segments || [] },
   };
@@ -563,7 +615,7 @@ function persist(action, next, prev) {
       // orphaned subs (parent just deleted) need their cleared parentId written back
       next.accounts.filter(a => a._orphaned).forEach(a => { delete a._orphaned; up("accounts", a); });
       return;
-    case "SET_WEIGHTS": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
+    case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
     case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
       return writeQueue.enqueue({ table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
@@ -692,7 +744,7 @@ function reducer(state, action) {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
         const upd = { ...a, inputs: { ...a.inputs, ...clampInputs(action.inputs) }, inputsUpdatedAt: iso(Date.now()) };
-        const s = healthScore(upd, state.activities, state.settings.weights);
+        const s = healthScore(upd, state.activities, state.settings.weights, state.settings);
         return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }
@@ -761,6 +813,8 @@ function reducer(state, action) {
         opportunities: merge(state.opportunities, s.opportunities) };
     }
     case "SET_WEIGHTS": return { ...state, settings: { ...state.settings, weights: action.weights } };
+    case "SET_RECENCY_MIX": return { ...state, settings: { ...state.settings, recencyMix: action.mix } };
+    case "SET_VALUE_MIX": return { ...state, settings: { ...state.settings, valueMix: action.mix } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
@@ -2495,7 +2549,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     el.click(); URL.revokeObjectURL(url);
   };
   const salesTemplate = () => {
-    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights);
+    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
       return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
     download("sales-accounts.csv", accountsCSVText(rows));
   };
@@ -3149,7 +3203,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hEpisode = healthAll.filter(t => t.healthFor === hLatest);
   const hDone = hEpisode.filter(t => t.status === "Done").length;
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
-  const comps = scoreComponents(a, st.activities);
+  const comps = scoreComponents(a, st.activities, st.settings);
   return (
     <div className="space-y-4">
       {/* Title row: identity + health + playbook progress */}
@@ -4414,7 +4468,7 @@ function App({ user, onBackToClients }) {
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
   const scored = useMemo(() => st.accounts.map(a => {
-    const score = healthScore(a, st.activities, st.settings.weights);
+    const score = healthScore(a, st.activities, st.settings.weights, st.settings);
     return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
   }), [st]);
   // Record today's health baseline once per session. This is the ONLY writer of
@@ -4757,7 +4811,7 @@ function Root() {
   // throws before any view renders, and without this the user gets a blank white page.
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
-window.__health = { parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
+window.__health = { windowScore, recencyBreakdown, scoreComponents, healthScore, mergeSettings, ACTIVITY_TYPES, VALUE_ITEMS, parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
   lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
