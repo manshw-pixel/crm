@@ -1,13 +1,6 @@
 /* ------------------------------- QBR cadence ------------------------------- */
 const QBR_FREQS = ["None", "Quarterly", "Semi-annual", "Annual"];
 const QBR_FREQ_MONTHS = { Quarterly: 3, "Semi-annual": 6, Annual: 12 };
-/* textual, like isoPlus — setMonth() would overflow month-end (Jan 31 +1 = Mar 3) and mix local time into UTC-parsed dates */
-const addMonths = (dateStr, m) => {
-  const [y, mo, day] = dateStr.slice(0, 10).split("-").map(Number);
-  const t = mo - 1 + m, ty = y + Math.floor(t / 12), tm = ((t % 12) + 12) % 12;
-  const last = new Date(Date.UTC(ty, tm + 1, 0)).getUTCDate();
-  return `${ty}-${String(tm + 1).padStart(2, "0")}-${String(Math.min(day, last)).padStart(2, "0")}`;
-};
 /* null = QBRs not applicable (churned, or no frequency and no date set) */
 function qbrStatus(a) {
   if (a.churn) return null;

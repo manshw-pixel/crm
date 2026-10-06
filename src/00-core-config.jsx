@@ -63,20 +63,6 @@ const signOut = async () => {
   location.reload();
 };
 
-const DAY = 86400000;
-const today = () => new Date();
-const iso = d => new Date(d).toISOString().slice(0, 10);
-const addDays = n => iso(Date.now() + n * DAY);
-const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
-const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
-const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
-const isoPlus = (dateStr, days) => iso(new Date(dateStr).getTime() + days * DAY);
-const CURRENCIES = ["USD", "INR", "PHP"];
-const CUR_SYM = { USD: "$", INR: "₹", PHP: "₱" };
-const DEFAULT_RATES = { INR: 0.012, PHP: 0.018 }; // 1 unit -> USD; USD is always 1
-const toUSD = (n, cur, rates) => (cur === "USD" || !cur) ? n : n * (rates?.[cur] ?? 0);
-const fmtMoney = (n, cur = "USD") => (CUR_SYM[cur] || "$") + (n >= 1e6 ? (n / 1e6).toFixed(2) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "K" : Math.round(n));
-const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const uid = () => Math.random().toString(36).slice(2, 10);
 // The signed-in user's org, set by Root() once the profile loads. Only uploadFiles needs it
 // on the client: every other org decision is made by RLS and the org-stamping RPCs.

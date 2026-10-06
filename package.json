@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node build.mjs",
     "build:worker": "node workers/touchpoints/build.mjs",
-    "test:worker": "node tests/worker/touchpoints.test.mjs"
+    "test:worker": "node tests/worker/touchpoints.test.mjs",
+    "test:unit": "node --test \"tests/unit/*.test.mjs\""
   },
   "devDependencies": {
     "esbuild": "^0.25.0",

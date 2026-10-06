@@ -37,6 +37,8 @@ jobs:
       - run: npm ci                       # build deps (esbuild, tailwind)
       # The Cloudflare Email Worker (touchpoints inbox). Plain node, no network.
       - run: npm run test:worker
+      # Pure-logic unit tests (node:test, no browser). Fast; run before the E2E suite.
+      - run: npm run test:unit
       - run: npm ci
         working-directory: tests
       - run: npx playwright install --with-deps chromium
