@@ -28,6 +28,7 @@ import "./churn-analysis.test.mjs";
 import "./renewal-outcomes.test.mjs";
 import "./renewal-write.test.mjs";
 import "./arr-audit.test.mjs";
+import "./dashboard-polish.test.mjs";
 import "./confirm-dialog.test.mjs";
 import "./undo-actions.test.mjs";
 import "./boundary.test.mjs";
