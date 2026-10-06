@@ -10,6 +10,7 @@ import { readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from "nod
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import vm from "node:vm";
 import * as esbuild from "esbuild";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
@@ -65,6 +66,42 @@ const { code: appJs } = await esbuild.transform(jsxSource, {
   jsx: "transform",
   legalComments: "none",
 });
+
+// ---------------------------------------------------------------------------
+// 2b. Bundle src/lib (real ES modules) into a script that runs BEFORE the app script and
+//     puts every export on globalThis. See docs/superpowers/specs/2026-10-06-lib-modules-design.md
+// ---------------------------------------------------------------------------
+const LIB_DIR = p("src", "lib");
+const libFiles = readdirSync(LIB_DIR).filter(f => f.endsWith(".js"));
+// Guard: lib code must stay pure -- no browser or app globals. Comments and string
+// literals are blanked first so prose like "the window opens" doesn't trip it.
+const BANNED = /\b(window|document|localStorage|React|ReactDOM|sb|supabase|location|navigator)\b/;
+for (const f of libFiles) {
+  const code = read(join("src", "lib", f))
+    .replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "")
+    .replace(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g, '""');
+  const hit = code.match(BANNED);
+  if (hit) throw new Error(`build: src/lib/${f} references "${hit[1]}" — lib code must not touch the browser or the app`);
+}
+const libBuild = await esbuild.build({
+  entryPoints: [join(LIB_DIR, "index.js")], bundle: true, format: "iife", globalName: "__lib",
+  target: "es2020", write: false, legalComments: "none",
+});
+const libBundle = libBuild.outputFiles[0].text;
+// Guard: a name exported by lib must not also be declared at the top level of an app
+// file -- the app's copy would silently shadow the lib's.
+const sandbox = {};
+vm.createContext(sandbox);
+vm.runInContext(libBundle, sandbox);
+const libNames = new Set(Object.keys(sandbox.__lib));
+const TOP = /^(?:async\s+)?function\s+(\w+)|^(?:const|let|var|class)\s+(\w+)/gm;
+const clashes = [];
+for (const f of srcFiles) for (const m of read(join("src", f)).matchAll(TOP)) {
+  const name = m[1] || m[2];
+  if (libNames.has(name)) clashes.push(`${name} (src/${f})`);
+}
+if (clashes.length) throw new Error("build: declared in both src/lib and an app file: " + clashes.join(", "));
+const libJs = `${libBundle}\nObject.assign(globalThis, __lib);`;
 
 // ---------------------------------------------------------------------------
 // 3. Compile Tailwind. Replaces the in-browser JIT that cdn.tailwindcss.com ran on
@@ -142,7 +179,7 @@ const head = headMatch[1]
 // which String.replace would expand as substitution patterns and re-insert the original.
 let out = html
   .replace(/<head>[\s\S]*?<\/head>/, () => `<head>\n${head}\n</head>`)
-  .replace(SCRIPT_RE, () => `<script>\n${appJs}\n</script>`);
+  .replace(SCRIPT_RE, () => `<script>\n${libJs}\n</script>\n<script>\n${appJs}\n</script>`);
 
 // A generated file should say so, and should not be mistaken for the source.
 out = out.replace(
