@@ -2309,10 +2309,11 @@ function subNumbers(accounts) {
   });
   return m;
 }
+const VALUE_COL = { caseStudy: "caseStudy", approvedSavings: "savings", approvedRoi: "roi" };
 function accountsCSVText(rows) {
-  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate"];
+  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
   const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : a[c];
+  const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   return [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
 }
 function exportCSV(rows) {
@@ -2364,6 +2365,7 @@ function importSummary(r) {
   if (r.err) return r.err;
   const bits = [`imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`];
   if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
+  if (r.badValue) bits.push(`⚠ ${r.badValue} unreadable Value answer(s) left unchanged (use yes/no)`);
   if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
   if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);
   if (r.badStatus) bits.push(`⚠ ${r.badStatus} unrecognized status(es) set to Active`);
@@ -2400,7 +2402,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0;
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0;
     const badDateRows = [], churnSkipped = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
     const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
@@ -2446,6 +2448,17 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
       if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));
       const inputPatch = clampInputs({ usage: col(r, "usage"), sentiment: col(r, "sentiment"), tickets: col(r, "tickets"), nps: col(r, "nps") });
+      // Value answers: blank = leave alone, unreadable = count it and leave alone
+      const valPatch = {};
+      Object.entries(VALUE_COL).forEach(([header, key]) => {
+        if (!has(header.toLowerCase())) return;
+        const raw = col(r, header.toLowerCase()).trim().toLowerCase();
+        if (raw === "") return;
+        if (["yes", "true", "1"].includes(raw)) valPatch[key] = true;
+        else if (["no", "false", "0"].includes(raw)) valPatch[key] = false;
+        else badValue++;
+      });
+      const hasVal = Object.keys(valPatch).length > 0;
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
       if (vals.churnedInFile) {
@@ -2456,13 +2469,14 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       if (existing) {
         dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
-        if (Object.keys(inputPatch).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: inputPatch });
+        const patchIn = hasVal ? { ...inputPatch, value: { ...(existing.inputs?.value || {}), ...valPatch } } : inputPatch;
+        if (Object.keys(patchIn).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: patchIn });
         updated++;
       } else {
         const item = { id: uid(), tier: "Mid", arr: 0, currency: "USD", industry: "", csm: "",
           startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active",
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
-          inputs: { ...DEFAULT_INPUTS, ...inputPatch },
+          inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? { value: valPatch } : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()) };
         dispatch({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
@@ -2470,7 +2484,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         ok++;
       }
     });
-    done({ ok, updated, skipped, badTier, badStatus, badDate, badDateRows, churnSkipped, dateOrder });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badDateRows, churnSkipped, dateOrder });
   };
   reader.readAsText(file);
 }
@@ -3035,11 +3049,12 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <span data-live="import" aria-live="polite" className="sr-only">
         {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
       </span>
-      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps.
+      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps, caseStudy, approvedSavings, approvedRoi.
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
               rewritten row looked identical to a clean import */}
-          {(importMsg.badTier || importMsg.badStatus || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+          {(importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+            {importMsg.badValue ? ` ⚠ ${importMsg.badValue} unreadable Value answer(s) left unchanged (use yes/no).` : ""}
             {importMsg.badDate ? ` ⚠ ${importMsg.badDate} unreadable date(s) left unchanged (${importMsg.badDateRows.join(", ")}).` : ""}
             {importMsg.churnSkipped?.length ? ` ⚠ Not imported, marked Churned in the file: ${importMsg.churnSkipped.join(", ")} — churn them from the account page.` : ""}
             {importMsg.badTier ? ` ⚠ ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid).` : ""}
