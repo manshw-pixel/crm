@@ -67,15 +67,14 @@ boundary).
 - The result is inlined as its own `<script>` **immediately before** the app
   script in `dist/crm.html`. Like the app script, it makes no network
   requests.
-- **Guard: duplicate names.** The build collects the export names of
-  `src/lib/index.js` (from esbuild's metafile, or by importing the bundle in a
-  Node `vm` context and taking `Object.keys(__lib)`). It also collects
-  top-level declared names in `src/NN-*.jsx`, using esbuild's own parse
-  (`esbuild.transform` plus a scan for top-level `function`/`const`/`let`/
-  `class` names), or a regex over lines at column 0 matching
-  `^(?:async\s+)?function\s+(\w+)|^(?:const|let|var|class)\s+(\w+)`. It fails
-  with the clashing names if any name is in both. Without this, a leftover
-  app copy would shadow the lib version silently.
+- **Guard: duplicate names.**
+  - The lib's names come from running the bundle in a Node `vm` context and
+    taking `Object.keys(__lib)`.
+  - The app's names come from a regex over `src/NN-*.jsx` lines at column 0:
+    `^(?:async\s+)?function\s+(\w+)|^(?:const|let|var|class)\s+(\w+)`. All
+    top-level declarations in this codebase start at column 0.
+  - If any name is in both, the build fails and lists the clashing names.
+    Without this, a leftover app copy would shadow the lib version silently.
 - **Guard: no browser or app globals in lib.** The build fails if any
   `src/lib/*.js` file references `window`, `document`, `localStorage`,
   `React`, `ReactDOM`, `sb`, `supabase`, `location` or `navigator`. Matching
