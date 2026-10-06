@@ -1,5 +1,5 @@
 import { test, assert } from "./framework.mjs";
-import { launch, seedAccount } from "./harness.mjs";
+import { launch, launchPersistent, seedAccount } from "./harness.mjs";
 
 const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
 const rows = l => JSON.stringify(l.map(d => ({ id: d.id, data: d })));
@@ -43,4 +43,47 @@ test("the account page shows a Value bar, and per-type recency only when the mix
     assert(/QBR/.test(qbr) && /101d ago/.test(qbr), "QBR row: " + qbr);
     assert(/never/.test(await on.page.textContent('[data-recency-type="renewal"]')), "never-happened type not labelled");
   } finally { await on.browser.close(); }
+});
+
+test("bandImpact counts accounts that would drop a band", async () => {
+  const { page, browser } = await launch(seedOf([seedAccount()]));
+  try {
+    await page.waitForFunction(() => window.__health && window.__health.bandImpact);
+    const r = await page.evaluate(() => {
+      const H = window.__health, base = H.mergeSettings({});
+      const accts = [{ id: "g", inputs: { usage: 100, sentiment: 100, tickets: 0, nps: 100 } }, { id: "y", inputs: { usage: 75, sentiment: 75, tickets: 0, nps: 40 } }];
+      const acts = [{ accountId: "g", type: "call", date: new Date().toISOString().slice(0, 10) }, { accountId: "y", type: "call", date: new Date().toISOString().slice(0, 10) }];
+      const heavy = { ...base, weights: { ...base.weights, value: 300 } };
+      return H.bandImpact(accts, acts, base, heavy);
+    });
+    assert(r.down === 2, "impact: " + JSON.stringify(r));
+  } finally { await browser.close(); }
+});
+
+test("Settings: sub-option panels edit and persist; day boxes clamp; preview shows", async () => {
+  const { page, browser, reload } = await launchPersistent(seedOf([seedAccount()]));
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1);
+    await page.click('button[title="Settings"]');
+    await page.click("[data-recency-panel-toggle]");
+    await page.waitForSelector("[data-recency-panel]");
+    await page.fill('[data-zero-days="QBR"]', "200");
+    await page.fill('[data-full-days="call"]', "-4");
+    await page.check("[data-recency-enabled]");
+    assert(/account/.test(await page.textContent('[data-impact="recency"]')), "no recency impact text");
+    await page.click("[data-value-panel-toggle]");
+    await page.locator('[data-value-weight="roi"]').evaluate(el => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, "80");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await page.waitForFunction(() => window.__health.writeQueue.queueState().status === "saved", null, { timeout: 15000 });
+    await reload();
+    await page.waitForFunction(() => window.__store && window.__store.getState().settings.recencyMix);
+    const s = await page.evaluate(() => window.__store.getState().settings);
+    assert(s.recencyMix.enabled === true, "enabled not persisted");
+    assert(s.recencyMix.types.QBR.zeroDays === 200, "QBR zeroDays not persisted: " + s.recencyMix.types.QBR.zeroDays);
+    assert(s.recencyMix.types.call.fullDays === 0, "negative full days not clamped: " + s.recencyMix.types.call.fullDays);
+    assert(s.valueMix.roi === 80, "value sub-weight not persisted: " + s.valueMix.roi);
+  } finally { await browser.close(); }
 });

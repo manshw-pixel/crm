@@ -229,6 +229,16 @@ function healthScore(acct, activities, weights, settings) {
   const tw = Object.values(weights).reduce((a, b) => a + b, 0) || 1;
   return Math.round(Object.keys(weights).reduce((s, k) => s + (weights[k] / tw) * (c[k] ?? 0), 0));
 }
+/* How many (non-churned) accounts would drop a band if `to` settings replaced `from`.
+   Uses healthScore itself, so the preview cannot disagree with what saving does. */
+function bandImpact(accounts, activities, from, to) {
+  const out = { down: 0, toYellow: 0, toRed: 0 };
+  accounts.filter(a => !a.churn).forEach(a => {
+    const b0 = riskOf(healthScore(a, activities, from.weights, from)), b1 = riskOf(healthScore(a, activities, to.weights, to));
+    if (BAND_RANK[b1] > BAND_RANK[b0]) { out.down++; if (b1 === "Yellow") out.toYellow++; else out.toRed++; }
+  });
+  return out;
+}
 const riskOf = s => (s >= 70 ? "Green" : s >= 40 ? "Yellow" : "Red");
 const RISK_STYLE = {
   Green: "bg-emerald-100 text-emerald-700 border-emerald-300",
@@ -3793,6 +3803,16 @@ function Settings({ st, dispatch, user, scored }) {
   const fileRef = useRef();
   const [confirmData, setConfirmData] = useState(null); // "sample" | "clear"
   const setW = (k, v) => dispatch({ type: "SET_WEIGHTS", weights: { ...w, [k]: +v } });
+  const rmix = st.settings.recencyMix || mergeSettings({}).recencyMix;
+  const vmix = st.settings.valueMix || mergeSettings({}).valueMix;
+  const [openSub, setOpenSub] = useState({ recency: false, value: false });
+  const days = x => Math.max(0, Math.round(+x || 0)); // blank/NaN/negative -> 0
+  const setType = (t, patch) => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, types: { ...rmix.types, [t]: { ...rmix.types[t], ...patch } } } });
+  const impactText = r => r.down === 0 ? "No account changes band." : `Moves ${r.down} account${r.down > 1 ? "s" : ""} down a band (${r.toYellow} → Yellow, ${r.toRed} → Red).`;
+  const recencyImpact = useMemo(() => bandImpact(st.accounts, st.activities,
+    { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }), [st]);
+  const valueImpact = useMemo(() => bandImpact(st.accounts, st.activities,
+    { ...st.settings, weights: { ...w, value: 0 } }, st.settings), [st]);
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
     const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
@@ -3820,11 +3840,43 @@ function Settings({ st, dispatch, user, scored }) {
           score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}
         </div>
         {Object.keys(w).map(k => (
-          <div key={k} className="mb-2 flex items-center gap-3 text-sm">
+          <React.Fragment key={k}>
+          <div className="mb-2 flex items-center gap-3 text-sm">
             <span className="w-40">{WEIGHT_LABELS[k]}</span>
             <input type="range" min="0" max="100" value={w[k]} onChange={e => setW(k, e.target.value)} className="flex-1" />
             <span className="w-12 text-right font-mono text-xs">{(100 * w[k] / total).toFixed(0)}%</span>
           </div>
+            {k === "recency" && <div className="mb-3 ml-4">
+              <button data-recency-panel-toggle className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpenSub(o => ({ ...o, recency: !o.recency }))}>
+                {openSub.recency ? "▾" : "▸"} Sub-options (by activity type)</button>
+              {openSub.recency && <div data-recency-panel className="mt-2 space-y-1.5 text-xs">
+                <label className="flex items-center gap-2 font-semibold">
+                  <input type="checkbox" data-recency-enabled checked={!!rmix.enabled} onChange={e => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, enabled: e.target.checked } })} />
+                  Score recency per activity type
+                </label>
+                <div data-impact="recency" className="text-slate-500">{rmix.enabled ? "On. " : "Turning this on: "}{impactText(recencyImpact)}</div>
+                {ACTIVITY_TYPES.map(t => <div key={t} className="flex items-center gap-2">
+                  <span className="w-16">{t}</span>
+                  <input type="range" min="0" max="100" data-sub-weight={t} value={rmix.types[t].weight} onChange={e => setType(t, { weight: +e.target.value })} className="flex-1" />
+                  <span className="w-8 text-right tabular-nums">{rmix.types[t].weight}</span>
+                  full ≤<Input type="number" min="0" data-full-days={t} value={rmix.types[t].fullDays} onChange={e => setType(t, { fullDays: days(e.target.value) })} className="!w-16" />d
+                  zero ≥<Input type="number" min="0" data-zero-days={t} value={rmix.types[t].zeroDays} onChange={e => setType(t, { zeroDays: days(e.target.value) })} className="!w-16" />d
+                </div>)}
+              </div>}
+            </div>}
+            {k === "value" && <div className="mb-3 ml-4">
+              <div data-impact="value" className="text-xs text-slate-500">{w.value > 0 ? impactText(valueImpact) : "Weight 0% — Value does not affect scores yet."}</div>
+              <button data-value-panel-toggle className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpenSub(o => ({ ...o, value: !o.value }))}>
+                {openSub.value ? "▾" : "▸"} Sub-options</button>
+              {openSub.value && <div data-value-panel className="mt-2 space-y-1.5 text-xs">
+                {VALUE_ITEMS.map(([vk, label]) => <div key={vk} className="flex items-center gap-2">
+                  <span className="w-48">{label}</span>
+                  <input type="range" min="0" max="100" data-value-weight={vk} value={vmix[vk]} onChange={e => dispatch({ type: "SET_VALUE_MIX", mix: { ...vmix, [vk]: +e.target.value } })} className="flex-1" />
+                  <span className="w-8 text-right tabular-nums">{vmix[vk]}</span>
+                </div>)}
+              </div>}
+            </div>}
+          </React.Fragment>
         ))}
         <div className="mt-2 text-xs text-slate-500">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
       </Card>
@@ -4829,7 +4881,7 @@ function Root() {
   // throws before any view renders, and without this the user gets a blank white page.
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
-window.__health = { windowScore, recencyBreakdown, scoreComponents, healthScore, mergeSettings, ACTIVITY_TYPES, VALUE_ITEMS, parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
+window.__health = { bandImpact, windowScore, recencyBreakdown, scoreComponents, healthScore, mergeSettings, ACTIVITY_TYPES, VALUE_ITEMS, parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
   lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };
 ReactDOM.createRoot(document.getElementById("root")).render(<Root />);
