@@ -3831,10 +3831,11 @@ function RecencyWindowInputs({ type, cfg, onCommit }) {
     }
     setBad(false); onCommit({ [field]: n });
   };
-  const box = (field, label) => <>
+  // !w-20 + shrink-0: Input is w-full by default, and 3-digit windows (365, 730) need the room
+  const box = (field, label) => <span className="flex shrink-0 items-center gap-1 whitespace-nowrap">
     {label}<Input type="number" min="0" {...{ ["data-" + (field === "fullDays" ? "full" : "zero") + "-days"]: type }} value={draft[field]}
       onChange={e => { setBad(false); setDraft(d => ({ ...d, [field]: e.target.value })); }}
-      onBlur={() => commit(field)} onKeyDown={e => { if (e.key === "Enter") commit(field); }} className="!w-16" />d</>;
+      onBlur={() => commit(field)} onKeyDown={e => { if (e.key === "Enter") commit(field); }} className="!w-20 shrink-0 !px-2" />d</span>;
   return <>{box("fullDays", "full ≤")}{box("zeroDays", "zero ≥")}
     {bad && <span data-window-error={type} className="text-rose-600">zero must be after full</span>}</>;
 }
