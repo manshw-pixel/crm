@@ -183,7 +183,8 @@ function lastActivityDate(accountId, activities) {
   const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
   return a.length ? a[0].date : null;
 }
-// Days since a date, floored at 0 so a future-dated activity counts as "today".
+// Score 0-100 from days since the last activity: 100 within the full window, falling
+// linearly to 0 at the zero day; a future date counts as 0 days, and no activity scores 0.
 const windowScore = (ds, full, zero) => {
   if (ds === null || ds === undefined) return 0;
   const d = Math.max(0, ds);
@@ -3380,7 +3381,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             </div>); })()}
           <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
-            {Object.keys(comps).map(k => <React.Fragment key={k}>
+            {Object.keys(comps).filter(k => k !== "value" || st.settings.weights?.value > 0).map(k => <React.Fragment key={k}>
               <div className="flex items-center gap-2">
                 <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
                 <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
@@ -3812,6 +3813,32 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
   );
 }
 
+/* Day-window inputs for one activity type. Edits live in local string drafts and are
+   committed only on blur/Enter, and only when the window is valid (whole days >= 0 and
+   zeroDays > fullDays) -- a half-typed or cleared field must never reach the store, since
+   every dispatch rescored accounts and let the auto-seeder persist crossings and tasks. */
+function RecencyWindowInputs({ type, cfg, onCommit }) {
+  const [draft, setDraft] = useState({ fullDays: String(cfg.fullDays), zeroDays: String(cfg.zeroDays) });
+  const [bad, setBad] = useState(false);
+  useEffect(() => { setDraft({ fullDays: String(cfg.fullDays), zeroDays: String(cfg.zeroDays) }); }, [cfg.fullDays, cfg.zeroDays]);
+  const commit = field => {
+    const text = draft[field].trim();
+    if (text === String(cfg[field])) return;
+    const n = Number(text);
+    const next = { ...cfg, [field]: n };
+    if (text === "" || !Number.isInteger(n) || n < 0 || !(next.zeroDays > next.fullDays)) {
+      setBad(true); setDraft(d => ({ ...d, [field]: String(cfg[field]) })); return;
+    }
+    setBad(false); onCommit({ [field]: n });
+  };
+  const box = (field, label) => <>
+    {label}<Input type="number" min="0" {...{ ["data-" + (field === "fullDays" ? "full" : "zero") + "-days"]: type }} value={draft[field]}
+      onChange={e => { setBad(false); setDraft(d => ({ ...d, [field]: e.target.value })); }}
+      onBlur={() => commit(field)} onKeyDown={e => { if (e.key === "Enter") commit(field); }} className="!w-16" />d</>;
+  return <>{box("fullDays", "full ≤")}{box("zeroDays", "zero ≥")}
+    {bad && <span data-window-error={type} className="text-rose-600">zero must be after full</span>}</>;
+}
+
 /* ------------------------------- Settings ------------------------------- */
 function Settings({ st, dispatch, user, scored }) {
   const toast = useToast();
@@ -3824,13 +3851,17 @@ function Settings({ st, dispatch, user, scored }) {
   const rmix = st.settings.recencyMix || mergeSettings({}).recencyMix;
   const vmix = st.settings.valueMix || mergeSettings({}).valueMix;
   const [openSub, setOpenSub] = useState({ recency: false, value: false });
-  const days = x => Math.max(0, Math.round(+x || 0)); // blank/NaN/negative -> 0
   const setType = (t, patch) => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, types: { ...rmix.types, [t]: { ...rmix.types[t], ...patch } } } });
   const impactText = r => r.down === 0 ? "No account changes band." : `Moves ${r.down} account${r.down > 1 ? "s" : ""} down a band (${r.toYellow} → Yellow, ${r.toRed} → Red).`;
-  const recencyImpact = useMemo(() => bandImpact(st.accounts, st.activities,
-    { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }), [st]);
-  const valueImpact = useMemo(() => bandImpact(st.accounts, st.activities,
-    { ...st.settings, weights: { ...w, value: 0 } }, st.settings), [st]);
+  // Impact previews rescore every account, so compute them only while they are visible.
+  const NO_IMPACT = { down: 0, toYellow: 0, toRed: 0 };
+  const recencyOpen = openSub.recency, valueLive = w.value > 0;
+  const recencyImpact = useMemo(() => !recencyOpen ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+    { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }),
+    [st.accounts, st.activities, st.settings, recencyOpen]);
+  const valueImpact = useMemo(() => !valueLive ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+    { ...st.settings, weights: { ...w, value: 0 } }, st.settings),
+    [st.accounts, st.activities, st.settings, valueLive]);
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
     const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
@@ -3872,13 +3903,12 @@ function Settings({ st, dispatch, user, scored }) {
                   <input type="checkbox" data-recency-enabled checked={!!rmix.enabled} onChange={e => dispatch({ type: "SET_RECENCY_MIX", mix: { ...rmix, enabled: e.target.checked } })} />
                   Score recency per activity type
                 </label>
-                <div data-impact="recency" className="text-slate-500">{rmix.enabled ? "On. " : "Turning this on: "}{impactText(recencyImpact)}</div>
+                <div data-impact="recency" className="text-slate-500">{rmix.enabled ? "Compared with any-activity recency: " : "Turning this on: "}{impactText(recencyImpact)}</div>
                 {ACTIVITY_TYPES.map(t => <div key={t} className="flex items-center gap-2">
                   <span className="w-16">{t}</span>
                   <input type="range" min="0" max="100" data-sub-weight={t} value={rmix.types[t].weight} onChange={e => setType(t, { weight: +e.target.value })} className="flex-1" />
                   <span className="w-8 text-right tabular-nums">{rmix.types[t].weight}</span>
-                  full ≤<Input type="number" min="0" data-full-days={t} value={rmix.types[t].fullDays} onChange={e => setType(t, { fullDays: days(e.target.value) })} className="!w-16" />d
-                  zero ≥<Input type="number" min="0" data-zero-days={t} value={rmix.types[t].zeroDays} onChange={e => setType(t, { zeroDays: days(e.target.value) })} className="!w-16" />d
+                  <RecencyWindowInputs type={t} cfg={rmix.types[t]} onCommit={patch => setType(t, patch)} />
                 </div>)}
               </div>}
             </div>}
