@@ -1524,8 +1524,17 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
   const [v, setV] = useState({ ...DEFAULT_INPUTS, ...clampInputs(acct.inputs) });
   const num = (k, min, max) => <label className="text-xs text-slate-700">{k} ({min}–{max})<Input type="number" min={min} max={max} value={v[k]} onChange={e => setV({ ...v, [k]: e.target.value })} className="w-20" /></label>;
   return (
-    <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: v }); onDone(); }}>
+    <form className="flex flex-wrap items-end gap-3" onSubmit={e => { e.preventDefault(); dispatch({ type: "UPDATE_INPUTS", id: acct.id, inputs: { ...v, value: Object.fromEntries(VALUE_ITEMS.map(([k]) => [k, !!(v.value || {})[k]])) } }); onDone(); }}>
       {num("usage", 0, 100)}{num("sentiment", 0, 100)}{num("tickets", 0, 50)}{num("nps", -100, 100)}
+      <fieldset className="flex flex-wrap items-center gap-3 text-xs text-slate-700">
+        <legend className="mb-1 font-semibold">Value</legend>
+        {VALUE_ITEMS.map(([k, label]) => (
+          <label key={k} className="flex items-center gap-1.5">
+            <input type="checkbox" data-value-check={k} checked={!!(v.value || {})[k]}
+              onChange={e => setV({ ...v, value: { ...(v.value || {}), [k]: e.target.checked } })} />{label}
+          </label>
+        ))}
+      </fieldset>
       <Btn kind="primary" type="submit">Save</Btn><Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
@@ -3343,11 +3352,20 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             </div>); })()}
           <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
-            {Object.keys(comps).map(k => <div key={k} className="flex items-center gap-2">
-              <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
-              <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
-              <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
-            </div>)}
+            {Object.keys(comps).map(k => <React.Fragment key={k}>
+              <div className="flex items-center gap-2">
+                <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
+                <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
+                <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
+              </div>
+              {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="mb-1 ml-4 space-y-0.5 text-[11px] text-slate-500">
+                {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
+                  <div key={b.type} data-recency-type={b.type} className="flex justify-between">
+                    <span>{b.type}</span>
+                    <span className="tabular-nums">{b.score} · {b.lastDate ? `last ${daysSince(b.lastDate)}d ago` : "never"}</span>
+                  </div>)}
+              </div>}
+            </React.Fragment>)}
           </div>
         </Card>
         <Card title={`Open tasks (${tasks.length})`}>

@@ -72,7 +72,7 @@ test("account detail: one header card, health input bars, bordered contact butto
     const inside = await page.$eval("[data-header-card]", el => ({
       tier: /Tier/i.test(el.textContent), pill: !!el.querySelector("[data-transition-pill]"), ret: !!el.querySelector("[data-retention-block]") }));
     assert(inside.tier && inside.pill && inside.ret, "header card is missing parts: " + JSON.stringify(inside));
-    assert(await page.locator("[data-input-bar]").count() === 5, "expected 5 health input bars");
+    assert(await page.locator("[data-input-bar]").count() === 6, "expected 6 health input bars"); // usage, sentiment, tickets, recency, nps, value
     const cls = await page.getAttribute('[data-edit-contact="c1"]', "class");
     assert(/\bnm-btn\b/.test(cls), "contact edit is not a bordered button: " + cls);
   } finally { await browser.close(); }
