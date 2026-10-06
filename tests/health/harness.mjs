@@ -26,10 +26,12 @@ const MOCK = `window.__sbFactory = () => {
       // reads open so a test can dispatch into the store (bumping scored.length) BEFORE
       // \`loaded\` flips, proving the health-baseline effect waits for \`loaded\` rather than
       // firing off scored.length alone.
+      // __loadError fails those reads instead, for the "load failed, still render" path.
       const delay = window.__loadDelay || 0;
+      const out = window.__loadError ? { data: null, error: { message: window.__loadError } } : { data: window.__seedRows?.[t] || [], error: null };
       const p = delay
-        ? new Promise(res => setTimeout(() => res({ data: window.__seedRows?.[t] || [], error: null }), delay))
-        : Promise.resolve({ data: window.__seedRows?.[t] || [], error: null });
+        ? new Promise(res => setTimeout(() => res(out), delay))
+        : Promise.resolve(out);
       p.eq = () => Promise.resolve({ data: window.__seedRows?.[t] || [], error: null, single: () => Promise.resolve({ data: (window.__seedRows?.[t] || [])[0] || null, error: null }) });
       return p;
     },
