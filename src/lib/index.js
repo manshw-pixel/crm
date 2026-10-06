@@ -3,3 +3,5 @@
 // names as globals. Each module must stay free of window/document/React/store access.
 export * from "./dates.js";
 export * from "./money.js";
+export * from "./qbr.js";
+export * from "./scoring.js";

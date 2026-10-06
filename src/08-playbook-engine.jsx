@@ -12,7 +12,6 @@ const DEFAULT_PLAYBOOK = [
 ];
 const playbookOf = settings => settings.playbook || DEFAULT_PLAYBOOK;
 
-const BAND_RANK = { Green: 0, Yellow: 1, Red: 2 };
 const DEFAULT_HEALTH_PLAYBOOK = {
   Yellow: [
     { id: "hy1", title: "Schedule check-in call with account", dueDays: 3, priority: "Medium" },
