@@ -1942,7 +1942,9 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
     : <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${wr >= 0.9 ? "bg-emerald-100 text-emerald-700" : wr >= 0.75 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-600"}`}>{Math.round(100 * wr)}%</span>;
   return (
     <Card title="Renewal outcomes by quarter" className="!p-3">
-      <div className="overflow-x-auto">
+      {rows.every(r => !r.renewedN && !r.churnedN && !r.slipped)
+        ? <p data-outcomes-empty className="text-sm text-slate-500">No renewals closed yet — outcomes appear here as renewals complete.</p>
+        : <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead><tr className="border-b border-slate-200 text-[11px] font-bold uppercase tracking-widest text-slate-500">
             <th className="px-2 py-1.5 text-left">Quarter</th>
@@ -1966,7 +1968,7 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
       {!anyForecast && <p className="mt-2 text-xs text-slate-500">
         Forecast tracking started {firstForecast ? new Date(firstForecast.month + "-15").toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "this month"} — accuracy appears after a full quarter.</p>}
     </Card>
@@ -2096,7 +2098,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Stat size="sm" label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
           tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
           sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
-        <Stat size="sm" label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={scope === "mine" ? "owned by you" : "whole team"} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
+        <Stat size="sm" label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={`${weekTasks.some(t => daysUntil(t.due) < 0) ? `${weekTasks.filter(t => daysUntil(t.due) < 0).length} overdue · ` : ""}${scope === "mine" ? "owned by you" : "whole team"}`} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
         <Card title="Health distribution" className="!p-3"><DistBar counts={counts} /></Card>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
@@ -2158,15 +2160,14 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         ))}
         </ScrollList>
       </Card>
-      <Card title="Trends (monthly)" className="!p-3">
-        {snaps.length < 2 && <div className="text-sm text-slate-500">Collecting one snapshot per month — trend lines appear from the second month.</div>}
-        {snaps.length >= 2 && <div className="space-y-2">
+      {snaps.length >= 2 && <Card title="Trends (monthly)" className="!p-3">
+        <div className="space-y-2">
           <TrendLine label="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
           <TrendLine label="NRR" points={snaps.map(s => s.nrr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
           <TrendLine label="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
-        </div>}
-      </Card>
-      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3" id="week-tasks">
+        </div>
+      </Card>}
+      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className={`!p-3 ${snaps.length < 2 ? "lg:col-span-2" : ""}`} id="week-tasks">
         <ScrollList label="Tasks due this week" className="max-h-40">
         {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
         {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
@@ -2184,6 +2185,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </ScrollList>
       </Card>
       </div>
+      {snaps.length < 2 && <p data-trends-note className="-mt-1 text-xs text-slate-500">Trend lines appear once a second monthly snapshot exists (one is taken each month).</p>}
       <AnalyticsSection user={user}>
       <AmBookCard book={amBook} openAccount={openAccount} />
       <Card title="Recently declined" className="!p-3">
@@ -3069,7 +3071,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                     {a._ret.isNew
                       ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">new</span>
                       : a._ret.delta === 0
-                        ? <span className="text-slate-500">─ flat</span>
+                        ? <span className="text-slate-400" title="No change since the prior-year close">—</span>
                         : <span className={a._ret.delta > 0 ? "text-emerald-600" : "text-rose-600"}>
                             {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
                           </span>}
@@ -3078,7 +3080,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                   {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                     return qd === null ? <span className="text-xs text-slate-500">—</span>
                       : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}
-                  <td className="px-2 text-xs">{a.billingCompleted ? <span className="text-emerald-600">✓ {fmtDate(a.billingCompletedDate)}</span> : <span className="text-amber-600">pending</span>}</td>
+                  <td className="px-2 text-xs">{a.billingCompleted
+                    ? <span data-billing-pill="done" className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">✓ {fmtDate(a.billingCompletedDate)}</span>
+                    : <span data-billing-pill="pending" className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">Pending</span>}</td>
                   <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
                 </tr>
               );
@@ -3158,8 +3162,9 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         {a.flags.map(f => <span key={f} data-flag className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
         <span className="ml-auto text-xs font-semibold text-slate-500">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
       </div>
-      {/* Meta row: systematic key facts */}
-      <div className="nm-sm flex flex-wrap items-center gap-x-6 gap-y-1.5 p-3">
+      {/* Header card: key facts, retention since the prior-year close, status pills */}
+      <div data-header-card className="nm-sm space-y-3 p-3">
+      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
         <Meta label="Tier" value={a.tier} />
         <Meta label="Industry" value={a.industry} />
         <Meta label="ARR" value={`${fmtMoney(a.arr, a.currency)}${a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""}`} />
@@ -3174,30 +3179,24 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
       {(() => {
         const r = accountRetention(a, (st.settings && st.settings.rates) || {});
         return (
-          <div data-retention-block className="nm-sm p-3">
-            <div className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-500">
-              Retention since {r.baselineKey}
-            </div>
+          <div data-retention-block className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-sm">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Retention since {r.baselineKey}</span>
             {r.isNew ? (
-              <p className="text-sm text-slate-500">
+              <p className="text-slate-500">
                 This account started after the {r.baselineKey} close, so there is no prior-year
                 figure to compare against. New accounts are excluded from NRR and GRR.
               </p>
             ) : (
-              <div className="grid max-w-md grid-cols-2 gap-y-1 text-sm">
-                <span className="text-slate-500">{r.baselineKey} close</span>
-                <span data-baseline-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.baselineARR)}</span>
-                <span className="text-slate-500">Today</span>
-                <span data-current-arr className="text-right font-semibold text-slate-700">{fmtMoney(r.currentARR)}</span>
-                <span className="text-slate-500">Change</span>
-                <span data-change className={`text-right font-semibold ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
+              <span className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <span><span className="text-slate-500">{r.baselineKey} close </span><span data-baseline-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.baselineARR)}</span></span>
+                <span><span className="text-slate-500">Today </span><span data-current-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.currentARR)}</span></span>
+                <span><span className="text-slate-500">Change </span><span data-change className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
                   {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
-                </span>
-                <span className="text-slate-500">Retention since {r.baselineKey}</span>
-                <span data-ratio className="text-right font-semibold text-slate-700">
+                </span></span>
+                <span><span className="text-slate-500">Retained </span><span data-ratio className="font-semibold tabular-nums text-slate-700">
                   {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
-                </span>
-              </div>
+                </span></span>
+              </span>
             )}
           </div>
         );
@@ -3220,6 +3219,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
             {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
           </span>); })()}
+      </div>
       </div>
       <div className="flex flex-wrap gap-2">
         <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
@@ -3289,7 +3289,11 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             </div>); })()}
           <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
-            {Object.keys(comps).map(k => <div key={k} className="flex justify-between"><span>{WEIGHT_LABELS[k]}</span><span className="font-mono">{comps[k]}</span></div>)}
+            {Object.keys(comps).map(k => <div key={k} className="flex items-center gap-2">
+              <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
+              <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
+              <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
+            </div>)}
           </div>
         </Card>
         <Card title={`Open tasks (${tasks.length})`}>
@@ -3314,8 +3318,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
               <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
                 <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span>
-                <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
-                <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="shrink-0 text-xs text-rose-500 hover:text-rose-700" onClick={() => setConfirmContact(c)}>🗑</button></div>
+                <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-indigo-600 hover:text-indigo-800" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
+                <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-rose-600 hover:text-rose-800" onClick={() => setConfirmContact(c)}>🗑</button></div>
               <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
             </div>
           ))}
@@ -3437,16 +3441,19 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
 
 /* ------------------------------ tasks view ------------------------------ */
 const SOURCE_GLYPH = { health: "♥", renewal: "▶", manual: "" };
+const SOURCE_NAME = { health: "Health playbook step", renewal: "Renewal playbook step" };
 function TaskRow({ t, a, dispatch, openAccount }) {
   const [custom, setCustom] = useState(false);
   const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
   return (
-    <div className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+    <div data-task-row className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
       <input type="checkbox" checked={t.status === "Done"} title="Complete"
         onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-      <span className="w-4 text-center text-xs text-slate-400">{SOURCE_GLYPH[taskSource(t)]}</span>
-      <span className={`flex-1 ${t.status === "Done" ? "text-slate-400 line-through" : ""}`}>{t.title}</span>
+      {/* Playbook tasks are stored with their glyph as a title prefix; show it once, named. */}
+      <span className="w-4 text-center text-xs text-slate-500" title={SOURCE_NAME[taskSource(t)]} aria-label={SOURCE_NAME[taskSource(t)]}>{SOURCE_GLYPH[taskSource(t)]}</span>
+      <span data-task-title className={t.status === "Done" ? "text-slate-400 line-through" : ""}>{SOURCE_GLYPH[taskSource(t)] ? t.title.replace(/^[▶♥]\s*/, "") : t.title}</span>
       <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
+      <span className="flex-1" />
       <select value="" title="Reschedule" aria-label="Reschedule task" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
         onChange={e => {
           const v = e.target.value;
@@ -3462,6 +3469,7 @@ function TaskRow({ t, a, dispatch, openAccount }) {
       {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
         onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
         onBlur={() => setCustom(false)} />}
+      {late && <DaysChip days={daysUntil(t.due)} />}
       <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
       <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
     </div>
@@ -3504,6 +3512,7 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
         <Input value={q} placeholder="Search tasks…" onChange={e => setQ(e.target.value)} className="w-44" />
       </div>
     }>
+      <p data-source-legend className="mb-2 text-[11px] text-slate-500">▶ renewal playbook step · ♥ health playbook step · unmarked tasks were added by hand</p>
       {st.tasks.length === 0 && <p className="text-sm text-slate-500">Nothing in the queue — tasks appear here as playbooks seed them.</p>}
       {st.tasks.length > 0 && total === 0 && <p className="text-sm text-slate-500">No tasks match these filters.</p>}
       {SECTIONS.map(([key, label]) => buckets[key].length > 0 && (
@@ -3560,7 +3569,8 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
           {m.items.map(a => (
             <div key={a.id} onClick={() => openAccount(a.id)} className="nm-sm mb-3 w-full cursor-pointer p-2.5 text-left hover:bg-slate-50">
               <div className="flex items-center justify-between text-sm font-medium">{a.name}<HealthChip score={a.score} /></div>
-              <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus} · <DaysChip days={daysUntil(a.renewalDate)} /></div>
+              <div className="mt-0.5 text-xs text-slate-700">{fmtMoney(a.arr, a.currency)} · {a.contractStatus}</div>
+              <div className="mt-1"><DaysChip days={daysUntil(a.renewalDate)} /></div>
               <select value={renewalStageOf(a)} onClick={e => e.stopPropagation()}
                 onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
                 className={`mt-1.5 w-full cursor-pointer rounded border-0 px-1.5 py-0.5 text-xs font-semibold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
@@ -3572,7 +3582,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
                 const done = pt.filter(t => t.status === "Done").length;
                 const behind = pt.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
                 return <span title={behind ? "Playbook behind pace — an open step is past due" : "Playbook on pace"}
-                  className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${behind ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>{done}/{pt.length} ✓</span>;
+                  data-playbook-progress className={`mt-1.5 inline-block rounded-full px-2 py-0.5 text-[11px] font-bold ${behind ? "bg-amber-100 text-amber-700" : "bg-emerald-100 text-emerald-700"}`}>Playbook {done}/{pt.length}</span>;
               })()}
             </div>
           ))}
@@ -3595,7 +3605,7 @@ function PlaybookCard({ st, dispatch }) {
         <div key={p.id} className="mb-2 flex items-center gap-2 text-sm">
           <Input value={p.title} placeholder="Step…" onChange={e => edit(p.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
           <Input type="number" min="0" max="365" value={p.offsetDays} title="Days before renewal"
-            onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+            onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="!w-20 shrink-0" />
           <span className="whitespace-nowrap text-xs text-slate-500">d before</span>
           <Select value={p.priority} onChange={e => edit(p.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
           <button title="Remove step" aria-label="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setPb(pb.filter(x => x.id !== p.id))}>✕</button>
@@ -3683,7 +3693,7 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
         <div key={s.id} className="mb-2 flex items-center gap-2 text-sm">
           <Input value={s.title} placeholder="Step…" onChange={e => editStep(band, s.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
           <Input type="number" min="0" max="180" value={s.dueDays} title="Days after crossing"
-            onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="w-20" />
+            onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="!w-20 shrink-0" />
           <span className="whitespace-nowrap text-xs text-slate-500">d after</span>
           <Select value={s.priority} onChange={e => editStep(band, s.id, { priority: e.target.value })} options={["High", "Medium", "Low"]} />
           <button title="Remove step" aria-label="Remove step" className="text-rose-400 hover:text-rose-600" onClick={() => setBand(band, hpb[band].filter(x => x.id !== s.id))}>✕</button>
@@ -3728,7 +3738,12 @@ function Settings({ st, dispatch, user, scored }) {
   };
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      <Card title="Health score weights">
+      <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
+        {[["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Users", "set-users"],
+          ...(user.role === "admin" ? [["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
+          <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
+      </nav>
+      <Card title="Health score weights" id="set-scoring">
         <div className="nm-inset mb-3 p-3 font-mono text-xs text-slate-700">
           score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}
         </div>
@@ -3741,7 +3756,7 @@ function Settings({ st, dispatch, user, scored }) {
         ))}
         <div className="mt-2 text-xs text-slate-500">Weights are normalized automatically — set relative importance; effective % is shown. Scores update everywhere instantly.</div>
       </Card>
-      <Card title="Currency conversion (to USD)">
+      <Card title="Currency conversion (to USD)" id="set-currency">
         {CURRENCIES.filter(c => c !== "USD").map(c => (
           <div key={c} className="mb-2 flex items-center gap-2 text-sm">
             <span className="w-24">1 {c} ({CUR_SYM[c]}) =</span>
@@ -3752,12 +3767,12 @@ function Settings({ st, dispatch, user, scored }) {
         ))}
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
-      <IntegrationsCard st={st} dispatch={dispatch} user={user} />
-      <PlaybookCard st={st} dispatch={dispatch} />
-      <HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} />
-      <UsersCard me={user} />
-      {user.role === "admin" && <ErrorLogCard />}
-      <Card title="Data">
+      <div id="set-integrations" className="scroll-mt-4"><IntegrationsCard st={st} dispatch={dispatch} user={user} /></div>
+      <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
+      <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
+      <div id="set-users" className="scroll-mt-4"><UsersCard me={user} /></div>
+      {user.role === "admin" && <div id="set-errors" className="scroll-mt-4"><ErrorLogCard /></div>}
+      <Card title="Data" id="set-data">
         <div className="flex flex-wrap gap-2">
           <Btn kind="primary" onClick={doExport}>Export JSON</Btn>
           <Btn onClick={() => fileRef.current.click()}>Import JSON</Btn>
@@ -4585,7 +4600,7 @@ function App({ user, onBackToClients }) {
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
           : view}</h1>
-        {view !== "Tasks" && <div className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
+        {view !== "Tasks" && view !== "Settings" && <div data-scope-toggle className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
