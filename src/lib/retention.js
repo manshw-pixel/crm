@@ -3,31 +3,41 @@ import { toUSD } from "./money.js";
 /* trailing-12-month revenue retention (USD) from churn events, renewal deltas and ARR events */
 export function retentionStats(accounts, rates) {
   const yearAgo = Date.now() - 365 * DAY;
-  let churnedARR = 0, expansion = 0, contraction = 0;
-  accounts.forEach(a => {
-    if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
-    (a.renewals || []).forEach(r => {
-      if (new Date(r.completedOn).getTime() >= yearAgo) {
-        const d = toUSD(r.arr - r.prevArr, r.currency || a.currency, rates);
-        if (d >= 0) expansion += d; else contraction -= d;
-      }
+  const moves = list => {
+    let churnedARR = 0, expansion = 0, contraction = 0;
+    list.forEach(a => {
+      if (a.churn && new Date(a.churn.date).getTime() >= yearAgo) churnedARR += toUSD(a.churn.arr, a.churn.currency || a.currency, rates);
+      (a.renewals || []).forEach(r => {
+        if (new Date(r.completedOn).getTime() >= yearAgo) {
+          const d = toUSD(r.arr - r.prevArr, r.currency || a.currency, rates);
+          if (d >= 0) expansion += d; else contraction -= d;
+        }
+      });
+      (a.arrEvents || []).forEach(ev => { // won opportunities + manual ARR adjustments
+        // a currency restatement is not revenue movement. Skipped explicitly rather than
+        // relying on its delta being 0, so the intent is legible and a future non-zero
+        // delta cannot leak into NRR.
+        if (ev.kind === "redenomination") return;
+        if (new Date(ev.date).getTime() >= yearAgo) {
+          const d = toUSD(ev.delta, ev.currency || a.currency, rates);
+          if (d >= 0) expansion += d; else contraction -= d;
+        }
+      });
     });
-    (a.arrEvents || []).forEach(ev => { // won opportunities + manual ARR adjustments
-      // a currency restatement is not revenue movement. Skipped explicitly rather than
-      // relying on its delta being 0, so the intent is legible and a future non-zero
-      // delta cannot leak into NRR.
-      if (ev.kind === "redenomination") return;
-      if (new Date(ev.date).getTime() >= yearAgo) {
-        const d = toUSD(ev.delta, ev.currency || a.currency, rates);
-        if (d >= 0) expansion += d; else contraction -= d;
-      }
-    });
-  });
-  const retARR = accounts.reduce((s, a) => s + (a.churn ? 0 : a.arrUSD), 0);
-  const base = retARR + churnedARR - expansion + contraction;
-  return { churnedARR, expansion, contraction,
-    grr: base > 0 ? (base - churnedARR - contraction) / base : null,
-    nrr: base > 0 ? (base - churnedARR - contraction + expansion) / base : null,
+    return { churnedARR, expansion, contraction };
+  };
+  // The displayed totals cover every account. The RATIOS cover only the book that existed a
+  // year ago: a logo signed inside the window has no opening ARR, and counting it in both
+  // base and retained ARR pulled NRR/GRR toward 100% (new business masking churn). Same
+  // rule as accountRetention's isNew. No startDate -> assume it predates the window.
+  const totals = moves(accounts);
+  const cohort = accounts.filter(a => !(a.startDate && new Date(a.startDate).getTime() > yearAgo));
+  const c = moves(cohort);
+  const retARR = cohort.reduce((s, a) => s + (a.churn ? 0 : a.arrUSD), 0);
+  const base = retARR + c.churnedARR - c.expansion + c.contraction;
+  return { ...totals,
+    grr: base > 0 ? (base - c.churnedARR - c.contraction) / base : null,
+    nrr: base > 0 ? (base - c.churnedARR - c.contraction + c.expansion) / base : null,
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= yearAgo).length };
 }
 
