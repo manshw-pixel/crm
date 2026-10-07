@@ -73,6 +73,7 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 | REV-04 | Cohort grid, churn analysis, renewal outcomes vs forecast | ✅ | `cohort`, `churn-analysis`, `renewal-outcomes` |
 | REV-05 | Money formatting incl. negatives and the K→M boundary | ✅ | `unit/money-format` |
 | REV-07 | ARR bridge: opening + new + expansion − contraction − churn = today; bridge NRR/GRR equal the tiles | ✅ | `arr-bridge` (unit + E2E) |
+| REV-08 | Per-account and headline retention honour an explicit "as of" date | ✅ | `unit/retention-now` |
 | REV-06 | FX: unknown currency converts to 0 | ⚠️ by design, untested in UI | `unit/money` |
 
 ### 6. Renewals, tasks, QBRs, activities, contacts
@@ -102,6 +103,7 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 |---|---|---|---|
 | DUR-01 | Writes send diffs (merge_row), concurrent edits don't revert each other | ✅ | `diffrow`, `rls/merge` |
 | DUR-02 | Write queue: serial, retry with backoff, refetch on give-up | ✅ | `writequeue`, `syncstatus` |
+| DUR-05 | Legacy account # backfill writes only {accountNo} via the queue, retries, never loops after give-up | ✅ | `accountno-backfill` |
 | DUR-03 | Offline / load failure still renders | ✅ | `offline` |
 | DUR-04 | Errors are captured and reported to error_log | ✅ | `capture`, `reporterror`, `errorpanel`, `rls/errorlog` |
 
