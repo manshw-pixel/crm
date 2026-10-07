@@ -25,7 +25,9 @@ function ToastProvider({ children }) {
   return (
     <ToastCtx.Provider value={pushToast}>
       {children}
-      <div className="fixed bottom-4 right-4 z-[60] flex w-80 flex-col gap-2" aria-live="polite">
+      {/* phones: full width with 12px margins, lifted clear of the iPhone home bar; sm+: the
+          320px bottom-right stack */}
+      <div className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[60] flex flex-col gap-2 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-80" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} data-toast data-tone={t.tone} role={t.tone === "error" ? "alert" : "status"}
                className={`nm flex items-start gap-2 border-l-4 p-3 text-sm ${TOAST_TONE[t.tone]}`}>

@@ -317,6 +317,17 @@ function App({ user, onBackToClients }) {
   const active = visible.filter(a => !a.churn);
   const openAccount = (id, form) => { setView("Accounts"); setAcctId(id); if (form) setPendingForm(form); };
   const [notifOpen, setNotifOpen] = useState(false);
+  const bellRef = useRef(null);
+  const [bellBottom, setBellBottom] = useState(64);
+  // measure where the bell sits each time the panel opens (the header wraps on phones), and
+  // close on Escape
+  useEffect(() => {
+    if (!notifOpen) return;
+    if (bellRef.current) setBellBottom(Math.round(bellRef.current.getBoundingClientRect().bottom));
+    const onKey = e => { if (e.key === "Escape") setNotifOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [notifOpen]);
   const renewalsDue = active
     .filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 30; })
     .sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate));
@@ -400,14 +411,20 @@ function App({ user, onBackToClients }) {
         </div>}
         <div className="ml-1"><SyncStatus /></div>
         <div className="relative ml-1">
-          <button data-bell onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
+          <button data-bell ref={bellRef} onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notifOpen}
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-slate-600">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
             {unreadCount > 0 && <span className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-rose-500 px-1 text-[11px] font-bold text-white">{unreadCount}</span>}
           </button>
+          {/* Phones: a full-width sheet fixed just under the bell, wherever the header has
+              wrapped it -- anchored to the bell (absolute right-0) it opened off the left edge
+              once the bell dropped to the second row (x = -231 at 360px). sm+: unchanged
+              dropdown. Both cap their height and scroll. The backdrop closes on a tap outside. */}
+          {notifOpen && <div data-notif-backdrop className="fixed inset-0 z-10" onClick={() => setNotifOpen(false)} />}
           {notifOpen && (
-            <div className="nm absolute right-0 z-20 mt-2 w-[calc(100vw-2rem)] max-w-xs p-3 sm:w-80 sm:max-w-none">
+            <div data-notif-panel style={{ "--bell-bottom": `${bellBottom}px` }}
+              className="nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80">
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-slate-700">Renewals, contracts &amp; health</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
