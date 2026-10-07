@@ -77,11 +77,20 @@ test("phone: menu opens the drawer, choosing a view closes it, backdrop also clo
 test("phone: notification panel fits inside the screen", async () => {
   const { page, browser } = await launch(seed);
   await page.setViewportSize({ width: 375, height: 800 });
+  // Wait for load and the phone reflow before opening: clicking straight after the resize
+  // measured the panel against the desktop bell position (seen once in a full run:
+  // left -204). Then poll, so a panel that is genuinely off-screen still fails.
+  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length > 0);
+  await page.waitForFunction(() => !document.querySelector('button[aria-label*="enu"]') || document.querySelector('button[aria-label*="enu"]').offsetParent);
   await page.click('button[title="Renewal & contract alerts"]');
-  const box = await page.evaluate(() => {
+  const box = await page.waitForFunction(() => {
     const el = [...document.querySelectorAll("main .nm.absolute")][0];
-    const b = el.getBoundingClientRect(); return { left: b.left, right: b.right };
-  });
-  assert(box.left >= 0 && box.right <= 375, `panel spills off screen: ${JSON.stringify(box)}`);
+    if (!el) return null;
+    const b = el.getBoundingClientRect();
+    return b.left >= 0 && b.right <= 375 ? { left: b.left, right: b.right } : null;
+  }, null, { timeout: 3000 }).then(h => h.jsonValue()).catch(() => page.evaluate(() => {
+    const b = document.querySelector("main .nm.absolute")?.getBoundingClientRect(); return b ? { left: b.left, right: b.right } : null;
+  }));
+  assert(box && box.left >= 0 && box.right <= 375, `panel spills off screen: ${JSON.stringify(box)}`);
   await browser.close();
 });
