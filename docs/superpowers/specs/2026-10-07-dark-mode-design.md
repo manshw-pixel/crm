@@ -1,6 +1,6 @@
 # Dark mode — design
 
-Date: 2026-10-07 · Status: approved in conversation, pending written-spec review
+Date: 2026-10-07 · Status: approved 2026-10-07; amended in planning (sidebar control cycles all three choices because Settings is admin-only)
 
 ## Goal
 
@@ -62,11 +62,12 @@ everywhere, every shade becomes a CSS variable and dark mode swaps the variable 
   other tabs follow; sets `<meta name="color-scheme">` / `color-scheme` CSS so native form
   controls and scrollbars match, and `<meta name="theme-color">` for the mobile browser bar.
 - UI:
-  - **Settings → "Appearance" card**: Light / Dark / Auto segmented buttons, current one
-    marked (`aria-pressed`).
-  - **Sidebar footer** next to Sign out: a sun/moon icon button that flips the *effective*
-    theme and stores that explicit choice (Auto is set from Settings). Accessible name
-    describes the action ("Switch to dark theme").
+  - **Settings → "Appearance" card** (admins only, as all of Settings): Light / Dark / Auto
+    segmented buttons, current one marked (`aria-pressed`).
+  - **Sidebar footer** next to Sign out: a button that **cycles Light → Dark → Auto** and
+    shows the current choice (☀ / ☾ / A). Settings is admin-only (`src/26-app.jsx`), so this
+    button is the only control most users have — it must reach all three choices.
+    Accessible name states current and next ("Theme: Dark. Switch to Auto").
   - Sign-in and other pre-app screens: no control; they follow the stored choice / device.
 
 ### 3. Rollout (one PR, three verifiable steps)
