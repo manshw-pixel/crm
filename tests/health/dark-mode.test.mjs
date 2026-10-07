@@ -65,3 +65,64 @@ test("print renders the light palette even in dark mode", async () => {
     assert(v, "print background: " + await bg(page, "body"));
   } finally { await browser.close(); }
 });
+
+// launch() signs in as an admin; __seedProfile makes a non-admin (Settings is admin-only)
+const MEMBER = `window.__seedProfile = { id: "u1", name: "Test User", role: "member", org_id: "org-a", platform_admin: false };`;
+
+test("non-admin: the sidebar button cycles Light -> Dark -> Auto and the choice survives reload", async () => {
+  const { page, browser } = await launch(seed(MEMBER + `try { if (localStorage.getItem("onevio.theme") === null) localStorage.setItem("onevio.theme", "light"); } catch (e) {}`)); // seed only once: init scripts re-run on reload and would overwrite the choice
+  try {
+    await ready(page);
+    assert(!(await isDark(page)), "starts light");
+    await page.click("[data-theme-toggle]");
+    assert(await isDark(page), "light -> dark");
+    assert(await page.evaluate(() => localStorage.getItem("onevio.theme")) === "dark", "stored");
+    await page.emulateMedia({ colorScheme: "light" });
+    await page.click("[data-theme-toggle]");
+    assert(await page.evaluate(() => localStorage.getItem("onevio.theme")) === "auto", "dark -> auto");
+    assert(!(await isDark(page)), "auto on a light device is light");
+    await page.click("[data-theme-toggle]");
+    assert(await page.evaluate(() => localStorage.getItem("onevio.theme")) === "light", "auto -> light");
+    await page.click("[data-theme-toggle]");
+    await page.reload(); await ready(page);
+    assert(await isDark(page), "dark survives reload");
+    const label = await page.getAttribute("[data-theme-toggle]", "aria-label");
+    assert(/Dark/.test(label) && /Auto/.test(label), "accessible name states current and next: " + label);
+  } finally { await browser.close(); }
+});
+
+test("auto follows a live device change; admin Settings card switches too", async () => {
+  const { page, browser } = await launch(seed(store("auto")));
+  try {
+    await page.emulateMedia({ colorScheme: "light" });
+    await ready(page);
+    assert(!(await isDark(page)), "light device");
+    await page.emulateMedia({ colorScheme: "dark" });
+    assert(await page.waitForFunction(() => document.documentElement.classList.contains("dark"), null, { timeout: 3000 }).then(() => true).catch(() => false), "auto must follow the device live");
+    await page.click('button[title="Settings"]');
+    await page.click('[data-theme-choice="light"]');
+    assert(!(await isDark(page)), "Settings: Light");
+    assert(await page.getAttribute('[data-theme-choice="light"]', "aria-pressed") === "true", "current choice marked");
+  } finally { await browser.close(); }
+});
+
+test("another tab's change is followed (storage event)", async () => {
+  const { page, browser } = await launch(seed(store("light")));
+  try {
+    await ready(page);
+    await page.evaluate(() => window.dispatchEvent(new StorageEvent("storage", { key: "onevio.theme", newValue: "dark" })));
+    assert(await page.waitForFunction(() => document.documentElement.classList.contains("dark"), null, { timeout: 3000 }).then(() => true).catch(() => false), "must follow the other tab");
+  } finally { await browser.close(); }
+});
+
+test("storage that throws: the app loads, auto works, the toggle works for the session", async () => {
+  const blocked = `Storage.prototype.getItem = () => { throw new Error("blocked"); }; Storage.prototype.setItem = () => { throw new Error("blocked"); };`;
+  const { page, browser } = await launch(seed(blocked));
+  try {
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.reload(); await ready(page);
+    assert(await isDark(page), "auto from a dark device despite blocked storage");
+    await page.click("[data-theme-toggle]"); // auto -> light
+    assert(!(await isDark(page)), "toggle still works without storage");
+  } finally { await browser.close(); }
+});

@@ -144,7 +144,7 @@ function RecencyWindowInputs({ type, cfg, onCommit }) {
 }
 
 /* ------------------------------- Settings ------------------------------- */
-function Settings({ st, dispatch, user, scored }) {
+function Settings({ st, dispatch, user, scored, theme }) {
   const toast = useToast();
   const w = st.settings.weights;
   const rates = st.settings.rates;
@@ -184,10 +184,21 @@ function Settings({ st, dispatch, user, scored }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
-        {[["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Users", "set-users"],
+        {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Users", "set-users"],
           ...(user.role === "admin" ? [["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
           <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
       </nav>
+      <Card title="Appearance" id="set-appearance">
+        <p className="mb-2 text-xs text-slate-500">Saved on this device. Auto follows your device's light/dark setting.</p>
+        <div className="nm-inset inline-flex gap-0.5 !rounded-lg p-0.5" role="group" aria-label="Theme">
+          {THEME_CHOICES.map(c => (
+            <button key={c} data-theme-choice={c} aria-pressed={theme.choice === c} onClick={() => theme.choose(c)}
+              className={`rounded-md px-3 py-1 text-xs font-semibold ${theme.choice === c ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>
+              {{ light: "Light", dark: "Dark", auto: "Auto" }[c]}
+            </button>
+          ))}
+        </div>
+      </Card>
       <Card title="Health score weights" id="set-scoring">
         <div className="nm-inset mb-3 p-3 font-mono text-xs text-slate-700">
           score = {Object.keys(w).map(k => `${(100 * w[k] / total).toFixed(0)}%·${k}`).join(" + ")}

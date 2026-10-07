@@ -110,6 +110,7 @@ class ViewBoundary extends React.Component {
 }
 
 function App({ user, onBackToClients }) {
+  const theme = useTheme();
   const toast = useToast();
   // Platform admins can switch between workspaces, so they are shown which one they are in.
   const [orgName, setOrgName] = useState("");
@@ -390,7 +391,16 @@ function App({ user, onBackToClients }) {
             <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
             <div className="text-xs text-slate-500">{user.role}{loaded ? "" : " · loading…"}</div>
           </>}
-          <button title={`Sign out (${user.name})`} className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "flex h-9 w-9 items-center justify-center" : "mt-3 w-full px-3 py-1.5"}`}
+          {/* Light -> Dark -> Auto. Settings is admin-only, so this is the control most users
+              have and it must reach all three choices. */}
+          <button data-theme-toggle onClick={() => theme.choose(nextChoice(theme.choice))}
+            aria-label={`Theme: ${{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]}. Switch to ${{ light: "Light", dark: "Dark", auto: "Auto" }[nextChoice(theme.choice)]}`}
+            title={`Theme: ${theme.choice}`}
+            className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "mb-2 flex h-9 w-9 items-center justify-center" : "mt-3 flex w-full items-center justify-center gap-1.5 px-3 py-1.5"}`}>
+            <span aria-hidden="true">{{ light: "☀", dark: "☾", auto: "A" }[theme.choice]}</span>
+            {!collapsed && <span>{{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]} theme</span>}
+          </button>
+          <button title={`Sign out (${user.name})`} className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "flex h-9 w-9 items-center justify-center" : "mt-2 w-full px-3 py-1.5"}`}
             onClick={signOut}>{collapsed ? "⎋" : "Sign out"}</button>
         </div>
       </aside>
@@ -468,7 +478,7 @@ function App({ user, onBackToClients }) {
           ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} />}
+        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} />}
         </>}
       </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
