@@ -63,7 +63,6 @@ const signOut = async () => {
   location.reload();
 };
 
-const uid = () => Math.random().toString(36).slice(2, 10);
 // The signed-in user's org, set by Root() once the profile loads. Only uploadFiles needs it
 // on the client: every other org decision is made by RLS and the org-stamping RPCs.
 let CURRENT_ORG = null;

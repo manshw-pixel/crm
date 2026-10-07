@@ -11,7 +11,7 @@ run by hand before a release that touches them.
 
 | Suite | Command | Where it runs | What it proves |
 |---|---|---|---|
-| Unit (pure logic) | `npm run test:unit` | local + CI, ~1s | `src/lib` maths: money, dates, scoring, retention, CSV, URLs. Golden cases pin behaviour to the pre-split app. |
+| Unit (pure logic) | `npm run test:unit` | local + CI, ~1.5s | `src/lib`: reducer + write plan, write queue, money, dates, scoring, retention, CSV, URLs. Golden cases pin behaviour to the pre-split app. |
 | Worker | `npm run test:worker` | local + CI | Cloudflare email worker (touchpoint ingest). |
 | E2E (browser) | `node tests/health/run.mjs > e2e.log 2>&1` | local + CI, ~60 min locally | The **built** `dist/crm.html` against an in-memory Supabase mock. Never pipe it — the exit code is the deploy gate. |
 | One E2E file | `node tests/health/run-one.mjs <file>` | local | Fast red/green loop. |
@@ -101,6 +101,8 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 ### 8. Persistence & resilience
 | ID | Case | Status | Where |
 |---|---|---|---|
+| DUR-00 | Reducer: every action never mutates state (frozen-input check, table must list every action), transitions, and the exact writes each produces (`persistOps`); `diffRow` edge cases | ✅ | `unit/reducer` (68) |
+| DUR-02u | Write queue in isolation: serial, backoff schedule, rejected sends, give-up clears + reports once, recovery | ✅ | `unit/write-queue` (7) |
 | DUR-01 | Writes send diffs (merge_row), concurrent edits don't revert each other | ✅ | `diffrow`, `rls/merge` |
 | DUR-02 | Write queue: serial, retry with backoff, refetch on give-up | ✅ | `writequeue`, `syncstatus` |
 | DUR-05 | Legacy account # backfill writes only {accountNo} via the queue, retries, never loops after give-up | ✅ | `accountno-backfill` |
