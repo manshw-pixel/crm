@@ -122,6 +122,9 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 | UX-01 | Icon buttons named, keyboard nav, Ctrl+K palette | ✅ | `a11y`, `tier3-polish` |
 | UX-02 | Confirm dialogs, undo, toasts | ✅ | `confirm-dialog`, `undo-actions`, `toast` |
 | UX-03 | Cross-browser (Safari/Firefox) | ❌ MANUAL | suite runs Chromium/Edge only |
+| UX-04 | Dark mode: Light/Dark/Auto (device default, per-device), no flash, live device + cross-tab follow, blocked storage, print = light | ✅ | `dark-mode`, `unit/theme` |
+| UX-05 | Dark contrast: every text/background pair the app uses ≥ 4.5:1 | ✅ | `dark-mode` |
+| UX-06 | Light mode pixel-identical after the token change | ✅ (one-off) | `tests/visual/light-diff.mjs` |
 
 ## Manual release checklist (the ❌ rows)
 
