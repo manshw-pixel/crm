@@ -177,7 +177,7 @@ const PAIRS = [
   ["green badge", "text-emerald-700", "emerald-100"], ["sky badge", "text-sky-700", "sky-100"],
   ["indigo chip", "text-indigo-700", "indigo-50"], ["primary button", "text-white", "indigo-600"],
   ["danger button", "text-white", "rose-500"], ["low win-rate chip", "text-rose-600", "rose-100"],
-  ["risk number", "text-rose-600", "white"], ["warning number", "text-amber-600", "white"],
+  ["risk number", "text-rose-600", "white"], ["declined-from/to Red text", "text-rose-600", "white"], ["declined Yellow text", "text-amber-600", "white"], ["declined Green text", "text-emerald-600", "white"], ["warning number", "text-amber-600", "white"],
   ["good number", "text-emerald-600", "white"], ["remove-step cross", "text-rose-400", "white"],
 ];
 test("dark: every text/background pair the app uses meets WCAG AA (4.5:1)", async () => {

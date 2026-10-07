@@ -395,7 +395,7 @@ function App({ user, onBackToClients }) {
               have and it must reach all three choices. */}
           <button data-theme-toggle onClick={() => theme.choose(nextChoice(theme.choice))}
             aria-label={`Theme: ${{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]}. Switch to ${{ light: "Light", dark: "Dark", auto: "Auto" }[nextChoice(theme.choice)]}`}
-            title={`Theme: ${theme.choice}`}
+            title={`Theme: ${{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]}`}
             className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "mb-2 flex h-9 w-9 items-center justify-center" : "mt-3 flex w-full items-center justify-center gap-1.5 px-3 py-1.5"}`}>
             <span aria-hidden="true">{{ light: "☀", dark: "☾", auto: "A" }[theme.choice]}</span>
             {!collapsed && <span>{{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]} theme</span>}

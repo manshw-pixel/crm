@@ -1,3 +1,6 @@
+// Whole class strings so the Tailwind scanner sees them; themed for dark mode (inline hex was 4.4:1 for Red).
+const RISK_TEXT = { Green: "text-emerald-600", Yellow: "text-amber-600", Red: "text-rose-600" };
+
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   // `today` is in the deps so the card re-bases itself when the year turns, even in a
@@ -167,9 +170,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           <button key={a.id + e.date + e.to} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-slate-50">
             <span className="text-sm">{a.name}</span>
             <span className="flex items-center gap-2 text-xs">
-              <span className="font-semibold" style={{ color: RISK_HEX[e.from] }}>{e.from}</span>
+              <span className={`font-semibold ${RISK_TEXT[e.from]}`}>{e.from}</span>
               <span className="text-slate-400">→</span>
-              <span className="font-semibold" style={{ color: RISK_HEX[e.to] }}>{e.to}</span>
+              <span className={`font-semibold ${RISK_TEXT[e.to]}`}>{e.to}</span>
               <span className="text-slate-500">{fmtDate(e.date)}</span>
             </span>
           </button>
