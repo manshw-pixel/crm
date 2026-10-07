@@ -3,6 +3,11 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="theme-color" content="#f6f8fb" />
+<!-- Theme before first paint (Light / Dark / Auto, src/lib/theme.js). Mirrors normalizeChoice
+     and resolveTheme -- it must run before React and the stylesheet, so it cannot import them.
+     tests/unit/theme.test.mjs pins its shape. -->
+<script>(function(){var c;try{c=localStorage.getItem("onevio.theme")}catch(e){}if(c!=="light"&&c!=="dark")c="auto";var d=c==="dark"||(c==="auto"&&!!window.matchMedia&&matchMedia("(prefers-color-scheme: dark)").matches);if(d){document.documentElement.classList.add("dark");var m=document.querySelector('meta[name="theme-color"]');if(m)m.content="#0b1120"}document.documentElement.style.colorScheme=d?"dark":"light"})();</script>
 <title>OneVio CRM</title>
 <!-- tab icon: the sidebar wordmark's O (slate-900) and V (indigo-600) drawn as shapes, since a
      favicon cannot load Inter; white tile so it stays visible on dark tab bars. Inline data URI
@@ -29,6 +34,21 @@
     --emerald-50: 236 253 245; --emerald-100: 209 250 229; --emerald-200: 167 243 208; --emerald-300: 110 231 183; --emerald-400: 52 211 153; --emerald-500: 16 185 129; --emerald-600: 5 150 105; --emerald-700: 4 120 87; --emerald-800: 6 95 70; --emerald-900: 6 78 59; --emerald-950: 2 44 34;
     --sky-50: 240 249 255; --sky-100: 224 242 254; --sky-200: 186 230 253; --sky-300: 125 211 252; --sky-400: 56 189 248; --sky-500: 14 165 233; --sky-600: 2 132 199; --sky-700: 3 105 161; --sky-800: 7 89 133; --sky-900: 12 74 110; --sky-950: 8 47 73;
   }
+  /* dark theme. Screen-only, so printing always uses the light palette. Neutrals invert
+     (white = darkest card, slate-900 = lightest text); accents flip around their middle so
+     pale badge fills become deep tints and strong text shades become light. Tuned for >= 4.5:1
+     text contrast on --white and --page. scrim is deliberately absent: overlays stay dark. */
+  @media screen { html.dark {
+    color-scheme: dark;
+    --white: 19 27 44; --page: 11 17 32; --line-strong: 58 72 94;
+    --slate-50: 24 33 52; --slate-100: 30 41 59; --slate-200: 45 58 79; --slate-300: 71 85 105; --slate-400: 125 139 160; --slate-500: 148 163 184; --slate-600: 170 182 199; --slate-700: 203 213 225; --slate-800: 226 232 240; --slate-900: 241 245 249; --slate-950: 248 250 252;
+    --gray-50: 24 33 52; --gray-100: 30 41 59; --gray-200: 45 58 79; --gray-300: 71 85 105; --gray-400: 125 139 160; --gray-500: 148 163 184; --gray-600: 170 182 199; --gray-700: 203 213 225; --gray-800: 226 232 240; --gray-900: 241 245 249; --gray-950: 248 250 252;
+    --indigo-50: 30 32 70; --indigo-100: 38 40 90; --indigo-200: 55 55 125; --indigo-300: 90 95 190; --indigo-400: 129 140 248; --indigo-500: 129 140 248; --indigo-600: 165 180 252; --indigo-700: 199 210 254; --indigo-800: 224 231 255; --indigo-900: 238 242 255; --indigo-950: 245 247 255;
+    --rose-50: 50 18 30; --rose-100: 70 22 38; --rose-200: 100 30 50; --rose-300: 150 45 70; --rose-400: 220 70 100; --rose-500: 251 113 133; --rose-600: 251 120 140; --rose-700: 253 164 175; --rose-800: 254 205 211; --rose-900: 255 228 230; --rose-950: 255 241 242;
+    --amber-50: 48 32 10; --amber-100: 66 44 12; --amber-200: 92 62 14; --amber-300: 140 95 20; --amber-400: 200 140 30; --amber-500: 245 158 11; --amber-600: 251 191 36; --amber-700: 252 211 77; --amber-800: 253 230 138; --amber-900: 254 243 199; --amber-950: 255 251 235;
+    --emerald-50: 10 40 32; --emerald-100: 12 56 44; --emerald-200: 16 80 62; --emerald-300: 25 120 90; --emerald-400: 40 170 125; --emerald-500: 52 211 153; --emerald-600: 52 211 153; --emerald-700: 110 231 183; --emerald-800: 167 243 208; --emerald-900: 209 250 229; --emerald-950: 236 253 245;
+    --sky-50: 10 35 52; --sky-100: 12 48 72; --sky-200: 16 70 100; --sky-300: 30 110 150; --sky-400: 56 189 248; --sky-500: 56 189 248; --sky-600: 125 211 252; --sky-700: 125 211 252; --sky-800: 186 230 253; --sky-900: 224 242 254; --sky-950: 240 249 255;
+  } }
   html { font-size: 12.5px; }
   body { background: rgb(var(--page)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: rgb(var(--slate-700)); }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
