@@ -350,7 +350,7 @@
     999999,
     "USD"
    ],
-   "$1000K"
+   "$1.00M"
   ],
   [
    "money",
@@ -27736,8 +27736,8 @@
     "churnedARR": 59000,
     "expansion": 24000,
     "contraction": 5000,
-    "grr": 0.9491740787801779,
-    "nrr": 0.9682337992376112,
+    "grr": 0.946843853820598,
+    "nrr": 0.9667774086378738,
     "lost": 2
    }
   ],
@@ -28186,8 +28186,8 @@
     "churnedARR": 0,
     "expansion": 24000,
     "contraction": 5000,
-    "grr": 0.9958340276620563,
-    "nrr": 1.015830694884186,
+    "grr": 0.9956331877729258,
+    "nrr": 1.016593886462882,
     "lost": 0
    }
   ],
@@ -29181,8 +29181,8 @@
     }
    ],
    {
-    "nrr": 1,
-    "grr": 1,
+    "nrr": null,
+    "grr": null,
     "baselineARR": 25200,
     "currentARR": 25200,
     "delta": 0,
@@ -29241,8 +29241,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": 1,
-    "grr": 1,
+    "nrr": null,
+    "grr": null,
     "baselineARR": 25200,
     "currentARR": 25200,
     "delta": 0,
@@ -29351,8 +29351,8 @@
     }
    ],
    {
-    "nrr": 1,
-    "grr": 1,
+    "nrr": null,
+    "grr": null,
     "baselineARR": 30000,
     "currentARR": 30000,
     "delta": 0,
@@ -29411,8 +29411,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": 1,
-    "grr": 1,
+    "nrr": null,
+    "grr": null,
     "baselineARR": 30000,
     "currentARR": 30000,
     "delta": 0,

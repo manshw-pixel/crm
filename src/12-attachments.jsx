@@ -18,7 +18,7 @@ async function uploadFiles(fileList, accountId) {
 const AttachmentLinks = ({ items }) => !items || !items.length ? null : (
   <span className="flex flex-wrap gap-1.5">
     {items.map(at => (
-      <a key={at.path || at.url} href={at.url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+      <a key={at.path || at.url} href={safeUrl(at.url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
         className="nm-inset inline-flex items-center gap-1 !rounded-full px-2 py-0.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-800">📎 {at.name}</a>
     ))}
   </span>

@@ -11,9 +11,19 @@ export function subNumbers(accounts) {
   return m;
 }
 export const VALUE_COL = { caseStudy: "caseStudy", approvedSavings: "savings", approvedRoi: "roi" };
+/* Formula injection: Excel/Sheets execute a cell that starts with = + - @ (or tab/CR), and
+ * account fields are member-writable. Such TEXT gets a leading apostrophe; numbers,
+ * negatives included, do not. parseCSV strips the apostrophe again so re-import round-trips. */
+const FORMULA_LEAD = /^[=+\-@\t\r]/;
+const NUMERIC = /^-?\d+(\.\d+)?(e[+-]?\d+)?$/i;
+export const csvCell = v => {
+  let s = String(v ?? "");
+  if (FORMULA_LEAD.test(s) && !NUMERIC.test(s)) s = "'" + s;
+  return `"${s.replace(/"/g, '""')}"`;
+};
 export function accountsCSVText(rows) {
   const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
-  const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+  const esc = csvCell;
   const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   return [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
 }
@@ -56,12 +66,23 @@ export function parseCsvDate(v, order = "dmy") {
   }
   return null;
 }
+// -> a number, "" for an empty cell (leave the field alone), or null when unreadable.
+// Accepts currency marks and comma grouping (1,000,000 and Indian 10,00,000), which Excel
+// writes back when a column is formatted; parseFloat read "1,000,000" as 1.
+export function parseCsvNumber(v) {
+  const t = String(v ?? "").trim();
+  if (!t) return "";
+  const s = t.replace(/^(USD|INR|PHP)\s*/i, "").replace(/^[$₹₱]\s*/, "").replace(/,/g, "");
+  return /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : null;
+}
 // one-line summary of an accounts import, for the folder sync log
 export function importSummary(r) {
   if (r.err) return r.err;
   const bits = [`imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`];
   if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
   if (r.badValue) bits.push(`⚠ ${r.badValue} unreadable Value answer(s) left unchanged (use yes/no)`);
+  if (r.badNumber) bits.push(`⚠ ${r.badNumber} unreadable number(s) (arr/licenses) left unchanged${r.badNumberRows?.length ? ` (${r.badNumberRows.join(", ")})` : ""}`);
+  if (r.badCurrency) bits.push(`⚠ ${r.badCurrency} unrecognized currenc${r.badCurrency === 1 ? "y" : "ies"} left unchanged (use USD, INR or PHP)`);
   if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
   if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);
   if (r.badStatus) bits.push(`⚠ ${r.badStatus} unrecognized status(es) set to Active`);
@@ -83,5 +104,7 @@ export function parseCSV(text) {
     } else cur += ch;
   }
   if (cur !== "" || row.length) { row.push(cur); rows.push(row); }
-  return rows.filter(r => r.some(c => c.trim() !== ""));
+  // undo csvCell's guard apostrophe (only where csvCell would have added one)
+  const unguard = c => c[0] === "'" && FORMULA_LEAD.test(c.slice(1)) && !NUMERIC.test(c.slice(1)) ? c.slice(1) : c;
+  return rows.filter(r => r.some(c => c.trim() !== "")).map(r => r.map(unguard));
 }

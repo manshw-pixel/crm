@@ -17,8 +17,8 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0;
-    const badDateRows = [], churnSkipped = [];
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0, badNumber = 0, badCurrency = 0;
+    const badDateRows = [], churnSkipped = [], badNumberRows = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
     const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
     const order = csvDateOrder(allDates);
@@ -29,7 +29,12 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     rows.slice(1).forEach(r => {
       const name = col(r, "name");
       if (!name) { skipped++; return; }
-      const num = (key, dflt) => { const v = parseFloat(col(r, key)); return isNaN(v) ? dflt : v; };
+      // blank -> undefined (field left alone); unreadable -> counted, reported, left alone.
+      // This used to be parseFloat(...) || 0, which zeroed an existing account's ARR on a
+      // blank or "$120,000" cell and read "1,000,000" as 1 -- booking a phantom contraction.
+      const num = key => { const v = parseCsvNumber(col(r, key));
+        if (v === null) { badNumber++; if (badNumberRows.length < 5 && !badNumberRows.includes(name)) badNumberRows.push(name); }
+        return typeof v === "number" ? Math.max(0, v) : undefined; };
       // unreadable dates are counted and reported, never silently dropped
       const date = v => { const d = parseCsvDate(v, order);
         if (d === null) { badDate++; if (badDateRows.length < 5 && !badDateRows.includes(name)) badDateRows.push(name); }
@@ -40,10 +45,14 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         const match = ["Enterprise", "Mid", "SMB"].find(t => t.toLowerCase() === raw.toLowerCase());
         // an empty cell is a missing value, not a mis-typed one -- don't report it
         if (raw && !match) badTier++;
-        vals.tier = match || "Mid";
+        // blank = leave the stored tier alone (new rows get "Mid" from the template below)
+        if (raw) vals.tier = match || "Mid";
       }
-      if (has("arr")) vals.arr = Math.max(0, num("arr", 0));
-      if (has("currency")) vals.currency = CURRENCIES.includes(col(r, "currency").toUpperCase()) ? col(r, "currency").toUpperCase() : "USD";
+      if (has("arr")) { const v = num("arr"); if (v !== undefined) vals.arr = v; }
+      // Never coerce a currency: a blank or unknown cell used to become "USD", restating an INR
+      // account's ARR as dollars (8,000,000 INR -> $8M). Blank = unchanged; unknown = reported.
+      if (has("currency")) { const c = col(r, "currency").toUpperCase();
+        if (CURRENCIES.includes(c)) vals.currency = c; else if (c) badCurrency++; }
       if (has("industry")) vals.industry = col(r, "industry");
       if (has("csm")) vals.csm = col(r, "csm");
       if (has("startdate") && date(col(r, "startdate"))) vals.startDate = date(col(r, "startdate"));
@@ -55,10 +64,10 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         // "Churned" is not a plain status: churn needs a date and reason and moves ARR, so it
         // only happens from the account page. Coercing it to Active resurrected churned accounts.
         if (raw.toLowerCase() === "churned") vals.churnedInFile = true;
-        else { if (raw && !match) badStatus++; vals.contractStatus = match || "Active"; }
+        else if (raw) { if (!match) badStatus++; vals.contractStatus = match || "Active"; }
       }
       if (has("modules")) vals.modules = col(r, "modules");
-      if (has("licenses")) vals.licenses = Math.max(0, num("licenses", 0));
+      if (has("licenses")) { const v = num("licenses"); if (v !== undefined) vals.licenses = v; }
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
       if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
       if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));
@@ -102,7 +111,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         ok++;
       }
     });
-    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badDateRows, churnSkipped, dateOrder });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder });
   };
   reader.readAsText(file);
 }

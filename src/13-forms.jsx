@@ -88,7 +88,7 @@ function DocumentsCard({ a, dispatch, user }) {
             {group.map(d => (
               <div key={d.id} className="border-b border-slate-100 py-1.5 last:border-0">
                 <div className="flex flex-wrap items-center gap-2 text-sm">
-                  <a href={d.url} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
+                  <a href={safeUrl(d.url)} target="_blank" rel="noreferrer" className="font-medium text-indigo-600 hover:text-indigo-800">📎 {d.title || d.name}</a>
                   {docExpiryBadge(d)}
                   {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
                   {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}

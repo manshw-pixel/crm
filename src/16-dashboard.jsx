@@ -20,7 +20,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   // when "All" is selected retention always spans every account, regardless of other scoping
   const rates = st.settings.rates;
   const retAccounts = scope === "all" ? allAccounts : all;
-  const { churnedARR, expansion, contraction, grr, nrr, lost } = retentionStats(retAccounts, rates);
+  const { churnedARR, grr, nrr, lost } = retentionStats(retAccounts, rates);
+  const bridge = arrBridge(retAccounts, rates);
   const pct = x => (100 * x).toFixed(0) + "%";
   // expansion pipeline: open opportunities on non-churned in-scope accounts
   const openOpps = st.opportunities
@@ -57,10 +58,11 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       </div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         <Stat size="hero" label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
-        <Stat size="hero" label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`+${fmtMoney(expansion)} exp · −${fmtMoney(contraction)} contr`} onClick={() => openAccounts()} />
+        <Stat size="hero" label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`existing customers: +${fmtMoney(bridge.expansion)} exp · −${fmtMoney(bridge.contraction)} contr`} onClick={() => openAccounts()} />
         <Stat size="hero" label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
           onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
       </div>
+      <ArrBridgeCard b={bridge} />
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Stat size="sm" label="QBRs due (30d)" value={qbrAccts.length}
           tone={qbrOverdue ? "text-rose-600" : qbrAccts.length ? "text-amber-600" : undefined}
@@ -195,3 +197,33 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   );
 }
 
+
+/* ARR bridge (12m): how today's ARR was built from a year ago. New customers are shown as
+   new business here -- they are deliberately NOT in NRR/GRR, which measure existing
+   customers only. Rows carry data-bridge-* so tests target them, not page copy. */
+function ArrBridgeCard({ b }) {
+  const rows = [
+    ["opening", "ARR 12 months ago", b.opening, "existing customers", "base"],
+    ["new", "+ New customers", b.newARR, `${b.newLogos - b.newLost} signed in the last 12m${b.newLost ? ` (${b.newLost} more signed and already lost)` : ""}`, "up"],
+    ["expansion", "+ Expansion", b.expansion, "upsells, existing customers", "up"],
+    ["contraction", "− Contraction", -b.contraction, "downgrades, existing customers", "down"],
+    ["churn", "− Churn", -b.churn, "existing customers lost", "down"],
+    ["closing", "= ARR today", b.closing, "", "base"],
+  ];
+  const max = Math.max(b.opening, b.closing, 1);
+  const tone = { base: "bg-indigo-400", up: "bg-emerald-500", down: "bg-rose-500" };
+  return (
+    <Card title="ARR bridge (12m, USD)" className="!p-3" right={<span className="text-[11px] text-slate-500">NRR/GRR use existing customers only</span>}>
+      <div data-arr-bridge className="space-y-1.5">
+        {rows.map(([k, label, v, sub, kind]) => (
+          <div key={k} data-bridge-row={k} title={sub} className={`grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-sm ${kind === "base" ? "font-semibold" : ""}`}>
+            <span className="truncate text-slate-700">{label}</span>
+            <span className="h-2 rounded bg-slate-100"><span className={`block h-2 rounded ${tone[kind]}`} style={{ width: `${Math.min(100, (Math.abs(v) / max) * 100)}%` }} /></span>
+            <span data-bridge-value className="text-right tabular-nums text-slate-800">{kind === "up" && v > 0 ? "+" : ""}{fmtMoney(v)}</span>
+          </div>
+        ))}
+        {b.newLogos > 0 && <p data-bridge-note className="pt-1 text-[11px] text-slate-500">{b.newLogos - b.newLost} new customer(s) signed in the last 12 months{b.newLost ? `; ${b.newLost} more signed and already lost` : ""}. Their revenue is new business, not retention.</p>}
+      </div>
+    </Card>
+  );
+}

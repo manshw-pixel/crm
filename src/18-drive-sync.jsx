@@ -73,7 +73,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     download("sales-accounts.csv", accountsCSVText(rows));
   };
   const financeTemplate = () => {
-    const esc = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const esc = csvCell;
     download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
       ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(esc).join(","))].join("\n"));
   };
