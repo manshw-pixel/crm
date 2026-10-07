@@ -32,7 +32,11 @@ test("phone: ARR bridge fits the screen", async () => {
   try {
     await page.setViewportSize({ width: 375, height: 800 });
     await page.waitForSelector("[data-arr-bridge]");
-    const r = await page.$eval("[data-arr-bridge]", el => { const b = el.getBoundingClientRect(); return { l: b.left, r: b.right, sw: document.documentElement.scrollWidth }; });
+    // Poll: measuring straight after the resize caught the mid-reflow layout in CI (sw 393,
+    // card half off-screen) though the settled layout fits. A real overflow still fails.
+    const m = () => { const b = document.querySelector("[data-arr-bridge]").getBoundingClientRect(); return { l: b.left, r: b.right, sw: document.documentElement.scrollWidth }; };
+    const r = await page.waitForFunction(m => { const v = (0, eval)(m)(); return v.l >= 0 && v.r <= 375 && v.sw <= 375 ? v : null; }, `(${m})`, { timeout: 3000 })
+      .then(h => h.jsonValue()).catch(() => page.evaluate(m));
     assert(r.l >= 0 && r.r <= 375 && r.sw <= 375, "overflow: " + JSON.stringify(r));
   } finally { await browser.close(); }
 });
