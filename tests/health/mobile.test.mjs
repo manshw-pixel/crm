@@ -74,23 +74,57 @@ test("phone: menu opens the drawer, choosing a view closes it, backdrop also clo
   await browser.close();
 });
 
-test("phone: notification panel fits inside the screen", async () => {
-  const { page, browser } = await launch(seed);
-  await page.setViewportSize({ width: 375, height: 800 });
-  // Wait for load and the phone reflow before opening: clicking straight after the resize
-  // measured the panel against the desktop bell position (seen once in a full run:
-  // left -204). Then poll, so a panel that is genuinely off-screen still fails.
-  await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length > 0);
-  await page.waitForFunction(() => !document.querySelector('button[aria-label*="enu"]') || document.querySelector('button[aria-label*="enu"]').offsetParent);
-  await page.click('button[title="Renewal & contract alerts"]');
-  const box = await page.waitForFunction(() => {
-    const el = [...document.querySelectorAll("main .nm.absolute")][0];
-    if (!el) return null;
-    const b = el.getBoundingClientRect();
-    return b.left >= 0 && b.right <= 375 ? { left: b.left, right: b.right } : null;
-  }, null, { timeout: 3000 }).then(h => h.jsonValue()).catch(() => page.evaluate(() => {
-    const b = document.querySelector("main .nm.absolute")?.getBoundingClientRect(); return b ? { left: b.left, right: b.right } : null;
-  }));
-  assert(box && box.left >= 0 && box.right <= 375, `panel spills off screen: ${JSON.stringify(box)}`);
-  await browser.close();
+// The panel used to hang off the bell (absolute right-0). Below ~375px the header wraps,
+// the bell drops to the LEFT edge, and the panel opened at x = -231. An earlier version of
+// the test below was "de-flaked" with a wait when it was really catching this at the wrap
+// point -- so this one checks the widths on both sides of it, with no settle-wait excuse.
+const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const alertSeed = n => `window.__seedRows = { accounts: ${JSON.stringify(Array.from({ length: n }, (_, i) =>
+  seedAccount({ id: "r" + i, name: "Renewing Customer With A Long Name " + i, csm: "Test User", renewalDate: day(2 + i * 2) })))}.map(d => ({ id: d.id, data: d })),
+  contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
+for (const w of [360, 375, 390]) test(`phone ${w}px: notification panel is on screen, full width, and scrolls a long list`, async () => {
+  const { page, browser } = await launch(alertSeed(14));
+  try {
+    await page.setViewportSize({ width: w, height: 700 });
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 14);
+    await page.click("[data-bell]");
+    const p = await page.$eval("[data-notif-panel]", e => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right, w: b.width, bottom: b.bottom, scrolls: e.scrollHeight > e.clientHeight }; });
+    assert(p.l >= 0 && p.r <= w, `panel off screen at ${w}px: ${JSON.stringify(p)}`);
+    assert(p.w >= w - 32, `panel should use the phone's width (${w}px), got ${p.w}`);
+    assert(p.bottom <= 700, `panel runs off the bottom: ${p.bottom}`);
+    assert(p.scrolls, "a 14-alert list should scroll inside the panel");
+  } finally { await browser.close(); }
+});
+
+test("notification panel closes on Escape and on a tap outside", async () => {
+  const { page, browser } = await launch(alertSeed(3));
+  try {
+    await page.setViewportSize({ width: 375, height: 700 });
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+    await page.click("[data-bell]");
+    await page.waitForSelector("[data-notif-panel]");
+    await page.keyboard.press("Escape");
+    assert(!(await page.$("[data-notif-panel]")), "Escape should close the panel");
+    await page.click("[data-bell]");
+    await page.waitForSelector("[data-notif-panel]");
+    await page.mouse.click(30, 650);
+    assert(!(await page.$("[data-notif-panel]")), "a tap outside should close the panel");
+  } finally { await browser.close(); }
+});
+
+test("phone: toasts span the screen with even margins; desktop keeps the corner stack", async () => {
+  const { page, browser } = await launch(alertSeed(1));
+  try {
+    await page.setViewportSize({ width: 360, height: 700 });
+    await page.waitForFunction(() => window.__store && window.__toast);
+    await page.evaluate(() => window.__toast({ text: "Saved", tone: "success" }));
+    const t = await page.$eval("[data-toast]", e => { const b = e.getBoundingClientRect(); return { l: b.left, r: b.right }; });
+    assert(t.l >= 8 && t.l <= 16 && 360 - t.r >= 8 && 360 - t.r <= 16, "phone toast should be full width with ~12px margins: " + JSON.stringify(t));
+    await page.setViewportSize({ width: 1280, height: 800 });
+    // poll: right after a resize the old (phone) layout can still be measured
+    const d = await page.waitForFunction(() => { const b = document.querySelector("[data-toast]").getBoundingClientRect();
+      const rem = parseFloat(getComputedStyle(document.documentElement).fontSize); return Math.abs(b.width - 20 * rem) < 2 ? { w: b.width, r: b.right, want: 20 * rem } : null; }, null, { timeout: 3000 })
+      .then(h => h.jsonValue()).catch(() => page.$eval("[data-toast]", e => { const b = e.getBoundingClientRect(); return { w: b.width, r: b.right }; }));
+    assert(d.want && 1280 - d.r <= 20, "desktop toast should stay the w-80 (20rem) bottom-right stack: " + JSON.stringify(d));
+  } finally { await browser.close(); }
 });
