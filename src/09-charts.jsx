@@ -25,7 +25,7 @@ function TrendLine({ label, points, months, fmt, w = 150, h = 28 }) {
     <div className="flex items-center gap-2" title={months.map((m, i) => `${m}: ${fmt(vals[i])}`).join("\n")}>
       <span className="w-28 shrink-0 text-xs text-slate-500">{label}</span>
       <svg width={w} height={h}><path d={d} fill="none" stroke={last >= first ? "#10b981" : "#f43f5e"} strokeWidth="2" />
-        {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2" fill="#64748b" />)}</svg>
+        {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2" style={{ fill: "rgb(var(--slate-500))" }} />)}</svg>
       <span className={`text-xs font-bold tabular-nums ${last >= first ? "text-emerald-600" : "text-rose-600"}`}>{fmt(last)}</span>
     </div>
   );
@@ -75,16 +75,16 @@ function LineChart({ title, points, months, fmt, color = "#6366f1", w = 340, h =
       <div className="mb-1 text-xs font-bold text-slate-500">{title}</div>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full" onMouseMove={move} onMouseLeave={() => setHov(null)}>
         {ticks.map((t, i) => <g key={i}>
-          <line x1={padL} x2={w - padR} y1={Y(t)} y2={Y(t)} stroke="#e2e8f0" strokeWidth="1" />
-          <text x={padL - 4} y={Y(t) + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{fmt(t)}</text>
+          <line x1={padL} x2={w - padR} y1={Y(t)} y2={Y(t)} style={{ stroke: "rgb(var(--slate-200))" }} strokeWidth="1" />
+          <text x={padL - 4} y={Y(t) + 3} textAnchor="end" fontSize="9" style={{ fill: "rgb(var(--slate-400))" }}>{fmt(t)}</text>
         </g>)}
-        {months.map((m, i) => i % lblEvery === 0 && <text key={m} x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.slice(2)}</text>)}
+        {months.map((m, i) => i % lblEvery === 0 && <text key={m} x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" style={{ fill: "rgb(var(--slate-400))" }}>{m.slice(2)}</text>)}
         <path d={d} fill="none" stroke={color} strokeWidth="2" />
         {xy.map((p, i) => p && <circle key={i} cx={p[0]} cy={p[1]} r={hov === i ? 4 : 2.5} fill={color} />)}
         {hov !== null && xy[hov] && <g>
-          <line x1={xy[hov][0]} x2={xy[hov][0]} y1={padT} y2={h - padB} stroke="#cbd5e1" strokeDasharray="3 3" />
-          <rect x={Math.min(xy[hov][0] + 6, w - 96)} y={padT} width="90" height="28" rx="4" fill="#0f172a" opacity="0.85" />
-          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 12} fontSize="9" fill="#e2e8f0">{months[hov]}</text>
+          <line x1={xy[hov][0]} x2={xy[hov][0]} y1={padT} y2={h - padB} style={{ stroke: "rgb(var(--slate-300))" }} strokeDasharray="3 3" />
+          <rect x={Math.min(xy[hov][0] + 6, w - 96)} y={padT} width="90" height="28" rx="4" style={{ fill: "rgb(var(--slate-900))" }} opacity="0.85" />
+          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 12} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{months[hov]}</text>
           <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 23} fontSize="10" fontWeight="bold" fill="#fff">{fmt(vals[hov])}</text>
         </g>}
       </svg>
@@ -108,21 +108,21 @@ function StackedBars({ months, series, w = 340, h = 160 }) {
         {series.map(sr => <span key={sr.label} className="flex items-center gap-1 font-normal"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: sr.color }} />{sr.label}</span>)}
       </div>
       <svg viewBox={`0 0 ${w} ${h}`} className="w-full" onMouseLeave={() => setHov(null)}>
-        <text x={padL - 4} y={padT + 3} textAnchor="end" fontSize="9" fill="#94a3b8">{max}</text>
-        <line x1={padL} x2={w - padR} y1={h - padB} y2={h - padB} stroke="#e2e8f0" />
+        <text x={padL - 4} y={padT + 3} textAnchor="end" fontSize="9" style={{ fill: "rgb(var(--slate-400))" }}>{max}</text>
+        <line x1={padL} x2={w - padR} y1={h - padB} y2={h - padB} style={{ stroke: "rgb(var(--slate-200))" }} />
         {months.map((m, i) => {
           let y = h - padB;
           return (
             <g key={m} onMouseEnter={() => setHov(i)}>
               {series.map(sr => { const bh = H(sr.values[i] || 0); y -= bh;
                 return <rect key={sr.label} x={X(i) - bw / 2} y={y} width={bw} height={bh} fill={sr.color} opacity={hov === null || hov === i ? 1 : 0.4} />; })}
-              {i % lblEvery === 0 && <text x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" fill="#94a3b8">{m.slice(2)}</text>}
+              {i % lblEvery === 0 && <text x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" style={{ fill: "rgb(var(--slate-400))" }}>{m.slice(2)}</text>}
             </g>
           );
         })}
         {hov !== null && <g>
-          <rect x={Math.min(X(hov) + 6, w - 120)} y={padT} width="114" height={14 + series.length * 11} rx="4" fill="#0f172a" opacity="0.85" />
-          <text x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 11} fontSize="9" fill="#e2e8f0">{months[hov]} · {totals[hov]} accounts</text>
+          <rect x={Math.min(X(hov) + 6, w - 120)} y={padT} width="114" height={14 + series.length * 11} rx="4" style={{ fill: "rgb(var(--slate-900))" }} opacity="0.85" />
+          <text x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 11} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{months[hov]} · {totals[hov]} accounts</text>
           {series.map((sr, si) => <text key={sr.label} x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 22 + si * 11} fontSize="9" fill={sr.color}>{sr.label}: {sr.values[hov] || 0}</text>)}
         </g>}
       </svg>

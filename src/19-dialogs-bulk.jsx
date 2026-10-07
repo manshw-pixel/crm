@@ -34,7 +34,7 @@ function Modal({ label, onClose, initialFocusRef, children, ...rest }) {
     return () => window.removeEventListener("keydown", h, true);
   }, [onClose]);
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-scrim/40 pt-[15vh]" onClick={onClose}>
       <div ref={dlgRef} role="dialog" aria-modal="true" aria-label={label}
            className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()} {...rest}>
         {children}

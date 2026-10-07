@@ -25,3 +25,19 @@ test("nextChoice cycles light -> dark -> auto -> light", () => {
   assert.equal(nextChoice("auto"), "light");
   assert.equal(nextChoice("junk"), "light");
 });
+import { readFileSync, readdirSync } from "node:fs";
+const ROOT = new URL("../../", import.meta.url);
+const html = readFileSync(new URL("crm.html", ROOT), "utf8");
+const block = re => { const m = html.match(re); return m ? m[1] : ""; };
+const varsIn = css => new Set([...css.matchAll(/--([a-z]+(?:-\d+)?)\s*:/g)].map(m => m[1]));
+const usedShades = () => {
+  const src = readdirSync(new URL("src/", ROOT)).filter(f => f.endsWith(".jsx"))
+    .map(f => readFileSync(new URL("src/" + f, ROOT), "utf8")).join("\n");
+  const re = /\b(?:bg|text|border|ring|from|to|fill|stroke|divide|outline|accent|placeholder)-(white|scrim|(?:slate|gray|indigo|rose|amber|emerald|sky)-\d{2,3})\b/g;
+  return new Set([...src.matchAll(re)].map(m => m[1]));
+};
+test("every colour the app uses has a light variable", () => {
+  const light = varsIn(block(/:root\s*\{([\s\S]*?)\}/));
+  const missing = [...usedShades()].filter(s => !light.has(s));
+  assert.deepEqual(missing, []);
+});

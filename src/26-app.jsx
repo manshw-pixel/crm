@@ -53,7 +53,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     else if (e.key === "Enter" && list.length) { e.preventDefault(); list[cur].run(); onClose(); }
   };
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center bg-slate-900/40 pt-[15vh]" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-start justify-center bg-scrim/40 pt-[15vh]" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label="Command palette" className="nm w-full max-w-lg p-3" onClick={e => e.stopPropagation()}>
         <Input autoFocus placeholder="Type a view or account…" value={q}
           onChange={e => { setQ(e.target.value); setSel(0); }} onKeyDown={onKey} className="w-full" />
@@ -361,7 +361,7 @@ function App({ user, onBackToClients }) {
   const shownAlerts = showRead ? alerts : alerts.filter(a => !notifRead.has(a.id));
   return (
     <div className="flex min-h-screen">
-      {mobileNav && <div data-nav-backdrop className="fixed inset-0 z-20 bg-slate-900/30 lg:hidden" onClick={() => setMobileNav(false)} />}
+      {mobileNav && <div data-nav-backdrop className="fixed inset-0 z-20 bg-scrim/30 lg:hidden" onClick={() => setMobileNav(false)} />}
       <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${mobileNav ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 ${collapsed ? "w-14" : "w-52"}`}>
         <div className={`flex items-center pb-4 pt-5 ${collapsed ? "justify-center px-0" : "justify-between px-5"}`}>
           {!collapsed && <span className="text-lg font-extrabold tracking-tight text-slate-900">One<span className="text-indigo-600">Vio</span></span>}
