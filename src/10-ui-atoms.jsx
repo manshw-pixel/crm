@@ -115,7 +115,7 @@ const HScroll = ({ className = "", children }) => {
   return (
     <div className="relative">
       <div ref={ref} data-board onScroll={measure} className={className}>{children}</div>
-      {more > 0 && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 flex w-24 items-center justify-end bg-gradient-to-l from-[#f6f8fb] to-transparent">
+      {more > 0 && <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 flex w-24 items-center justify-end bg-gradient-to-l from-page to-transparent">
         <span data-board-more={more} className="mr-1 whitespace-nowrap rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 shadow-sm">→ {more} more</span>
       </div>}
     </div>

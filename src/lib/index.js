@@ -13,3 +13,4 @@ export * from "./ids.js";
 export * from "./audit.js";
 export * from "./reducer.js";
 export * from "./write-queue.js";
+export * from "./theme.js";
