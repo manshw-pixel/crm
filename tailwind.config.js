@@ -14,7 +14,7 @@ const family = f => Object.fromEntries(SHADES.map(s => [s, v(`${f}-${s}`)]));
 export default {
   content: ["./crm.html", "./src/**/*.jsx", "./src/lib/**/*.js"],
   theme: { extend: { colors: {
-    white: v("white"), scrim: v("scrim"),
+    white: v("white"), scrim: v("scrim"), page: v("page"),
     ...Object.fromEntries(["slate", "gray", "indigo", "rose", "amber", "emerald", "sky"].map(f => [f, family(f)])),
   } } },
   plugins: [],

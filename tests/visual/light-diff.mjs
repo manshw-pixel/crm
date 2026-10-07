@@ -8,7 +8,11 @@ import { mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { launch, seedAccount } from "../health/harness.mjs";
 
-const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+// Everything time-dependent is pinned to one instant. Seed dates used to come from the real
+// clock and the fixed clock was only set after the first load (and the data had already
+// rendered), so two captures of unchanged code minutes apart could differ.
+const NOW = new Date("2026-10-07T12:00:00Z");
+const day = n => new Date(NOW.getTime() + n * 864e5).toISOString().slice(0, 10);
 const A = [
   seedAccount({ id: "a1", name: "Acme Holdings", csm: "Test User", renewalDate: day(12), healthBand: "Red", inputs: { usage: 10, sentiment: 10, tickets: 8, nps: -60 } }),
   seedAccount({ id: "a2", name: "Beta Corp", csm: "Test User", renewalDate: day(40), contractStatus: "Churn risk" }),
@@ -34,7 +38,8 @@ async function capture(dir) {
     const { page, browser } = await launch(seed);
     try {
       await page.setViewportSize({ width: w, height: 900 });
-      await page.clock.setFixedTime(new Date("2026-10-07T12:00:00Z"));
+      await page.clock.setFixedTime(NOW);
+      await page.reload(); // re-render from the start under the fixed clock (the seed re-runs)
       await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
       await go(page);
       await page.waitForTimeout(800); // let layout, fonts and the skeleton fade settle

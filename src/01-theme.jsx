@@ -9,7 +9,8 @@ function applyTheme(choice) {
   const t = resolveTheme(choice, systemPrefersDark());
   const root = document.documentElement;
   root.classList.toggle("dark", t === "dark");
-  root.style.colorScheme = t;
+  // no inline colorScheme: the html.dark block sets color-scheme inside @media screen, so
+  // native controls go back to light when printing. An inline style would not be scoped.
   const m = document.querySelector('meta[name="theme-color"]');
   if (m) m.content = t === "dark" ? "#0b1120" : "#f6f8fb";
   return t;
@@ -26,7 +27,8 @@ function useTheme() {
     return () => mq.removeEventListener("change", onChange);
   }, [choice]);
   React.useEffect(() => {
-    const onStorage = e => { if (e.key === THEME_KEY) setChoice(normalizeChoice(e.newValue)); };
+    // key null = another tab ran localStorage.clear(): the stored choice is gone, so back to auto
+    const onStorage = e => { if (e.key === THEME_KEY || e.key === null) setChoice(normalizeChoice(e.key === null ? null : e.newValue)); };
     window.addEventListener("storage", onStorage);
     return () => window.removeEventListener("storage", onStorage);
   }, []);

@@ -85,7 +85,7 @@ function LineChart({ title, points, months, fmt, color = "#6366f1", w = 340, h =
           <line x1={xy[hov][0]} x2={xy[hov][0]} y1={padT} y2={h - padB} style={{ stroke: "rgb(var(--slate-300))" }} strokeDasharray="3 3" />
           <rect x={Math.min(xy[hov][0] + 6, w - 96)} y={padT} width="90" height="28" rx="4" style={{ fill: "rgb(var(--slate-900))" }} opacity="0.85" />
           <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 12} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{months[hov]}</text>
-          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 23} fontSize="10" fontWeight="bold" fill="#fff">{fmt(vals[hov])}</text>
+          <text x={Math.min(xy[hov][0] + 6, w - 96) + 6} y={padT + 23} fontSize="10" fontWeight="bold" style={{ fill: "rgb(var(--white))" }}>{fmt(vals[hov])}</text>
         </g>}
       </svg>
     </div>
@@ -123,7 +123,7 @@ function StackedBars({ months, series, w = 340, h = 160 }) {
         {hov !== null && <g>
           <rect x={Math.min(X(hov) + 6, w - 120)} y={padT} width="114" height={14 + series.length * 11} rx="4" style={{ fill: "rgb(var(--slate-900))" }} opacity="0.85" />
           <text x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 11} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{months[hov]} · {totals[hov]} accounts</text>
-          {series.map((sr, si) => <text key={sr.label} x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 22 + si * 11} fontSize="9" fill={sr.color}>{sr.label}: {sr.values[hov] || 0}</text>)}
+          {series.map((sr, si) => <text key={sr.label} x={Math.min(X(hov) + 6, w - 120) + 6} y={padT + 22 + si * 11} fontSize="9" fill={sr.color} data-tip-series={sr.label}>{sr.label}: {sr.values[hov] || 0}</text>)}
         </g>}
       </svg>
     </div>

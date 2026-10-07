@@ -52,5 +52,7 @@ test("the head script mirrors normalizeChoice/resolveTheme", () => {
   assert.match(head, /localStorage\.getItem\("onevio\.theme"\)/);
   assert.match(head, /c!=="light"&&c!=="dark"/);
   assert.match(head, /prefers-color-scheme: dark/);
+  // colour-scheme comes only from the screen-scoped html.dark block; an inline style would leak into print
+  assert.ok(!/colorScheme/.test(head), "head script must not set an inline colorScheme");
   assert.ok(head.indexOf("onevio.theme") < head.indexOf("<style>"), "theme script must run before the stylesheet");
 });
