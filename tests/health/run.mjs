@@ -65,6 +65,7 @@ import "./health-mix-csv.test.mjs";
 import "./link-safety.test.mjs";
 import "./csv-import-safety.test.mjs";
 import "./reducer-actions.test.mjs";
+import "./arr-bridge.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the

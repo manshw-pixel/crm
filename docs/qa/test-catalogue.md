@@ -72,6 +72,7 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 | REV-03 | AM book by handover cohort | ✅ | `am-book`, `transition-date` |
 | REV-04 | Cohort grid, churn analysis, renewal outcomes vs forecast | ✅ | `cohort`, `churn-analysis`, `renewal-outcomes` |
 | REV-05 | Money formatting incl. negatives and the K→M boundary | ✅ | `unit/money-format` |
+| REV-07 | ARR bridge: opening + new + expansion − contraction − churn = today; bridge NRR/GRR equal the tiles | ✅ | `arr-bridge` (unit + E2E) |
 | REV-06 | FX: unknown currency converts to 0 | ⚠️ by design, untested in UI | `unit/money` |
 
 ### 6. Renewals, tasks, QBRs, activities, contacts
@@ -133,6 +134,10 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
 
 - **analytics.test.mjs** — golden cases (see golden.json)
 - **csv.test.mjs** — golden cases (see golden.json)
+- **arr-bridge.test.mjs**
+  - bridge components and identity
+  - bridge NRR/GRR equal the dashboard tiles exactly
+  - empty book
 - **csv-injection.test.mjs**
   - csvCell neutralises formula-leading text
   - csvCell leaves numbers (incl. negatives) and plain text untouched
@@ -465,6 +470,9 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
 - **reducer.test.mjs**
   - SEED_HEALTH_PLAYBOOK records event, band, and tasks
   - SEED_HEALTH_PLAYBOOK with empty items still records transition
+- **arr-bridge.test.mjs**
+  - ARR bridge shows new customers as new business and adds up to today's ARR
+  - phone: ARR bridge fits the screen
 - **reducer-actions.test.mjs**
   - reducer: contacts add, edit, delete
   - reducer: activities add/edit/bulk-delete, and a QBR schedules the next one
