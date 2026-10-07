@@ -2,8 +2,10 @@ import { DAY, iso } from "./dates.js";
 import { toUSD } from "./money.js";
 /* trailing-12-month revenue retention (USD) from churn events, renewal deltas and ARR events */
 // Shared by retentionStats and arrBridge so the bridge's NRR/GRR equal the tiles exactly.
-function retentionParts(accounts, rates) {
-  const yearAgo = Date.now() - 365 * DAY;
+// `now` (ISO date or ms) makes the window "as of" a date; omitted = the real clock.
+const nowMs = now => now === undefined ? Date.now() : typeof now === "number" ? now : Date.parse(String(now).slice(0, 10));
+function retentionParts(accounts, rates, now) {
+  const yearAgo = nowMs(now) - 365 * DAY;
   const moves = list => {
     let churnedARR = 0, expansion = 0, contraction = 0;
     list.forEach(a => {
@@ -40,8 +42,8 @@ function retentionParts(accounts, rates) {
     grr: base > 0 ? (base - c.churnedARR - c.contraction) / base : null,
     nrr: base > 0 ? (base - c.churnedARR - c.contraction + c.expansion) / base : null };
 }
-export function retentionStats(accounts, rates) {
-  const p = retentionParts(accounts, rates);
+export function retentionStats(accounts, rates, now) {
+  const p = retentionParts(accounts, rates, now);
   return { ...p.totals, grr: p.grr, nrr: p.nrr,
     lost: accounts.filter(a => a.churn && new Date(a.churn.date).getTime() >= p.yearAgo).length };
 }
@@ -51,8 +53,8 @@ export function retentionStats(accounts, rates) {
    A customer signed inside the window is new business at today's ARR (its first-year
    upsells included, the usual convention); one signed and lost inside the window nets to 0
    and is counted in newLost. Closing is today's ARR across every live account. */
-export function arrBridge(accounts, rates) {
-  const p = retentionParts(accounts, rates);
+export function arrBridge(accounts, rates, now) {
+  const p = retentionParts(accounts, rates, now);
   const live = p.fresh.filter(a => !a.churn);
   const newARR = live.reduce((s, a) => s + a.arrUSD, 0);
   return { opening: p.base, newARR, newLogos: p.fresh.length, newLost: p.fresh.length - live.length,
@@ -111,8 +113,8 @@ export function arrAsOf(account, isoDate, rates) {
 // An account that started after the baseline has no prior close, so a percentage would be
 // meaningless: it is flagged `isNew` and left out of the maths. New logos belong to new
 // business, not to retention.
-export function accountRetention(account, rates, now = iso(Date.now())) {
-  const baselineDate = lastCompletedDecember(now);
+export function accountRetention(account, rates, now) {
+  const baselineDate = lastCompletedDecember(now ?? iso(Date.now()));
   const baselineKey = `Dec'${baselineDate.slice(2, 4)}`;
   const isNew = String(account.startDate || "").slice(0, 10) > baselineDate;
   // A churned account carries no ARR today -- `arr` still holds its pre-churn value,
@@ -122,7 +124,8 @@ export function accountRetention(account, rates, now = iso(Date.now())) {
     return { nrr: null, grr: null, baselineARR: null, currentARR, delta: null, pct: null, isNew: true, baselineKey };
   }
   const baselineARR = arrAsOf(account, baselineDate, rates);
-  const { nrr, grr } = retentionStats([account], rates);
+  // same `now` as the baseline above -- this used to read the real clock
+  const { nrr, grr } = retentionStats([account], rates, now);
   const delta = currentARR - baselineARR;
   return { nrr, grr, baselineARR, currentARR, delta,
     pct: baselineARR > 0 ? (delta / baselineARR) * 100 : null,

@@ -61,6 +61,7 @@ const writeQueue = (() => {
   };
 })();
 
+const accountNoBackfilled = new Set();
 async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
@@ -73,9 +74,14 @@ async function fetchAll() {
   ac.forEach(a => { if (!a.currency) a.currency = "USD"; });
   // one-time migration: give every account a stable numeric account # (used by CSV import to dedupe)
   let maxNo = ac.reduce((m, a) => Math.max(m, +a.accountNo || 0), 0);
+  // Write ONLY the number, through the queue: this was a raw whole-row upsert -- no retry,
+  // and it could overwrite a teammate's concurrent edit with this client's copy. Attempted
+  // once per row per session: a give-up refetches, and re-queuing here would then loop.
   ac.filter(a => !a.accountNo).forEach(a => {
     a.accountNo = ++maxNo;
-    sb.from("accounts").upsert({ id: a.id, data: a, updated_at: new Date().toISOString() }).then(({ error }) => error && dbError("accounts", error));
+    if (accountNoBackfilled.has(a.id)) return;
+    accountNoBackfilled.add(a.id);
+    writeQueue.enqueue({ table: "accounts", rowId: a.id, patch: { accountNo: a.accountNo }, appends: {} });
   });
   const saved = (se && se[0]) || {};
   return {

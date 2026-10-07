@@ -29241,8 +29241,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": null,
-    "grr": null,
+    "nrr": 1,
+    "grr": 1,
     "baselineARR": 25200,
     "currentARR": 25200,
     "delta": 0,
@@ -29411,8 +29411,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": null,
-    "grr": null,
+    "nrr": 1,
+    "grr": 1,
     "baselineARR": 30000,
     "currentARR": 30000,
     "delta": 0,
@@ -29942,7 +29942,7 @@
     "2027-02-01"
    ],
    {
-    "nrr": 1.3333333333333333,
+    "nrr": 1.1428571428571428,
     "grr": 1,
     "baselineARR": 96000,
     "currentARR": 96000,
@@ -30213,8 +30213,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": 0.8,
-    "grr": 0.8,
+    "nrr": 1,
+    "grr": 1,
     "baselineARR": 20000,
     "currentARR": 20000,
     "delta": 0,
@@ -30350,8 +30350,8 @@
     "2027-02-01"
    ],
    {
-    "nrr": 0,
-    "grr": 0,
+    "nrr": null,
+    "grr": null,
     "baselineARR": 0,
     "currentARR": 0,
     "delta": 0,

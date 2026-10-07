@@ -136,7 +136,10 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
     for (const [t, m] of Object.entries(window.__db)) out[t] = [...m.values()];
     return out;
   };
-  const rowsOf = t => [...tbl(t).values()];
+  // Deep copies, as a real read returns fresh JSON. Returning the stored objects let the app
+  // mutate the "database" in place (fetchAll's accountNo backfill did), so a reload saw
+  // writes that never went through merge_row.
+  const rowsOf = t => [...tbl(t).values()].map(r => JSON.parse(JSON.stringify(r)));
   // Mirrors merge_row/append_dedup (supabase-setup.sql) against the in-memory row store, so
   // a reload sees exactly what the real function would have persisted. Rows are stored as
   // { id, data, updated_at }; the merge always targets the data column.
