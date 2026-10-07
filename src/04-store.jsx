@@ -1,5 +1,4 @@
 /* ------------------------------ store (Supabase) ------------------------------ */
-const ENTITY_TABLES = ["accounts", "contacts", "activities", "tasks", "opportunities"];
 const dbError = (where, error) => {
   console.error(where, error);
   reportError("write_failed", error, { table: where, code: error && error.code });

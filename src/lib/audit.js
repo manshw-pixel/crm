@@ -1,7 +1,10 @@
 /* ------------------------------ audit trail ------------------------------ */
-const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage", "currency"];
+import { uid } from "./ids.js";
+import { iso } from "./dates.js";
+
+export const AUDIT_FIELDS = ["arr", "renewalDate", "csm", "tier", "contractStatus", "renewalStage", "currency"];
 /* one entry per audited field the patch really changes (numbers normalized) */
-function auditChanges(a, patch, by, source) {
+export function auditChanges(a, patch, by, source) {
   const out = [];
   AUDIT_FIELDS.forEach(f => {
     if (!(f in patch)) return;
@@ -11,12 +14,12 @@ function auditChanges(a, patch, by, source) {
   });
   return out;
 }
-const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit || []), ...entries] } : a;
+export const withAudit = (a, entries) => entries.length ? { ...a, audit: [...(a.audit || []), ...entries] } : a;
 
 /* Prior-state capture for undo. `ids` are account ids; the snapshot also carries every
    cascaded row DELETE_ACCOUNT would remove, plus the original parentId of each sub whose
    parent is being deleted (DELETE_ACCOUNT nulls those out). */
-function snapshotFor(state, ids) {
+export function snapshotFor(state, ids) {
   const set = new Set(ids);
   const touches = r => set.has(r.accountId);
   const parentIds = {};
@@ -30,4 +33,3 @@ function snapshotFor(state, ids) {
     parentIds,
   };
 }
-
