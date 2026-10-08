@@ -303,10 +303,11 @@ The "Book a demo" form on onevio.in captures lead details and logs them as demo 
      - `SUPABASE_URL` (text), `SUPABASE_ANON_KEY` (secret) — from your Supabase project.
      - `TURNSTILE_SECRET` (secret) — the secret key from step 3.
      - `DEMO_FORM_SECRET` (secret) — the same long random string you set in step 2.
-     - (Optional) `ALLOWED_ORIGINS` (text) — space- or comma-separated hostnames to accept
-       requests from; defaults to `https://onevio.in,https://www.onevio.in` if not set.
-6. Bind the Worker to the domain:
-   - Cloudflare → **onevio.in domain → Workers Routes** → create a route `demo.onevio.in/*` →
-     choose the Worker you created in step 4.
-7. Test: submit the live form at `https://demo.onevio.in/` → check the **Clients console** (platform
-   admin's landing page) under "Demo requests" and the admin's inbox for the email alert.
+     - (Optional) `ALLOWED_ORIGINS` (text) — comma-separated origins including the scheme, e.g.
+       `https://onevio.in,https://www.onevio.in`; defaults to exactly those two when unset.
+6. Bind the Worker to the domain with a **Custom Domain**:
+   - Cloudflare dashboard → **Workers & Pages** → the demo-form Worker → **Settings → Domains &
+     Routes → Add → Custom Domain** → `demo.onevio.in`. Cloudflare creates the DNS record and
+     certificate automatically (the onevio.in zone must be on this Cloudflare account, which it is).
+7. Test: submit the form at `https://onevio.in/#demo` → the request should appear under "Demo
+   requests" on the Clients console, and as an email if Brevo is configured.
