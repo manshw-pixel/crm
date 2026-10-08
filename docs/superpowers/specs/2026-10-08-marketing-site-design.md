@@ -175,7 +175,8 @@ sold or shared, and the contact address for deletion. `404.html` links home and 
 
 ## Testing
 - **RLS tests** (`tests/rls/demo-requests.test.mjs`):
-  - anon can submit and cannot select;
+  - a submit with no secret or a wrong secret is refused (positive control: the right secret succeeds);
+  - anon cannot select;
   - the honeypot stores nothing;
   - each validation rule rejects;
   - the rate limit triggers;
