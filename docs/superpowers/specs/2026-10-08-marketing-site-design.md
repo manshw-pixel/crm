@@ -1,0 +1,326 @@
+# onevio.in marketing site — design
+
+Date: 2026-10-08
+
+## Goal
+A public website at **onevio.in** that sells OneVio CRM to B2B companies' customer success
+teams. It has two jobs:
+- Turn visitors into **demo requests**.
+- Send existing customers to **Login** (`https://crm.onevio.in/crm.html`).
+
+## Decisions (agreed with user)
+- **Audience:** companies buying a CS platform (option A). The primary action is Book a demo; the secondary is Login.
+- **Demo requests** go into Supabase. They are listed on the platform admin's Clients console, and you get an email via the existing Brevo config (option A).
+- **Hosting:** a new GitHub repo, `onevio-site`, on GitHub Pages. DNS stays in Cloudflare (option A).
+- **No pricing section** (option C).
+- **Honesty rule:** every claim maps to a shipped feature. There are no invented customer logos,
+  testimonials, user counts or uptime figures. Screenshots use **demo data only**, never
+  production data.
+
+## Contact address
+`manshw@gmail.com` is the contact address shown on the site (form error state, footer, privacy page) and the inbox demo-request emails go to.
+
+## Components and where they live
+
+| Unit | Repo | Responsibility |
+|---|---|---|
+| `demo_requests` table + `submit_demo_request()` + `list_demo_requests()` | `crm` (supabase-setup.sql) | Store requests; public can only submit |
+| Request email | `crm` (email-alerts.sql) | One Brevo email per request to the platform admin(s) |
+| Demo requests list | `crm` (src/25-auth-admin.jsx, Clients console) | Platform admin reads requests |
+| Screenshot script | `crm` (`tests/site-shots.mjs`) | Render the app with a rich demo dataset and save PNGs |
+| Static site | new `onevio-site` repo | The pages, assets, form JS, Pages deploy |
+| Demo-form Worker | `crm` (`workers/demo-form/`) | Verify Cloudflare Turnstile, then call `submit_demo_request` with the shared secret |
+
+The site never ships CRM code, and never calls the database itself. The form posts to the demo-form
+Worker.
+
+## Captcha: Cloudflare Turnstile (agreed with user)
+**Flow:**
+1. The site loads the Turnstile widget (`https://challenges.cloudflare.com/turnstile/v0/api.js`),
+   which needs the **site key** (public).
+2. The form POSTs JSON `{name, company, email, team_size, message, website, token}` to the Worker
+   at `https://demo.onevio.in/` (a Worker custom domain).
+3. The Worker:
+   - Accepts only `POST` with `Origin` `https://onevio.in` or `https://www.onevio.in`. It answers the CORS preflight for those origins only.
+   - Rejects bodies over 8 KB.
+   - Verifies `token` at `https://challenges.cloudflare.com/turnstile/v0/siteverify` with the
+     **secret key** (Worker secret `TURNSTILE_SECRET`) and the visitor IP (`CF-Connecting-IP`).
+     A failed check returns 400 `{ok:false,error:"captcha"}`.
+   - On success, calls `submit_demo_request` with the anon key plus `p_secret` =
+     Worker secret `DEMO_FORM_SECRET`. This is the same shared-secret pattern as the touchpoints
+     Worker.
+   - Maps the RPC result to `{ok:true}`, or to `{ok:false,error:"<message>"}` with a safe, user-facing message. Secrets never appear in responses or logs.
+
+**Database side:** `submit_demo_request` gains `p_secret` and refuses unless it equals
+`demo_form_config.secret`. That's a one-row table with RLS on and no policies, set once by the operator in SQL. So
+calling the RPC directly with the public anon key, which skips the captcha, is refused.
+
+**Worker config:** vars `SUPABASE_URL`, `SUPABASE_ANON_KEY`; secrets `TURNSTILE_SECRET`,
+`DEMO_FORM_SECRET`. Same build/test layout as `workers/touchpoints` (esbuild bundle, node unit
+tests with a mocked fetch).
+
+**Failure behaviour:** if the widget fails to load or the Worker is unreachable, the form shows its
+error state with the contact email. The site never falls back to an unverified submit.
+
+**Privacy:** Turnstile sets no tracking cookies. The privacy page names Cloudflare Turnstile as the
+spam check.
+
+**User setup steps** (walked through in the plan):
+1. Cloudflare dashboard → Turnstile → add a widget for `onevio.in` and `www.onevio.in`, then copy the site key and the secret key.
+2. Deploy the Worker with the two secrets.
+3. Attach the custom domain `demo.onevio.in`.
+4. Run one SQL line to set `demo_form_config.secret`.
+
+## Site structure (onevio-site)
+**Pages** (each a real URL, served as `/<slug>/index.html` so URLs have no `.html`):
+- `/`: home
+- `/customer-health-score/`
+- `/renewal-management/`
+- `/nrr-grr-reporting/`
+- `/license-deployment-tracking/`
+- `/nrr-calculator/`
+- `/privacy/`
+- `404.html`
+
+**Other files:**
+- `assets/`: screenshots as WebP with PNG fallback, favicon, OG images
+- `site.css`, `demo-form.js`, `nrr-calculator.js`
+- `CNAME` (`onevio.in`), `robots.txt`, `sitemap.xml`
+
+**Shared header, footer and the Book-a-demo block:** these are repeated as static HTML on every page.
+A small Node script in the repo, `scripts/assemble.mjs`, stamps the shared partials into each page
+from `partials/`. It runs before commit; its output is the committed HTML, so Pages needs no build.
+
+The site is hand-written HTML/CSS with no framework. External dependencies are Google Fonts and
+the Turnstile script, the latter on pages with the form only.
+
+Sections of `index.html`, in order:
+1. **Header (sticky):**
+   - OneVio logo: the CRM's "OV" mark (the favicon SVG) plus the wordmark "One" + "Vio", Inter 800, with "Vio" in indigo `#4f46e5`, exactly as in the CRM sidebar.
+   - Links: Features (a dropdown of the four feature pages plus "All features" anchor), NRR calculator, How it works, Book a demo.
+   - A **Login** button linking to `https://crm.onevio.in/crm.html`.
+   - On phones, these collapse into a menu button.
+2. **Hero:**
+   - Eyebrow: `Customer success platform`.
+   - H1: `See every renewal coming. Keep every customer.`
+   - Sub-line: `Customer success software with health scores, renewal playbooks and NRR reporting, built for B2B SaaS teams.`
+   - Buttons: **Book a demo** (to `#demo`) and **Login**.
+   - The dashboard screenshot in a browser frame.
+3. **Features:** six alternating screenshot/text blocks. Each has a headline, 2–3 sentences and 3 bullets drawn from real behaviour:
+   1. **Health scores and alerts**: weighted health score, risk bands, the notification bell.
+   2. **Renewals and playbooks**: renewals pipeline and stages, auto-created playbook tasks in the 90-day window, QBR nudges.
+   3. **Retention you can defend**: ARR bridge, NRR/GRR from existing customers only, churn analysis, cohorts.
+   4. **Every account in one place**: account page, contacts, activities, documents, email touchpoints logged by forwarding.
+   5. **Team workflow**: tasks by owner, My book vs All, bulk actions, CSV import/export.
+   6. **License deployment**: total vs deployed, lowest-deployment accounts.
+
+   Each block:
+   - a small catchy label (e.g. `Know which accounts need you this week`);
+   - an H2 phrased as people search (e.g. `Customer health scores that explain themselves`);
+   - a "Learn more →" link to its feature page, where one exists.
+3b. **Everything on your dashboard:** H2 `One screen for the whole book of business.` A 12-tile grid
+   in three labelled rows, each tile a real dashboard card with a CSS-drawn mini visual:
+   - **For leadership:** Total ARR in USD; NRR and GRR; Quarterly trends; Cohorts and churn analysis.
+   - **For CS managers:** Health distribution; Renewals due; Expansion pipeline; Account manager book.
+   - **For every CSM:** Alerts and flags; Tasks due this week; License deployment; Recently declined.
+
+   The grid uses icons as inline SVG, not emoji.
+4. **How it works:** three steps.
+   1. Import accounts from CSV or your spreadsheet.
+   2. Your CSMs work renewals and tasks.
+   3. Leadership tracks ARR, NRR and GRR.
+5. **Built for teams:** separate workspace per company with data isolation enforced in the
+   database; admin and user roles; disable a user instantly; daily email digests; dark mode;
+   works on phones.
+6. **Book a demo (`#demo`):** a form with name*, company*, work email*, team size (select: 1–5, 6–20,
+   21–50, 50+), and an optional message.
+   - **On success:** the form is replaced by `Thanks — we'll be in touch within one working day.`
+   - **On failure:** an inline error with the contact email shown as selectable text.
+   - **Left column:** H2 `See OneVio with your own renewals.`, a lead line, and bullets.
+     **The bullets "Bring a sample CSV and we'll load it live" and "No commitment, no card" ship
+     ONLY if the user confirms they are true.** Otherwise the replacement is `A 30-minute walkthrough
+     with a CS lead` / `Your own separate workspace if you go ahead`.
+   - The Turnstile widget sits above the submit button, `Request a demo`.
+6b. **FAQ** (H2 `Questions teams ask`): 8 questions, with answers taken from real behaviour:
+   1. What is a customer health score?
+   2. How is NRR different from GRR?
+   3. Can I import accounts from Excel or CSV?
+   4. Does OneVio support INR and other currencies?
+   5. Is each company's data kept separate?
+   6. Can I disable a user's access immediately?
+   7. Does it work on mobile?
+   8. How do I get started?
+
+   Rendered as `<details>` elements, so the page works without JS, and mirrored in FAQPage JSON-LD.
+7. **Footer:**
+   - Wordmark and Login.
+   - Links to the four feature pages, the NRR calculator and Privacy.
+   - Contact email (text), and `© 2026 OneVio`.
+
+`privacy.html` states what the form collects, why, where it's stored (Supabase), that nothing is
+sold or shared, and the contact address for deletion. `404.html` links home and to Login.
+
+**Visual direction (chosen: A, "Clear daylight", mocked up in .superpowers/brainstorm):**
+- **Background and accent:** a cool off-white `#f5f6fa` background; indigo `#4f46e5` accent (the CRM's).
+- **Type:**
+  - Headlines in Bricolage Grotesque 800.
+  - Body text in IBM Plex Sans.
+  - The logo wordmark in Inter 800, to match the CRM.
+- **Hero:** centred, with the product screenshot rising out of the page inside a browser frame showing `crm.onevio.in`.
+- **Feature blocks:** alternate text-left/screenshot-right, then the reverse. Each has an indigo eyebrow and tick bullets.
+- **Book a demo:** a white card, form on the right.
+- It follows the CRM's identity (indigo accent, the same wordmark) so Login feels continuous.
+- Light and dark themes via `prefers-color-scheme`.
+- Responsive down to 360px with no horizontal scroll.
+- Respects `prefers-reduced-motion`.
+- **Quality bar:** Lighthouse ≥ 90 for performance, accessibility, best practices and SEO on mobile. Pages have meta description, canonical, Open Graph and Twitter tags, plus the favicon.
+
+## SEO (agreed with user)
+
+**Target searches (realistic first wins):**
+- `OneVio`, `OneVio CRM`
+- customer success software India / for SaaS
+- renewal tracking / renewal management software
+- NRR calculator; NRR vs GRR; ARR bridge
+- customer health score template / model
+- license utilisation tracking / shelfware
+
+**Every page has:**
+- a unique `<title>` of 50–60 characters and a meta description of 140–160 characters;
+- one H1;
+- H2s that use the page's target phrase naturally;
+- a canonical URL, Open Graph and Twitter tags, and its own OG image (1200×630, built from the screenshot);
+- `lang="en"`;
+- breadcrumb JSON-LD on sub-pages.
+
+**Home `<title>`:** `OneVio: Customer Success Software for Renewals, Health Scores & NRR`
+
+**Home meta description:** `Track account health, catch at-risk renewals early and report NRR, GRR and ARR with confidence. Customer success platform for B2B SaaS teams in India and beyond.`
+
+**Structured data (JSON-LD):**
+- **Home:** `Organization` (name, url, logo, contactPoint email), `SoftwareApplication`
+  (applicationCategory BusinessApplication, operatingSystem Web, url), and `FAQPage`.
+- **Feature pages:** `SoftwareApplication` plus `BreadcrumbList`.
+- **Calculator:** `WebApplication` plus `BreadcrumbList`.
+- **Never:** no `aggregateRating` and no reviews. None exist, and inventing them is against Google's rules and the honesty rule.
+
+**Images:**
+- Descriptive file names, e.g. `customer-health-score-dashboard.webp`.
+- Descriptive `alt` text.
+- Explicit `width`/`height`.
+- `loading="lazy"` below the fold; the hero image is eager with `fetchpriority="high"`.
+
+**Speed:**
+- Fonts use `display=swap`, preconnect to fonts.gstatic.com, and at most 2 families/4 weights per page.
+- No JS on the page except the form, the calculator and the mobile menu.
+- **Budget:** Lighthouse mobile ≥ 90 in all four categories on every page, and ≥ 95 SEO.
+
+**Crawling:**
+- `robots.txt` allows all and points to the sitemap.
+- `sitemap.xml` lists every page with `lastmod`.
+- Internal links: every feature page links to the home page, the other feature pages, the calculator and `#demo`. The home page links to all of them.
+
+**Feature pages** (`/customer-health-score/`, `/renewal-management/`, `/nrr-grr-reporting/`,
+`/license-deployment-tracking/`), each of 600–900 words of real, specific content:
+- H1 with the target phrase (e.g. `Customer health score software that explains every score`).
+- An intro, then 3–4 H2 sections: what it is / why it matters, how OneVio does it (with 1–2 screenshots), how the
+  number is calculated (true to the app's logic), and who uses it.
+- A short FAQ of 3–4 questions, with FAQPage JSON-LD.
+- The shared Book-a-demo block and footer.
+- Copy describes the actual behaviour. For example, the health score page explains the real inputs (usage,
+  sentiment, support tickets, NPS, recency) and weights as configured in the app, and the NRR page uses the
+  app's real definitions (existing customers = start date older than 365 days).
+
+**NRR calculator (`/nrr-calculator/`):**
+- **Inputs:** starting ARR, expansion, contraction, churn (any currency, symbol picker: ₹, $, €, £).
+- **Outputs, instantly:** NRR %, GRR %, ending ARR, and a mini ARR bridge bar chart drawn in SVG.
+  - `NRR = (start + expansion − contraction − churn) / start`
+  - `GRR = (start − contraction − churn) / start`, capped at 100%
+- **Validation:** starting ARR > 0, others ≥ 0; contraction + churn may not exceed start (shown inline).
+- **Copy:** 500–700 words below the tool (how to read NRR vs GRR, benchmarks phrased as general ranges with no fake
+  sources, and how OneVio calculates them automatically), plus a FAQ and a "Get these numbers automatically → Book a demo" block.
+- **Code:** the logic lives in a pure function in `nrr-calculator.js`, unit-tested with `node:test`.
+- **Data:** nothing the visitor types leaves the browser. There are no network calls.
+
+**Off-site setup (user does this; listed in the plan's handover):**
+- Google Search Console: verify `onevio.in` via a Cloudflare TXT record and submit the sitemap.
+- Bing Webmaster Tools: import from Search Console.
+- LinkedIn company page linking to onevio.in.
+- Free listings on G2, Capterra, GetApp and Product Hunt.
+
+## Demo requests (crm repo)
+
+**Table `public.demo_requests`:**
+- Columns: `id uuid pk default gen_random_uuid()`, `created_at timestamptz default now()`,
+  `name text not null`, `company text not null`, `email text not null`, `team_size text`,
+  `message text`, `source text default 'onevio.in'`.
+- RLS is enabled with **no policies**, so nothing is readable or writable directly by anon or authenticated.
+
+**`submit_demo_request(p_name, p_company, p_email, p_team_size, p_message, p_website)`:**
+- Security definer, executable by `anon` and `authenticated`, but useless without the shared secret held only by the Worker.
+- **Honeypot:** `p_website` is a hidden field. If it's non-empty, return `ok` and store nothing.
+- **Validation:** trims all fields. Name and company 1–120 characters; email passes `valid_email()` and is
+  ≤ 200 characters; team_size is one of the four options or null; message ≤ 2000 characters.
+  Violations raise `submit_demo_request: <field> ...`.
+- **Rate limit:** at most 3 requests per email per 24h, and 200 per 24h overall. Beyond that,
+  raise `Too many requests — please email us instead.`
+- Requires `p_secret` = `demo_form_config.secret` (see Captcha); refuses otherwise.
+- Inserts the row, then calls the request email (below) when email alerts are installed.
+- Returns `'ok'`.
+
+**`list_demo_requests()`:** platform admin only. Returns rows newest first, limited to 200.
+
+**Email** (in `email-alerts.sql`, so it's absent when alerts aren't installed):
+- `notify_demo_request(p_id uuid)` sends one Brevo email via the existing `alert_post` and
+  `alert_config` (api_key, from_email, from_name, api_base) to `manshw@gmail.com` (the platform admin's sign-in email; recipients are read from platform-admin profiles, so it follows that account).
+- Subject: `New demo request: <company>`.
+- Body: the escaped fields, using `html_escape`.
+- A missing key or config means it silently skips: the request is still stored, and the console is the source of truth.
+- `submit_demo_request` calls it via `to_regprocedure` / dynamic `perform`, so the setup file doesn't depend on email-alerts.sql.
+
+**Console:**
+- On the Clients console, a **Demo requests (N)** card below Clients lists date, name, company,
+  email (selectable), team size and message.
+- New since the last visit are highlighted, using a per-viewer `localStorage` last-seen timestamp.
+
+## Screenshots (crm repo, `tests/site-shots.mjs`)
+- Uses `buildMockedHtml` from `tests/health/harness.mjs` with a **rich fictional dataset**:
+  - about 25 accounts with fictional company names, across tiers, CSMs, currencies and renewal dates;
+  - 12 monthly snapshots so the trends charts render;
+  - tasks, opportunities, activities, contacts, and license figures;
+  - one org named "Acme Analytics".
+- Playwright opens the dashboard, renewals, account page, tasks and the analytics section (expanded). It captures at 1440×900 with deviceScaleFactor 2 in light mode, plus a dark dashboard shot.
+- Output: `site-shots/*.png`, which is git-ignored in crm and copied into `onevio-site/assets/` by the plan.
+- Re-runnable whenever the app changes.
+
+## Deploy (onevio-site)
+- GitHub repo `manshw-pixel/onevio-site` (public, like `crm`).
+- Pages serves from the default branch root, and `CNAME` contains `onevio.in`.
+- A workflow runs html-validate, checks links, and checks that the Login URL and the RPC URL exist.
+- **DNS** (user does this in Cloudflare):
+  - Apex `onevio.in`: four A records, `185.199.108.153`, `185.199.109.153`, `185.199.110.153`, `185.199.111.153`. Set them to **DNS only** (grey cloud) so GitHub can issue HTTPS.
+  - `www`: CNAME to `manshw-pixel.github.io`.
+  - Then tick "Enforce HTTPS" in the repo's Pages settings.
+
+## Testing
+- **RLS tests** (`tests/rls/demo-requests.test.mjs`):
+  - a submit with no secret or a wrong secret is refused (positive control: the right secret succeeds);
+  - anon cannot select;
+  - the honeypot stores nothing;
+  - each validation rule rejects;
+  - the rate limit triggers;
+  - only the platform admin can list;
+  - an org admin cannot.
+  - Positive controls throughout.
+- **Health tests:** the Demo requests card renders the rows and the "new" highlight; a non-platform admin never calls `list_demo_requests`.
+- **Worker unit tests** (`tests/worker/demo-form.test.mjs`, mocked fetch): bad origin refused; preflight; oversized body; captcha failure stops before any RPC call; success passes the secret and form fields; RPC refusal mapped to a safe message; secrets never in responses.
+- **SEO checks (site test):** every page has exactly one H1, a unique title and description, a canonical, valid JSON-LD (parses; required fields present), images with alt/width/height; every sitemap URL resolves; no broken internal links.
+- **Calculator unit tests:** NRR/GRR formulas, GRR cap, validation cases, rounding.
+- **Site:**
+  - A Playwright check against the static files, served locally: the Login href is exact, every anchor target exists, no horizontal scroll at 360px, and both themes render.
+  - The form posts the right RPC args with the mocked fetch, shows the success state, and shows the error state.
+- **Manual after DNS:** https://onevio.in loads with a valid certificate; a real demo request appears on the console and arrives by email.
+
+## Out of scope
+Blog/guides (planned as a later piece of work), pricing, analytics/tracking scripts, cookie banner (no tracking cookies are set), multi-language,
+self-serve sign-up.

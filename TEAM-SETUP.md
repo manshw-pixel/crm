@@ -280,3 +280,34 @@ DMARC for the sender's domain, so a stranger cannot file by forging a CSM's From
 must send from a provider that signs mail (Gmail / Google Workspace, Microsoft 365, etc.), and
 any company domain CSMs send from should publish SPF, DKIM and DMARC records. A message that
 fails is ignored without a reply and shows as `rejected_sender` in `ingest_log`.
+
+## Website demo form (onevio.in)
+
+The "Book a demo" form on onevio.in captures lead details and logs them as demo requests in the Clients console, with an email alert to the platform admin.
+
+**Setup (once):**
+1. Run `supabase-setup.sql` in the Supabase SQL editor (creating the `demo_form_config` table
+   and `submit_demo_request` RPC). Then run `email-alerts.sql` so demo requests trigger emails
+   to the platform admin's sign-in email address.
+2. Set the shared secret:
+   `update public.demo_form_config set secret = '<long random string>' where id = 1;`
+3. Cloudflare → **Turnstile → Add widget** → enter hostnames `onevio.in` and `www.onevio.in` →
+   copy the **site key** (public; goes on the website) and **secret key**.
+4. Build and deploy the Worker:
+   - Run `npm run build:demo-worker` — it outputs `workers/demo-form/dist/worker.js`.
+   - Cloudflare → **Workers & Pages → Create → Worker** → name it (e.g. `onevio-demo-form`) →
+     Deploy → Edit code → replace everything with the contents of `workers/demo-form/dist/worker.js`
+     → Deploy.
+5. Configure Worker environment:
+   - Worker → **Settings → Variables and Secrets**:
+     - `SUPABASE_URL` (text), `SUPABASE_ANON_KEY` (secret) — from your Supabase project.
+     - `TURNSTILE_SECRET` (secret) — the secret key from step 3.
+     - `DEMO_FORM_SECRET` (secret) — the same long random string you set in step 2.
+     - (Optional) `ALLOWED_ORIGINS` (text) — comma-separated origins including the scheme, e.g.
+       `https://onevio.in,https://www.onevio.in`; defaults to exactly those two when unset.
+6. Bind the Worker to the domain with a **Custom Domain**:
+   - Cloudflare dashboard → **Workers & Pages** → the demo-form Worker → **Settings → Domains &
+     Routes → Add → Custom Domain** → `demo.onevio.in`. Cloudflare creates the DNS record and
+     certificate automatically (the onevio.in zone must be on this Cloudflare account, which it is).
+7. Test: submit the form at `https://onevio.in/#demo` → the request should appear under "Demo
+   requests" on the Clients console, and as an email if Brevo is configured.

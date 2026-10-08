@@ -249,3 +249,68 @@ test("Edit limits calls set_org_limits with the new values", async () => {
   assert(call.args.p_org_id === "org-b" && call.args.p_max_users === null && call.args.p_max_accounts === 25, JSON.stringify(call.args));
   await browser.close();
 });
+
+const seedDemos = (extra = "") => seedConsole(`window.__seedDemoRequests = [
+  { id: "d2", created_at: "2026-10-07T10:00:00Z", name: "Nina Newer", company: "NewCo", email: "nina@newco.test", team_size: "11-50", message: "Would love a walkthrough." },
+  { id: "d1", created_at: "2026-10-01T10:00:00Z", name: "Olga Older", company: "OldCo", email: "olga@oldco.test", team_size: "1-10", message: "Pricing question." }];
+  ${extra}`);
+
+test("Demo requests card lists each request; only rows newer than the last-seen time are marked new", async () => {
+  const { page, browser } = await launch(seedDemos(`try { localStorage.setItem("onevio.demoSeen", "2026-10-05T00:00:00Z"); } catch {}`));
+  await page.waitForSelector("text=Demo requests (2)", { timeout: 15000 });
+  const txt = await page.textContent("[data-client-console]");
+  for (const s of ["Nina Newer", "NewCo", "nina@newco.test", "11-50", "Would love a walkthrough.", "Olga Older", "OldCo", "olga@oldco.test", "1-10", "Pricing question."])
+    assert(txt.includes(s), `missing ${s}`);
+  assert(await page.$('[data-demo-row="d2"][data-demo-new]'), "newer row not marked");
+  assert(!(await page.$('[data-demo-row="d1"][data-demo-new]')), "older row marked new");
+  await browser.close();
+});
+
+test("Mark all seen clears the new markers and stores the time", async () => {
+  const { page, browser } = await launch(seedDemos());
+  await page.waitForSelector('[data-demo-row="d2"][data-demo-new]', { timeout: 15000 });
+  assert(await page.$('[data-demo-row="d1"][data-demo-new]'), "no stored time: all rows should be new");
+  await page.click("[data-demo-mark-seen]");
+  await page.waitForFunction(() => !document.querySelector("[data-demo-new]"));
+  assert(await page.evaluate(() => localStorage.getItem("onevio.demoSeen")), "last-seen not stored");
+  await browser.close();
+});
+
+test("Demo requests card shows the empty message", async () => {
+  const { page, browser } = await launch(seedConsole());
+  await page.waitForSelector("text=No demo requests yet. They arrive from the form on onevio.in.", { timeout: 15000 });
+  await browser.close();
+});
+
+test("a long demo message is clamped, and expands with the keyboard", async () => {
+  const msg = Array.from({ length: 8 }, (_, i) => `Line ${i + 1} of a long message`).join("\n");
+  const { page, browser } = await launch(seedConsole(`window.__seedDemoRequests = [{ id: "d1", created_at: "2026-10-01T10:00:00Z", name: "Olga", company: "OldCo", email: "o@o.test", team_size: "1-10", message: ${JSON.stringify(msg)} }];`));
+  const sel = '[data-demo-message="d1"]';
+  await page.waitForSelector(sel, { timeout: 15000 });
+  const clamped = () => page.$eval(sel, e => e.clientHeight < e.scrollHeight);
+  assert(await clamped(), "long message not clamped");
+  assert((await page.getAttribute(sel, "aria-expanded")) === "false", "aria-expanded not false");
+  await page.focus(sel);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(s => document.querySelector(s).getAttribute("aria-expanded") === "true", sel);
+  assert(!(await clamped()), "message still clamped after Enter");
+  await browser.close();
+});
+
+test("marking seen stores the newest loaded created_at, not now", async () => {
+  const { page, browser } = await launch(seedDemos());
+  await page.waitForSelector("[data-demo-mark-seen]", { timeout: 15000 });
+  await page.click("[data-demo-mark-seen]");
+  assert(await page.evaluate(() => localStorage.getItem("onevio.demoSeen")) === "2026-10-07T10:00:00Z", "stored value is not the newest created_at");
+  await browser.close();
+});
+
+test("a non-platform admin never calls list_demo_requests", async () => {
+  const admin = await launch(`${empty} window.__seedProfile = { id: "u1", name: "Admin", role: "admin", org_id: "org-a", platform_admin: false };`);
+  await admin.page.click('button[title="Settings"]', { timeout: 15000 });
+  await admin.page.waitForSelector("text=Add user", { timeout: 15000 });
+  assert(await admin.page.evaluate(() => (window.__rpcCalls || []).some(c => c.fn === "admin_user_list")), "rpc path did not run");
+  assert(!(await admin.page.evaluate(() => (window.__rpcCalls || []).some(c => c.fn === "list_demo_requests"))), "list_demo_requests called for a non-platform admin");
+  assert(!(await rootText(admin.page)).includes("Demo requests"), "demo requests UI shown to a non-platform admin");
+  await admin.browser.close();
+});
