@@ -118,6 +118,12 @@ function App({ user, onBackToClients }) {
     if (!user.platform_admin || !user.org_id) return;
     sb.from("orgs").select("name").eq("id", user.org_id).single().then(({ data }) => data && setOrgName(data.name));
   }, [user.org_id, user.platform_admin]);
+  // Client limits: every member reads their own org row (orgs_select), not just platform admins.
+  useEffect(() => {
+    if (!user.org_id) return;
+    sb.from("orgs").select("max_accounts").eq("id", user.org_id).single()
+      .then(({ data }) => { ORG_LIMITS.maxAccounts = data?.max_accounts ?? null; });
+  }, [user.org_id]);
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);

@@ -18,6 +18,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
     let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0, badNumber = 0, badCurrency = 0;
+    const ops = [];
     const badDateRows = [], churnSkipped = [], badNumberRows = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
     const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
@@ -91,13 +92,13 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         if (!existing?.churn) { churnSkipped.push(name); return; }
       }
       if (existing) {
-        dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
+        ops.push({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
         // keep only answers that differ from the stored one, so re-importing our own export logs nothing
         const stored = existing.inputs?.value || {};
         const changed = Object.fromEntries(Object.entries(valPatch).filter(([k, v]) => v !== !!stored[k]));
         const patchIn = Object.keys(changed).length ? { ...inputPatch, value: { ...stored, ...changed } } : inputPatch;
-        if (Object.keys(patchIn).length) dispatch({ type: "UPDATE_INPUTS", id: existing.id, inputs: patchIn });
+        if (Object.keys(patchIn).length) ops.push({ type: "UPDATE_INPUTS", id: existing.id, inputs: patchIn });
         updated++;
       } else {
         const item = { id: uid(), tier: "Mid", arr: 0, currency: "USD", industry: "", csm: "",
@@ -105,12 +106,19 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
           inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()) };
-        dispatch({ type: "ADD_ACCOUNT", item });
+        ops.push({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
         if (no) byNo.set(String(no), item);
         ok++;
       }
     });
+    // All-or-nothing on the account limit: an import that would exceed it applies nothing, updates included.
+    const adds = ops.filter(o => o.type === "ADD_ACCOUNT").length;
+    const room = roomLeft(ORG_LIMITS.maxAccounts, accounts.length);
+    if (adds > room)
+      return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0,
+        err: `${limitMessage("accounts", ORG_LIMITS.maxAccounts)} This file adds ${adds} new accounts; there is room for ${room}. Nothing was imported.` });
+    ops.forEach(dispatch);
     done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder });
   };
   reader.readAsText(file);

@@ -65,5 +65,8 @@ const signOut = async () => {
 
 // The signed-in user's org, set by Root() once the profile loads. Only uploadFiles needs it
 // on the client: every other org decision is made by RLS and the org-stamping RPCs.
+// Client limits for the signed-in user's org, loaded by App from the orgs row. null = Unlimited.
+// The server enforces them; this only lets the UI refuse before an optimistic write.
+const ORG_LIMITS = { maxAccounts: null };
 let CURRENT_ORG = null;
 
