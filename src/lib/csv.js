@@ -22,7 +22,7 @@ export const csvCell = v => {
   return `"${s.replace(/"/g, '""')}"`;
 };
 export function accountsCSVText(rows) {
-  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
+  const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "deployedLicenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
   const esc = csvCell;
   const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   return [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
@@ -81,7 +81,7 @@ export function importSummary(r) {
   const bits = [`imported ${r.ok} new · updated ${r.updated} · skipped ${r.skipped}`];
   if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
   if (r.badValue) bits.push(`⚠ ${r.badValue} unreadable Value answer(s) left unchanged (use yes/no)`);
-  if (r.badNumber) bits.push(`⚠ ${r.badNumber} unreadable number(s) (arr/licenses) left unchanged${r.badNumberRows?.length ? ` (${r.badNumberRows.join(", ")})` : ""}`);
+  if (r.badNumber) bits.push(`⚠ ${r.badNumber} unreadable number(s) (arr/licenses/deployedLicenses) left unchanged${r.badNumberRows?.length ? ` (${r.badNumberRows.join(", ")})` : ""}`);
   if (r.badCurrency) bits.push(`⚠ ${r.badCurrency} unrecognized currenc${r.badCurrency === 1 ? "y" : "ies"} left unchanged (use USD, INR or PHP)`);
   if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
   if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);

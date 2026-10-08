@@ -196,7 +196,45 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <CohortGrid accounts={scope === "all" ? allAccounts : all} />
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
       </AnalyticsSection>
+      <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
     </div>
+  );
+}
+
+
+/* Total vs deployed licenses over the in-scope active accounts. Totals and % use only
+   accounts with both figures (see licenseSummary); accounts missing a deployed count are
+   named separately so missing data is not mistaken for low deployment. */
+function LicenseCard({ accounts, openAccount }) {
+  const s = licenseSummary(accounts);
+  const n = x => x.toLocaleString("en-IN");
+  return (
+    <Card title="License deployment" className="!p-3">
+      {s.counted === 0
+        ? <div className="text-sm text-slate-500">No accounts have licenses yet. Add Total licenses on an account's Edit form.</div>
+        : <div className="space-y-2">
+            {s.pct == null
+              ? <div className="text-sm text-slate-500">No deployed counts recorded yet.</div>
+              : <>
+                  <div data-license-summary className="text-sm font-semibold tabular-nums">{n(s.total)} total · {n(s.deployed)} deployed · {s.pct}%</div>
+                  <div className="h-2 w-full overflow-hidden rounded bg-slate-100">
+                    <div data-license-bar className="h-full rounded bg-indigo-500" style={{ width: `${Math.min(100, s.pct)}%` }} />
+                  </div>
+                </>}
+            {s.missingDeployed > 0 && <div data-license-missing className="text-xs text-slate-500">
+              {s.missingDeployed === 1 ? "1 account has no deployed count yet." : `${s.missingDeployed} accounts have no deployed count yet.`}</div>}
+            {s.lowest.length > 0 && <div>
+              <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">Lowest deployment</div>
+              {s.lowest.map(x => (
+                <button key={x.id} data-license-row={x.id} onClick={() => openAccount(x.id)}
+                  className="flex w-full items-center gap-2 border-b border-slate-100 py-1 text-left text-sm last:border-0 hover:bg-slate-50">
+                  <span className="min-w-0 flex-1 truncate">{x.name}</span>
+                  <span className="tabular-nums text-slate-500">{n(x.deployed)} / {n(x.total)}</span>
+                  <span data-low={x.pct < 50 ? "" : undefined} className={`w-12 text-right tabular-nums font-semibold ${x.pct < 50 ? "text-amber-600" : ""}`}>{x.pct}%</span>
+                </button>))}
+            </div>}
+          </div>}
+    </Card>
   );
 }
 

@@ -54,6 +54,8 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 | ACC-07 | Document/attachment links can never execute script | ✅ | `link-safety`, `unit/urls` |
 | ACC-08 | List virtualization at 2000 accounts within perf budget | ✅ | `virtualization` |
 | ACC-09 | Filters, sort, segments, mobile layout | ✅ | `segments`, `page-polish`, `mobile` |
+| ACC-10 | Total and deployed licenses: edit form, CSV import/export, validation | ✅ | `licenses` |
+| ACC-11 | License deployment card: summary, per-account list, scope filtering | ✅ | `licenses` |
 
 ### 4. Health scoring & playbooks
 | ID | Case | Status | Where |
@@ -91,7 +93,7 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 |---|---|---|---|
 | CSV-01 | Export → re-import round-trips; dedupe by account # then name | ✅ | `csv` |
 | CSV-02 | DD-MM vs MM-DD detection; mixed file refused | ✅ | `csv-dates`, `unit/csv` |
-| CSV-03 | **Blank/unreadable cells never overwrite stored data** (arr, licenses, currency, tier, status) | ✅ | `csv-import-safety`, `unit/csv-number` |
+| CSV-03 | **Blank/unreadable cells never overwrite stored data** (arr, licenses, deployedLicenses, currency, tier, status) | ✅ | `csv-import-safety`, `unit/csv-number`, `licenses` |
 | CSV-04 | Grouped numbers (`1,000,000`, `10,00,000`, `$`, `₹`) parse correctly | ✅ | `unit/csv-number` |
 | CSV-05 | Exports are safe to open in Excel (formula injection) | ✅ | `unit/csv-injection` |
 | CSV-06 | Finance billing CSV | ✅ | `csv` |
@@ -425,6 +427,20 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
   - adding an account does not re-send the baseline
   - the baseline waits for 
   - a failed baseline write retries instead of being permanently skipped
+- **licenses.test.mjs**
+  - edit form saves total and deployed licenses
+  - empty Deployed stays not recorded when only the name changes
+  - over-deployed shows a warning and still saves
+  - detail header shows deployed-of-total, total only, or nothing
+  - CSV import sets total and deployed licenses
+  - CSV headers 'Total licenses' and 'Deployed licenses' are recognised
+  - CSV empty deployed cell leaves the value unchanged
+  - CSV unreadable deployed value is left unchanged and reported
+  - dashboard card totals only active accounts with both figures
+  - dashboard card lowest list orders, flags amber below 50, and opens the account
+  - dashboard card shows over-deployment as 130% with a full bar
+  - dashboard card empty states
+  - dashboard card follows the My book scope
 - **helpers.test.mjs**
   - isoPlus adds days textually
   - BAND_RANK orders bands

@@ -10,7 +10,8 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     const rows = parseCSV(String(reader.result));
     if (rows.length < 2) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
     const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
-    const header = rows[0].map(norm);
+    const ALIAS = { totallicenses: "licenses" };
+    const header = rows[0].map(norm).map(h => ALIAS[h] || h);
     const has = key => header.indexOf(key) >= 0;
     const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
     if (!has("name")) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: 'The header row needs a "name" column (matching Export CSV format works).' });
@@ -69,6 +70,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       }
       if (has("modules")) vals.modules = col(r, "modules");
       if (has("licenses")) { const v = num("licenses"); if (v !== undefined) vals.licenses = v; }
+      if (has("deployedlicenses") && col(r, "deployedlicenses") !== "") { const v = num("deployedlicenses"); if (v !== undefined) vals.deployedLicenses = Math.round(v); }
       if (has("dedicatedsupport")) vals.dedicatedSupport = ["yes", "true", "y", "1"].includes(col(r, "dedicatedsupport").toLowerCase());
       if (has("billingcompleted")) vals.billingCompleted = ["yes", "true", "y", "1"].includes(col(r, "billingcompleted").toLowerCase());
       if (has("billingcompleteddate") && date(col(r, "billingcompleteddate"))) vals.billingCompletedDate = date(col(r, "billingcompleteddate"));

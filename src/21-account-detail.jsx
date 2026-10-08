@@ -71,7 +71,9 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <Meta label="Industry" value={a.industry} />
         <Meta label="ARR" value={`${fmtMoney(a.arr, a.currency)}${a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""}`} />
         <Meta label="CSM" value={a.csm} />
-        {a.licenses ? <Meta label="Licenses" value={a.licenses} /> : null}
+        {(() => { const f = licenseFigures(a); return f.total > 0
+          ? <Meta label="Licenses" value={f.deployed == null ? f.total : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
+          : null; })()}
         {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
         {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
         {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
