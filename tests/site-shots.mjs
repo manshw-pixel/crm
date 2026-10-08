@@ -68,6 +68,9 @@ const inputsFor = (i, usage, sentiment, tickets, nps) => RED.has(i) ? { usage: 2
   : { usage: 84 + (i % 9), sentiment: 80 + (i % 8), tickets: i % 3, nps: 40 + (i % 4) * 5 };
 const PENDING_BILLING = new Set([7, 6, 3, 16]); // the four renewing soonest
 const QBR_IN = { 3: 5, 8: 12, 13: 19, 18: 24, 23: 29, 7: -4 }; // 5 due in 30d, 1 overdue
+// Renewal stages for accounts renewing inside 90 days (index into ROWS); the rest stay "Not started".
+const STAGE = { 0: "Committed", 1: "Committed", 8: "Committed", 14: "Committed", 18: "Committed", 22: "Committed", 15: "Committed", 11: "Committed", 21: "Committed",
+  3: "Negotiating", 10: "Negotiating", 4: "Quote sent", 23: "Quote sent", 12: "Outreach", 7: "Negotiating", 6: "At risk", 16: "At risk" };
 const accounts = [];
 ROWS.forEach((r, i) => {
   const [name, tier, usd, cur, industry, csm, [usage, sentiment, tickets, nps], renewIn, startAgo, lic] = r;
@@ -78,7 +81,7 @@ ROWS.forEach((r, i) => {
   accounts.push(seedAccount({
     id: `acc${i + 1}`, accountNo: i + 1, name, tier, arr, currency: cur, industry, csm,
     startDate: day(-(NEW_START[i] ?? startAgo)), renewalDate: day(renewIn),
-    contractStatus: renewIn < 30 ? "In negotiation" : "Active",
+    contractStatus: renewIn < 30 ? "In negotiation" : "Active", ...(STAGE[i] ? { renewalStage: STAGE[i] } : {}),
     inputs: inputsFor(i, usage, sentiment, tickets, nps), inputsUpdatedAt: day(-8),
     billingCompleted: !PENDING_BILLING.has(i), billingCompletedDate: PENDING_BILLING.has(i) ? null : day(-(20 + (i * 7) % 60)),
     playbookSeededFor: day(renewIn), // stops the app auto-creating a renewal playbook task burst on load
