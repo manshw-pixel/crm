@@ -146,11 +146,20 @@ function DemoRequestsCard() {
   const [err, setErr] = useState("");
   const [seen, setSeen] = useState(readDemoSeen);
   const [open, setOpen] = useState({});
+  const newest = useRef("");   // newest created_at actually loaded: what "seen" must mean
+  const stampSeen = () => { if (!newest.current) return ""; writeDemoSeen(newest.current); return newest.current; };
   useEffect(() => {
-    sb.rpc("list_demo_requests").then(({ data, error }) => error ? setErr(error.message) : setRows(data || []));
-    return () => writeDemoSeen(new Date().toISOString());
+    let live = true;
+    sb.rpc("list_demo_requests").then(({ data, error }) => {
+      if (!live) return;
+      if (error) return setErr(error.message);
+      const list = data || [];
+      newest.current = list.reduce((m, r) => (new Date(r.created_at) > new Date(m || 0) ? r.created_at : m), "");
+      setRows(list);
+    }).catch(ex => { if (live) setErr(ex.message || "Could not load demo requests."); });
+    return () => { live = false; stampSeen(); };
   }, []);
-  const markSeen = () => { const t = new Date().toISOString(); writeDemoSeen(t); setSeen(t); };
+  const markSeen = () => { const t = stampSeen(); if (t) setSeen(t); };
   const isNew = r => !seen || new Date(r.created_at) > new Date(seen);
   const list = rows || [];
   return (
@@ -166,8 +175,9 @@ function DemoRequestsCard() {
             <span className="ml-auto text-xs text-slate-500">{demoStamp(r.created_at)}</span>
           </div>
           <div className="text-xs text-slate-600"><span className="select-text">{r.email}</span> · team {r.team_size}</div>
-          {r.message && <div onClick={() => setOpen({ ...open, [r.id]: !open[r.id] })}
-            className={"mt-1 cursor-pointer whitespace-pre-wrap text-slate-700 " + (open[r.id] ? "" : "line-clamp-3")}>{r.message}</div>}
+          {r.message && <button type="button" aria-expanded={!!open[r.id]} data-demo-message={r.id}
+            onClick={() => setOpen({ ...open, [r.id]: !open[r.id] })}
+            className={"mt-1 w-full cursor-pointer whitespace-pre-wrap text-left text-slate-700 " + (open[r.id] ? "" : "line-clamp-3")}>{r.message}</button>}
         </div>
       ))}
     </Card>
