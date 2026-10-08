@@ -20,6 +20,19 @@ alter table public.orgs enable row level security;
 -- ANDed into is_active() AND is_admin(), so every policy and every definer RPC that gates
 -- on either inherits it. Data is kept; re-enabling restores access.
 alter table public.orgs add column if not exists disabled boolean not null default false;
+-- Client limits, set by the platform admin on the Clients console. null = Unlimited.
+-- The minimums live in the table, so no writer (RPC, SQL editor) can store a smaller value.
+alter table public.orgs add column if not exists max_users int;
+alter table public.orgs add column if not exists max_accounts int;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'orgs_max_users_min') then
+    alter table public.orgs add constraint orgs_max_users_min check (max_users is null or max_users >= 2);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orgs_max_accounts_min') then
+    alter table public.orgs add constraint orgs_max_accounts_min check (max_accounts is null or max_accounts >= 5);
+  end if;
+end $$;
 insert into public.orgs (id, name)
 values ('00000000-0000-0000-0000-000000000001', 'My Company')   -- EDIT ME: your company name
 on conflict (id) do nothing;
@@ -864,6 +877,42 @@ begin
 end $$;
 revoke execute on function public.attach_orgless_login(text, text, uuid, uuid, text) from public, anon, authenticated;
 
+-- ---------- client limits: seats ----------
+-- A seat is an enabled member or an open invite. The platform admin never uses one: switch_org
+-- puts their profile inside whichever client they open.
+create or replace function public.org_seat_count(p_org uuid)
+returns int language sql stable security definer set search_path = public as
+$$ select (select count(*) from profiles where org_id = p_org and not disabled and not platform_admin)::int
+        + (select count(*) from invites where org_id = p_org and accepted_at is null)::int $$;
+
+-- Locks the org row first, so two concurrent invites cannot both see the last free seat.
+create or replace function public.assert_seat_available(p_org uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare lim int;
+begin
+  select max_users into lim from orgs where id = p_org for update;
+  if lim is not null and public.org_seat_count(p_org) >= lim then
+    raise exception 'Your plan allows % users — contact OneVio to raise it.', lim;
+  end if;
+end $$;
+revoke execute on function public.org_seat_count(uuid) from public, anon, authenticated;
+revoke execute on function public.assert_seat_available(uuid) from public, anon, authenticated;
+
+-- Re-enabling a disabled user takes a seat back, so it is held to the same limit. The row
+-- being enabled is still disabled while this runs, so it is not in the count yet.
+create or replace function public.guard_seat_on_enable()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.disabled and not new.disabled and new.org_id is not null and not new.platform_admin then
+    perform public.assert_seat_available(new.org_id);
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_seat_on_enable on public.profiles;
+create trigger guard_seat_on_enable
+  before update of disabled on public.profiles
+  for each row execute function public.guard_seat_on_enable();
+
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.
@@ -900,6 +949,7 @@ begin
     elsif existing.org_id is not null then
       raise exception 'invite_user: % already belongs to another workspace', addr;
     end if;
+    perform public.assert_seat_available(public.current_org());
     perform public.attach_orgless_login('invite_user', addr, existing.id, public.current_org(), p_role);
     insert into invites (email, org_id, role, created_by, accepted_at)
     values (addr, public.current_org(), p_role, auth.uid(), now())
@@ -910,6 +960,11 @@ begin
   if exists (select 1 from invites where lower(email) = addr and accepted_at is null
              and org_id <> public.current_org()) then
     raise exception 'invite_user: % already has an open invite to another workspace', addr;
+  end if;
+  -- Re-sending an open invite to the same address takes no new seat.
+  if not exists (select 1 from invites where lower(email) = addr and org_id = public.current_org()
+                 and accepted_at is null) then
+    perform public.assert_seat_available(public.current_org());
   end if;
   insert into invites (email, org_id, role, created_by)
   values (addr, public.current_org(), p_role, auth.uid())
