@@ -135,3 +135,49 @@ test("replace_all over the account limit fails before deleting anything", async 
     assert(await acctCount(ORG_B) === before, "replace_all changed accounts despite refusing");
   } finally { await setLimits(ORG_B, null, null); await dropLimAccounts(); }
 });
+
+test("set_org_limits: platform admin only, minimums enforced, values stored", async () => {
+  try {
+    const denied = await sessions.adminB.rpc("set_org_limits", { p_org_id: ORG_B, p_max_users: 3, p_max_accounts: 7 });
+    assert(denied.error && /platform admin only/.test(denied.error.message), `org admin set limits: ${JSON.stringify(denied)}`);
+    const low = await sessions.platform.rpc("set_org_limits", { p_org_id: ORG_B, p_max_users: 1, p_max_accounts: null });
+    assert(low.error && /at least 2/.test(low.error.message), `max users 1 accepted: ${JSON.stringify(low)}`);
+    const lowA = await sessions.platform.rpc("set_org_limits", { p_org_id: ORG_B, p_max_users: null, p_max_accounts: 4 });
+    assert(lowA.error && /at least 5/.test(lowA.error.message), `max accounts 4 accepted: ${JSON.stringify(lowA)}`);
+    const ok = await sessions.platform.rpc("set_org_limits", { p_org_id: ORG_B, p_max_users: 3, p_max_accounts: 7 });
+    assert(!ok.error, `control: platform admin could not set limits: ${ok.error?.message}`);
+    const row = (await sql(`select max_users, max_accounts from orgs where id = $1`, [ORG_B]))[0];
+    assert(row.max_users === 3 && row.max_accounts === 7, `stored ${JSON.stringify(row)}`);
+  } finally { await setLimits(ORG_B, null, null); }
+});
+
+test("list_orgs reports seats, accounts and limits", async () => {
+  try {
+    await setLimits(ORG_B, 9, 50);
+    const { data, error } = await sessions.platform.rpc("list_orgs");
+    assert(!error, error?.message);
+    const b = data.find(o => o.id === ORG_B);
+    assert(b.max_users === 9 && b.max_accounts === 50, `limits missing: ${JSON.stringify(b)}`);
+    assert(b.seats === await seats(ORG_B), `seats ${b.seats} != org_seat_count`);
+    assert(b.accounts === await acctCount(ORG_B), `accounts ${b.accounts} wrong`);
+  } finally { await setLimits(ORG_B, null, null); }
+});
+
+test("create_org stores limits, and still works without them", async () => {
+  const names = ["Lim Co One", "Lim Co Two"];
+  try {
+    const a = await sessions.platform.rpc("create_org", { p_name: names[0], p_admin_email: "lim-c1@example.com", p_max_users: 4, p_max_accounts: 20 });
+    assert(!a.error, a.error?.message);
+    const ra = (await sql(`select max_users, max_accounts from orgs where id = $1`, [a.data]))[0];
+    assert(ra.max_users === 4 && ra.max_accounts === 20, `stored ${JSON.stringify(ra)}`);
+    const b = await sessions.platform.rpc("create_org", { p_name: names[1], p_admin_email: "lim-c2@example.com" });
+    assert(!b.error, `create_org without limits failed: ${b.error?.message}`);
+    const rb = (await sql(`select max_users, max_accounts from orgs where id = $1`, [b.data]))[0];
+    assert(rb.max_users === null && rb.max_accounts === null, `defaults not Unlimited: ${JSON.stringify(rb)}`);
+    const bad = await sessions.platform.rpc("create_org", { p_name: "Lim Bad", p_admin_email: "lim-c3@example.com", p_max_users: 1 });
+    assert(bad.error && /at least 2/.test(bad.error.message), `create_org accepted max users 1: ${JSON.stringify(bad)}`);
+  } finally {
+    await sql(`delete from orgs where name = any($1)`, [[...names, "Lim Bad"]]);
+    await dropInvites();
+  }
+});

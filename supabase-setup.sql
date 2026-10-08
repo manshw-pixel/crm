@@ -1002,7 +1002,9 @@ begin
   return 'invited';
 end $$;
 
-create or replace function public.create_org(p_name text, p_admin_email text)
+drop function if exists public.create_org(text, text);
+create or replace function public.create_org(p_name text, p_admin_email text,
+                                             p_max_users int default null, p_max_accounts int default null)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   new_id uuid;
@@ -1018,6 +1020,12 @@ begin
   end if;
   if not public.valid_email(addr) then
     raise exception 'create_org: % is not a valid email address', p_admin_email;
+  end if;
+  if p_max_users is not null and p_max_users < 2 then
+    raise exception 'create_org: max users must be at least 2';
+  end if;
+  if p_max_accounts is not null and p_max_accounts < 5 then
+    raise exception 'create_org: max accounts must be at least 5';
   end if;
   -- A retry must error, not duplicate. Both checks run before any insert; and the whole body
   -- is one transaction, so a later failure leaves no half-created org behind.
@@ -1036,7 +1044,7 @@ begin
   if existing_org is not null then
     raise exception 'create_org: % already belongs to another workspace', addr;
   end if;
-  insert into orgs (name) values (trim(p_name)) returning id into new_id;
+  insert into orgs (name, max_users, max_accounts) values (trim(p_name), p_max_users, p_max_accounts) returning id into new_id;
   insert into settings (org_id, data) values (new_id, '{}'::jsonb);
   -- org_alert_prefs lives in email-alerts.sql, which may not be installed on a fresh stack.
   if to_regclass('public.org_alert_prefs') is not null then
@@ -1067,7 +1075,8 @@ end $$;
 
 drop function if exists public.list_orgs();
 create or replace function public.list_orgs()
-returns table(id uuid, name text, created_at timestamptz, users int, disabled boolean)
+returns table(id uuid, name text, created_at timestamptz, users int, disabled boolean,
+              seats int, accounts int, max_users int, max_accounts int)
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_platform_admin() then
@@ -1076,7 +1085,10 @@ begin
   return query
     select o.id, o.name, o.created_at,
            (select count(*)::int from profiles p where p.org_id = o.id and not p.disabled),
-           o.disabled
+           o.disabled,
+           public.org_seat_count(o.id),
+           (select count(*)::int from accounts a where a.org_id = o.id),
+           o.max_users, o.max_accounts
     from orgs o order by o.created_at;
 end $$;
 
@@ -1094,16 +1106,37 @@ begin
   end if;
 end $$;
 
+-- A limit below current usage is allowed: nothing is removed, the client just cannot add more.
+create or replace function public.set_org_limits(p_org_id uuid, p_max_users int, p_max_accounts int)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'set_org_limits: platform admin only';
+  end if;
+  if p_max_users is not null and p_max_users < 2 then
+    raise exception 'set_org_limits: max users must be at least 2';
+  end if;
+  if p_max_accounts is not null and p_max_accounts < 5 then
+    raise exception 'set_org_limits: max accounts must be at least 5';
+  end if;
+  update orgs set max_users = p_max_users, max_accounts = p_max_accounts where id = p_org_id;
+  if not found then
+    raise exception 'set_org_limits: no such org';
+  end if;
+end $$;
+
 revoke execute on function public.invite_user(text, text) from public, anon;
-revoke execute on function public.create_org(text, text) from public, anon;
+revoke execute on function public.create_org(text, text, int, int) from public, anon;
 revoke execute on function public.switch_org(uuid) from public, anon;
 revoke execute on function public.list_orgs() from public, anon;
 revoke execute on function public.set_org_disabled(uuid, boolean) from public, anon;
 grant execute on function public.invite_user(text, text) to authenticated;
-grant execute on function public.create_org(text, text) to authenticated;
+grant execute on function public.create_org(text, text, int, int) to authenticated;
 grant execute on function public.switch_org(uuid) to authenticated;
 grant execute on function public.list_orgs() to authenticated;
 grant execute on function public.set_org_disabled(uuid, boolean) to authenticated;
+revoke execute on function public.set_org_limits(uuid, int, int) from public, anon;
+grant execute on function public.set_org_limits(uuid, int, int) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
