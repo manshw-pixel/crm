@@ -245,14 +245,15 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
   const [limitErr, setLimitErr] = useState("");
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
       e.preventDefault(); if (!v.name.trim()) return;
       const clean = { ...v, name: v.name.trim(), arr: +v.arr || 0, modules: v.modules.trim(), licenses: +v.licenses || 0,
+        deployedLicenses: v.deployedLicenses === "" || v.deployedLicenses == null ? null : Math.max(0, Math.round(+v.deployedLicenses) || 0),
         billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
         transitionDate: v.transitionDate || null,
         parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
@@ -277,7 +278,10 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       <F label="QBR cadence"><Select value={v.qbrFrequency} onChange={e => set("qbrFrequency", e.target.value)} options={QBR_FREQS} className="w-full" /></F>
       {v.qbrFrequency !== "None" && <F label="Next QBR"><Input type="date" value={v.nextQbrDate} onChange={e => set("nextQbrDate", e.target.value)} /></F>}
       <F label="Modules"><Input value={v.modules} onChange={e => set("modules", e.target.value)} placeholder="comma-separated" /></F>
-      <F label="Licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
+      <F label="Total licenses"><Input type="number" min="0" value={v.licenses} onChange={e => set("licenses", e.target.value)} /></F>
+      <F label="Deployed licenses"><Input data-deployed-licenses type="number" min="0" value={v.deployedLicenses} onChange={e => set("deployedLicenses", e.target.value)} /></F>
+      {+v.licenses > 0 && v.deployedLicenses !== "" && +v.deployedLicenses > +v.licenses &&
+        <div data-overdeployed className="col-span-2 text-xs text-amber-600 md:col-span-4">Deployed is higher than total.</div>}
       <F label="Dedicated support"><Select value={v.dedicatedSupport ? "Yes" : "No"} onChange={e => set("dedicatedSupport", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
       <F label="Billing completed"><Select value={v.billingCompleted ? "Yes" : "No"} onChange={e => set("billingCompleted", e.target.value === "Yes")} options={["No", "Yes"]} className="w-full" /></F>
       {v.billingCompleted && <F label="Billing date"><Input type="date" value={v.billingCompletedDate} onChange={e => set("billingCompletedDate", e.target.value)} /></F>}

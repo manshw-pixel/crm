@@ -1,6 +1,6 @@
 // Total vs deployed licenses (spec 2026-10-08). `licenses` is Total; `deployedLicenses` is
 // optional, and missing/blank means "not recorded" -- which is not the same as 0 deployed.
-const toNum = v => (v === "" || v == null ? null : Number.isFinite(Number(v)) ? Number(v) : null);
+const toNum = v => (v == null || (typeof v === "string" && v.trim() === "") ? null : Number.isFinite(Number(v)) ? Number(v) : null);
 
 export function licenseFigures(a) {
   const total = Math.max(0, toNum(a?.licenses) ?? 0);

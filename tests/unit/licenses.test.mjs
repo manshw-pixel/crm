@@ -13,6 +13,7 @@ test("licenseFigures: not set, not recorded, recorded, zero, numeric strings", (
   assert.deepEqual(licenseFigures(A("a", 200, null)), { total: 200, deployed: null, pct: null });
   assert.deepEqual(licenseFigures(A("a", 200, "")), { total: 200, deployed: null, pct: null });
   assert.deepEqual(licenseFigures(A("a", 0, 5)), { total: 0, deployed: 5, pct: null });
+  assert.deepEqual(licenseFigures({ licenses: 200, deployedLicenses: "  " }), { total: 200, deployed: null, pct: null });
 });
 
 test("licenseFigures: over-deployment exceeds 100 and rounding", () => {
