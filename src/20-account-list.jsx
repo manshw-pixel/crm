@@ -213,7 +213,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
               rewritten row looked identical to a clean import */}
           {(importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badNumber || importMsg.badCurrency || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
             {importMsg.badValue ? ` ⚠ ${importMsg.badValue} unreadable Value answer(s) left unchanged (use yes/no).` : ""}
-            {importMsg.badNumber ? ` ⚠ ${importMsg.badNumber} unreadable number(s) in arr/licenses left unchanged (${importMsg.badNumberRows.join(", ")}).` : ""}
+            {importMsg.badNumber ? ` ⚠ ${importMsg.badNumber} unreadable number(s) in arr/licenses/deployedLicenses left unchanged (${importMsg.badNumberRows.join(", ")}).` : ""}
             {importMsg.badCurrency ? ` ⚠ ${importMsg.badCurrency} unrecognized currency value(s) left unchanged (use USD, INR or PHP).` : ""}
             {importMsg.badDate ? ` ⚠ ${importMsg.badDate} unreadable date(s) left unchanged (${importMsg.badDateRows.join(", ")}).` : ""}
             {importMsg.churnSkipped?.length ? ` ⚠ Not imported, marked Churned in the file: ${importMsg.churnSkipped.join(", ")} — churn them from the account page.` : ""}
