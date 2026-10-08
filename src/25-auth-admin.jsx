@@ -133,6 +133,46 @@ function LimitField({ kind, label, value, onChange, error }) {
     </div>
   );
 }
+const DEMO_SEEN_KEY = "onevio.demoSeen";
+const readDemoSeen = () => { try { return localStorage.getItem(DEMO_SEEN_KEY) || ""; } catch { return ""; } };
+const writeDemoSeen = t => { try { localStorage.setItem(DEMO_SEEN_KEY, t); } catch {} };
+const demoStamp = iso => {
+  const d = new Date(iso); if (isNaN(d)) return String(iso || "");
+  const p = n => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+function DemoRequestsCard() {
+  const [rows, setRows] = useState(null);
+  const [err, setErr] = useState("");
+  const [seen, setSeen] = useState(readDemoSeen);
+  const [open, setOpen] = useState({});
+  useEffect(() => {
+    sb.rpc("list_demo_requests").then(({ data, error }) => error ? setErr(error.message) : setRows(data || []));
+    return () => writeDemoSeen(new Date().toISOString());
+  }, []);
+  const markSeen = () => { const t = new Date().toISOString(); writeDemoSeen(t); setSeen(t); };
+  const isNew = r => !seen || new Date(r.created_at) > new Date(seen);
+  const list = rows || [];
+  return (
+    <Card title={`Demo requests (${list.length})`}
+      right={list.some(isNew) ? <button data-demo-mark-seen className="text-xs font-bold text-indigo-600 hover:underline" onClick={markSeen}>Mark all seen</button> : null}>
+      {err && <div className="text-xs text-rose-600">{err}</div>}
+      {rows && !list.length && <p className="text-sm text-slate-500">No demo requests yet. They arrive from the form on onevio.in.</p>}
+      {list.map(r => (
+        <div key={r.id} data-demo-row={r.id} data-demo-new={isNew(r) ? "" : undefined} className="border-b border-slate-100 py-2 text-sm last:border-0">
+          <div className="flex items-center gap-2">
+            {isNew(r) && <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-500" aria-label="New" />}
+            <span className="font-semibold">{r.name}</span><span className="text-slate-500">· {r.company}</span>
+            <span className="ml-auto text-xs text-slate-500">{demoStamp(r.created_at)}</span>
+          </div>
+          <div className="text-xs text-slate-600"><span className="select-text">{r.email}</span> · team {r.team_size}</div>
+          {r.message && <div onClick={() => setOpen({ ...open, [r.id]: !open[r.id] })}
+            className={"mt-1 cursor-pointer whitespace-pre-wrap text-slate-700 " + (open[r.id] ? "" : "line-clamp-3")}>{r.message}</div>}
+        </div>
+      ))}
+    </Card>
+  );
+}
 function ClientConsole({ me, onEnter }) {
   const [orgs, setOrgs] = useState([]);
   const [v, setV] = useState({ name: "", adminName: "", email: "", pass: "" });
@@ -273,6 +313,7 @@ function ClientConsole({ me, onEnter }) {
           {msg && <div className="mt-2 text-xs text-emerald-700">{msg}</div>}
           <p className="mt-2 text-xs text-slate-500">Each client is a separate workspace: its users see only its accounts. Open a client to work as its admin; use ← Clients to come back.</p>
         </Card>
+        <div className="mt-4"><DemoRequestsCard /></div>
       </div>
       {confirmOrg && <ConfirmDialog
         title={`Disable ${confirmOrg.name}?`}

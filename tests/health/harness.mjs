@@ -83,6 +83,7 @@ const MOCK = `window.__sbFactory = () => {
         return Promise.resolve({ data: window.__seedUsers || [], error: null });
       }
       if (fn === "list_orgs") return Promise.resolve({ data: window.__seedOrgs || [], error: null });
+      if (fn === "list_demo_requests") return Promise.resolve({ data: window.__seedDemoRequests || [], error: null });
       if (fn === "set_org_disabled") {
         const o = (window.__seedOrgs || []).find(x => x.id === args.p_org_id);
         if (o) o.disabled = args.p_disabled;
