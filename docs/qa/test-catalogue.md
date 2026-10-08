@@ -93,7 +93,7 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 |---|---|---|---|
 | CSV-01 | Export → re-import round-trips; dedupe by account # then name | ✅ | `csv` |
 | CSV-02 | DD-MM vs MM-DD detection; mixed file refused | ✅ | `csv-dates`, `unit/csv` |
-| CSV-03 | **Blank/unreadable cells never overwrite stored data** (arr, licenses, deployedLicenses, currency, tier, status) | ✅ | `csv-import-safety`, `unit/csv-number` |
+| CSV-03 | **Blank/unreadable cells never overwrite stored data** (arr, licenses, deployedLicenses, currency, tier, status) | ✅ | `csv-import-safety`, `unit/csv-number`, `licenses` |
 | CSV-04 | Grouped numbers (`1,000,000`, `10,00,000`, `$`, `₹`) parse correctly | ✅ | `unit/csv-number` |
 | CSV-05 | Exports are safe to open in Excel (formula injection) | ✅ | `unit/csv-injection` |
 | CSV-06 | Finance billing CSV | ✅ | `csv` |
@@ -361,7 +361,7 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
   - billing CSV reads DD-MM-YYYY billing dates
   - folder card lists each CSV with its status, and Sync now imports only the new one
 - **csv-import-safety.test.mjs**
-  - blank arr/currency/tier/status/licenses/deployedLicenses cells leave the account unchanged
+  - blank arr/currency/tier/status/licenses cells leave the account unchanged
   - grouped and currency-marked arr is read correctly; garbage is reported, not zeroed
 - **currency-history.test.mjs**
   - renewal deltas convert at the currency stamped on the entry
