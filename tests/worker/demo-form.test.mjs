@@ -204,6 +204,48 @@ test("an unreachable Turnstile is 502 unavailable", async () => {
   assert.equal(json.error, "unavailable");
 });
 
+test("a hung upstream times out as 502 unavailable (siteverify hang makes no RPC call)", async () => {
+  const realTimeout = AbortSignal.timeout;
+  AbortSignal.timeout = () => realTimeout.call(AbortSignal, 20);
+  const keepAlive = setInterval(() => {}, 50); // Node unrefs timeout signals; keep the loop alive
+  try {
+    const calls = [];
+    const hang = (url, init) => new Promise((_, reject) => {
+      calls.push(String(url));
+      init.signal.addEventListener("abort", () => reject(init.signal.reason));
+    });
+    globalThis.fetch = hang;
+    let r = await run(post(FORM));
+    assert.equal(r.res.status, 502);
+    assert.equal(r.json.error, "unavailable");
+    assert.deepEqual(calls, [SITEVERIFY]);
+    globalThis.fetch = (url, init) => String(url) === SITEVERIFY
+      ? Promise.resolve(new Response('{"success":true}')) : hang(url, init);
+    r = await run(post(FORM));
+    assert.equal(r.res.status, 502);
+    assert.equal(r.json.error, "unavailable");
+  } finally { AbortSignal.timeout = realTimeout; clearInterval(keepAlive); }
+});
+
+test("a truthy but non-true success is a captcha failure", async () => {
+  for (const success of ["true", 1, {}]) {
+    const calls = stub({ captcha: { success } });
+    const { res, json } = await run(post(FORM));
+    assert.equal(res.status, 400);
+    assert.equal(json.error, "captcha");
+    assert.equal(calls.length, 1);
+  }
+});
+
+test("a 5xx or non-JSON siteverify answer is unavailable, not captcha", async () => {
+  const calls = [];
+  globalThis.fetch = async (url) => { calls.push(String(url)); return new Response("oops", { status: 503 }); };
+  const { res, json } = await run(post(FORM));
+  assert.equal(res.status, 502);
+  assert.equal(json.error, "unavailable");
+  assert.deepEqual(calls, [SITEVERIFY]);
+});
+
 test("missing settings is 502 unavailable, not a crash", async () => {
   const calls = stub();
   const { res, json } = await run(post(FORM), {});

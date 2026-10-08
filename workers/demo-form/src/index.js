@@ -6,6 +6,7 @@
 const SITEVERIFY = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const DEFAULT_ORIGINS = "https://onevio.in,https://www.onevio.in";
 const MAX_BYTES = 8192;
+const UPSTREAM_TIMEOUT_MS = 8000;
 const GENERIC = "We couldn't send that. Please try again, or email us.";
 const RATE_LIMIT = "Too many requests — please email us instead.";
 
@@ -79,9 +80,11 @@ export default {
           response: String(form.token || ""),
           remoteip: request.headers.get("CF-Connecting-IP") || "",
         }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
+      if (!verify.ok) return fail(502, "unavailable", GENERIC, origin);
       const verdict = await verify.json().catch(() => ({}));
-      if (!verdict.success) return fail(400, "captcha", "Please complete the check and try again.", origin);
+      if (verdict.success !== true) return fail(400, "captcha", "Please complete the check and try again.", origin);
 
       const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/submit_demo_request`, {
         method: "POST",
@@ -99,6 +102,7 @@ export default {
           p_message: form.message,
           p_website: form.website,
         }),
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
       if (res.ok) return reply(200, { ok: true }, origin);
       if (res.status >= 500) return fail(502, "unavailable", GENERIC, origin);
