@@ -247,6 +247,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
   const [v, setV] = useState(existing
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
     : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
+  const [limitErr, setLimitErr] = useState("");
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
@@ -256,7 +257,11 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         transitionDate: v.transitionDate || null,
         parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
-      else dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
+      else {
+        // `accounts` is every account in the org (churned included), which is what the server counts.
+        if (roomLeft(ORG_LIMITS.maxAccounts, accounts.length) < 1) return setLimitErr(limitMessage("accounts", ORG_LIMITS.maxAccounts));
+        dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
+      }
       onDone();
     }}>
       <F label="Name *"><Input autoFocus value={v.name} onChange={e => set("name", e.target.value)} /></F>
@@ -287,6 +292,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
         {!existing && <span className="text-xs text-slate-500">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
       </div>
+      {limitErr && <div data-limit-error className="col-span-2 text-xs text-rose-600 md:col-span-4">{limitErr}</div>}
     </form>
   );
 }

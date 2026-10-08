@@ -28,9 +28,9 @@ const HOME = "00000000-0000-0000-0000-000000000001";
 const seedConsole = (extra = "") => `${empty}
   window.__seedRows.orgs = [{ id: "${HOME}", name: "OneVio" }];
   window.__seedOrgs = [
-    { id: "${HOME}", name: "OneVio", created_at: "2025-01-01", users: 12, disabled: false },
-    { id: "org-b", name: "Beta Ltd", created_at: "2026-02-01", users: 1, disabled: false },
-    { id: "org-c", name: "Gone Inc", created_at: "2026-03-01", users: 4, disabled: true }];
+    { id: "${HOME}", name: "OneVio", created_at: "2025-01-01", users: 12, disabled: false, seats: 12, accounts: 0, max_users: null, max_accounts: null },
+    { id: "org-b", name: "Beta Ltd", created_at: "2026-02-01", users: 1, disabled: false, seats: 1, accounts: 0, max_users: null, max_accounts: null },
+    { id: "org-c", name: "Gone Inc", created_at: "2026-03-01", users: 4, disabled: true, seats: 4, accounts: 0, max_users: null, max_accounts: null }];
   window.__seedProfile = { id: "u1", name: "Owner", role: "admin", org_id: "${HOME}", platform_admin: true };
   ${extra}`;
 
@@ -39,7 +39,7 @@ test("a platform admin lands on the console, not the CRM; an org admin lands on 
   await page.waitForSelector("[data-client-console] >> text=Beta Ltd", { timeout: 15000 });
   const txt = await page.textContent("[data-client-console]");
   assert(/OneVio/.test(txt) && /Gone Inc/.test(txt), "orgs not all listed");
-  assert(/12 users/.test(txt) && /1 user\b/.test(txt), "user counts missing");
+  assert(txt.includes("12 / ∞ users") && txt.includes("1 / ∞ users"), "user counts missing");
   assert(await page.$('[data-org-disabled="org-c"]'), "disabled badge missing");
   assert(!(await page.$('[data-org-disabled="org-b"]')), "enabled org badged as disabled");
   assert(!(await page.$('button[title="Settings"]')), "CRM nav rendered on the console");
@@ -199,5 +199,53 @@ test("a profile load that throws reports it instead of hanging silently", async 
   await page.waitForFunction(() => window.__alerted, null, { timeout: 15000 });
   const msg = await page.evaluate(() => window.__alerted);
   assert(/Could not load your profile: mock profile rejection/.test(msg), msg);
+  await browser.close();
+});
+
+const seedLimits = () => seedConsole(`window.__seedOrgs = [
+  { id: "${HOME}", name: "OneVio", created_at: "2025-01-01", users: 12, disabled: false, seats: 12, accounts: 40, max_users: null, max_accounts: null },
+  { id: "org-b", name: "Beta Ltd", created_at: "2026-02-01", users: 8, disabled: false, seats: 8, accounts: 3, max_users: 5, max_accounts: 10 }];`);
+
+test("console shows usage against limits, amber when over", async () => {
+  const { page, browser } = await launch(seedLimits());
+  await page.waitForSelector("[data-org-usage='org-b']", { timeout: 15000 });
+  const b = await page.textContent("[data-org-usage='org-b']");
+  assert(b.includes("8 / 5 users") && b.includes("3 / 10 accounts"), `org-b usage: ${b}`);
+  assert(await page.$("[data-org-usage='org-b'] [data-over-limit='users']"), "over-limit users not flagged");
+  assert(!(await page.$("[data-org-usage='org-b'] [data-over-limit='accounts']")), "accounts flagged though under");
+  const h = await page.textContent(`[data-org-usage='${HOME}']`);
+  assert(h.includes("12 / ∞ users") && h.includes("40 / ∞ accounts"), `home usage: ${h}`);
+  await browser.close();
+});
+
+test("create client sends limits; Unlimited sends null; below-minimum is refused in the form", async () => {
+  const { page, browser } = await launch(seedLimits());
+  await page.click("[data-new-client]");
+  await page.fill("input[placeholder='Client name']", "Gamma");
+  await page.fill("input[placeholder='Admin name']", "Gail");
+  await page.fill("input[placeholder='Admin email']", "gail@gamma.test");
+  await page.fill("input[placeholder='Temporary password']", "secret1");
+  await page.uncheck("[data-limit-unlimited='users']");
+  await page.fill("[data-limit-input='users']", "1");
+  await page.click("text=Create client");
+  assert((await rootText(page)).includes("Must be at least 2."), "below-minimum users not refused");
+  assert(!(await page.evaluate(() => (window.__rpcCalls || []).some(c => c.fn === "create_org"))), "create_org called with an invalid limit");
+  await page.fill("[data-limit-input='users']", "6");
+  await page.click("text=Create client");
+  await page.waitForFunction(() => (window.__rpcCalls || []).some(c => c.fn === "create_org"));
+  const [call] = await page.evaluate(() => window.__rpcCalls.filter(c => c.fn === "create_org"));
+  assert(call.args.p_max_users === 6 && call.args.p_max_accounts === null, `args: ${JSON.stringify(call.args)}`);
+  await browser.close();
+});
+
+test("Edit limits calls set_org_limits with the new values", async () => {
+  const { page, browser } = await launch(seedLimits());
+  await page.click("[data-edit-limits='org-b']");
+  await page.fill("[data-limit-input='accounts']", "25");
+  await page.check("[data-limit-unlimited='users']");
+  await page.click("[data-save-limits]");
+  await page.waitForFunction(() => (window.__rpcCalls || []).some(c => c.fn === "set_org_limits"));
+  const [call] = await page.evaluate(() => window.__rpcCalls.filter(c => c.fn === "set_org_limits"));
+  assert(call.args.p_org_id === "org-b" && call.args.p_max_users === null && call.args.p_max_accounts === 25, JSON.stringify(call.args));
   await browser.close();
 });

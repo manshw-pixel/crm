@@ -123,6 +123,17 @@ OneVio's own staff but not the platform admin. Picking up this feature requires 
 `supabase-setup.sql` **whole, top to bottom**, then `email-alerts.sql` — both in the SQL
 editor, in that order.
 
+### Client limits
+Each client can have a **Max users** (minimum 2) and a **Max accounts** (minimum 5); leave
+"Unlimited" ticked for no cap. Set them when creating the client, or later with **Edit limits**.
+- Users = enabled members + open invites (your own platform-admin login never counts).
+- Accounts = every account in the client, churned included.
+- At the limit, invites, re-enabling a user, adding an account and CSV imports that add
+  accounts are refused with "Your plan allows N … — contact OneVio to raise it."
+- Lowering a limit below current usage removes nothing; the row shows in amber and the
+  client cannot add more until under the limit.
+After deploying, re-run `supabase-setup.sql` in the Supabase SQL editor.
+
 ## Disabling a user
 
 Admins can disable a colleague from **Settings → Users** instead of deleting their

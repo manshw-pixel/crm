@@ -115,6 +115,24 @@ const signUpMessage = (name, role, status) =>
   status === "exists" ? `${name}'s email already has a login, so no new login was created. Ask them to sign in; if they still see "not attached to a workspace", tell your platform admin.`
   : status === "pending" ? `${name} added as ${role}. A confirmation email was sent: they must click its link before they can sign in with the temporary password.`
   : `${name} added as ${role}. Share the email + temporary password with them (they can change it via "Forgot password?").`;
+// One limit: a number box plus an "Unlimited" tick. value = { unlimited: bool, raw: string }.
+function LimitField({ kind, label, value, onChange, error }) {
+  return (
+    <div className="text-xs text-slate-600">
+      <div className="mb-1 font-semibold">{label}</div>
+      <div className="flex items-center gap-2">
+        <Input data-limit-input={kind} type="number" min={LIMIT_MIN[kind]} disabled={value.unlimited}
+          placeholder={`min ${LIMIT_MIN[kind]}`} value={value.raw}
+          onChange={e => onChange({ ...value, raw: e.target.value })} />
+        <label className="flex items-center gap-1 whitespace-nowrap">
+          <input data-limit-unlimited={kind} type="checkbox" checked={value.unlimited}
+            onChange={e => onChange({ ...value, unlimited: e.target.checked })} /> Unlimited
+        </label>
+      </div>
+      {error && <div className="mt-1 text-rose-600">{error}</div>}
+    </div>
+  );
+}
 function ClientConsole({ me, onEnter }) {
   const [orgs, setOrgs] = useState([]);
   const [v, setV] = useState({ name: "", adminName: "", email: "", pass: "" });
@@ -123,17 +141,35 @@ function ClientConsole({ me, onEnter }) {
   const [err, setErr] = useState("");
   const [msg, setMsg] = useState("");
   const [confirmOrg, setConfirmOrg] = useState(null); // the org pending disable
+  const UNL = { unlimited: true, raw: "" };
+  const [lim, setLim] = useState({ users: UNL, accounts: UNL });
+  const [limErr, setLimErr] = useState({});
+  const [editOrg, setEditOrg] = useState(null);
+  const readLimits = l => {
+    const u = parseLimit(l.users.unlimited, l.users.raw, LIMIT_MIN.users);
+    const a = parseLimit(l.accounts.unlimited, l.accounts.raw, LIMIT_MIN.accounts);
+    setLimErr({ users: u.error, accounts: a.error });
+    return u.error || a.error ? null : { p_max_users: u.value, p_max_accounts: a.value };
+  };
+  const saveLimits = async () => {
+    setErr(""); setMsg("");
+    const limits = readLimits(lim); if (!limits) return;
+    const { error } = await sb.rpc("set_org_limits", { p_org_id: editOrg.id, ...limits });
+    if (error) return setErr(error.message);
+    setMsg(`${editOrg.name} limits saved.`); setEditOrg(null); setLim({ users: UNL, accounts: UNL }); load();
+  };
   const load = () => sb.rpc("list_orgs").then(({ data, error }) => error ? setErr(error.message) : setOrgs(data || []));
   useEffect(() => { load(); }, []);
   const createClient = async e => {
     e.preventDefault(); setErr(""); setMsg("");
     if (!v.name.trim() || !v.adminName.trim() || !v.email.trim()) return setErr("Client name, admin name and admin email are required.");
     if (v.pass.length < 6) return setErr("Temporary password must be at least 6 characters.");
+    const limits = readLimits(lim); if (!limits) return;
     setBusy(true);
     try {
       // create_org refuses a duplicate name, an address with an open invite and a login in
       // another workspace; its message goes to the user as-is. It attaches an org-less login.
-      const { error } = await sb.rpc("create_org", { p_name: v.name.trim(), p_admin_email: v.email.trim() });
+      const { error } = await sb.rpc("create_org", { p_name: v.name.trim(), p_admin_email: v.email.trim(), ...limits });
       if (error) throw error;
       // Otherwise it left an admin invite, which handle_new_user applies to this sign-up.
       // 'exists' can then only mean the org-less login create_org already attached.
@@ -142,6 +178,7 @@ function ClientConsole({ me, onEnter }) {
         ? `Existing login added to it as admin: ${v.adminName.trim()} signs in with their current password.`
         : signUpMessage(v.adminName.trim(), "admin", status)));
       setV({ name: "", adminName: "", email: "", pass: "" });
+      setLim({ users: UNL, accounts: UNL });
     } catch (ex) { setErr(ex.message); }
     load();
     setBusy(false);
@@ -177,26 +214,58 @@ function ClientConsole({ me, onEnter }) {
         </div>
         <Card title={`Clients (${orgs.length})`}>
           {orgs.map(o => (
-            <div key={o.id} data-org-row={o.id} className="flex items-center gap-3 border-b border-slate-100 py-2 text-sm last:border-0">
+            <React.Fragment key={o.id}>
+            <div data-org-row={o.id} className="flex items-center gap-3 border-b border-slate-100 py-2 text-sm last:border-0">
               <span className="flex-1">
                 <div className="font-medium">{o.name}</div>
-                <div className="text-xs text-slate-500">{o.users} user{o.users === 1 ? "" : "s"} · since {String(o.created_at).slice(0, 10)}</div>
+                <div data-org-usage={o.id} className="text-xs text-slate-500">
+                  <span data-over-limit={isOverLimit(o.seats, o.max_users) ? "users" : undefined}
+                    className={isOverLimit(o.seats, o.max_users) ? "font-semibold text-amber-600" : ""}>
+                    {usageLabel(o.seats, o.max_users)} users</span>
+                  {" · "}
+                  <span data-over-limit={isOverLimit(o.accounts, o.max_accounts) ? "accounts" : undefined}
+                    className={isOverLimit(o.accounts, o.max_accounts) ? "font-semibold text-amber-600" : ""}>
+                    {usageLabel(o.accounts, o.max_accounts)} accounts</span>
+                  {" · since "}{String(o.created_at).slice(0, 10)}
+                </div>
               </span>
               {o.disabled
                 ? <span data-org-disabled={o.id} className="rounded bg-rose-50 px-1.5 py-0.5 text-xs font-semibold text-rose-700">Disabled</span>
                 : <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">Enabled</span>}
               <button data-org-toggle={o.id} className="text-xs font-bold text-slate-600 hover:underline"
                 onClick={() => o.disabled ? applyDisabled(o, false) : setConfirmOrg(o)}>{o.disabled ? "Enable" : "Disable"}</button>
+              <button data-edit-limits={o.id} className="text-xs font-bold text-slate-600 hover:underline"
+                onClick={() => { setShowNew(false); setLimErr({}); setEditOrg(o); setLim({
+                  users: o.max_users == null ? UNL : { unlimited: false, raw: String(o.max_users) },
+                  accounts: o.max_accounts == null ? UNL : { unlimited: false, raw: String(o.max_accounts) } }); }}>Edit limits</button>
               <button data-open-org={o.id} className="text-xs font-bold text-indigo-600 hover:underline" onClick={() => open(o)}>Open</button>
             </div>
+            {editOrg && editOrg.id === o.id && (
+              <div className="grid gap-2 border-b border-slate-100 py-2 sm:grid-cols-2">
+                <LimitField kind="users" label="Max users" value={lim.users} error={limErr.users}
+                  onChange={x => setLim({ ...lim, users: x })} />
+                <LimitField kind="accounts" label="Max accounts" value={lim.accounts} error={limErr.accounts}
+                  onChange={x => setLim({ ...lim, accounts: x })} />
+                <div className="flex gap-2 sm:col-span-2">
+                  <Btn kind="primary" data-save-limits onClick={saveLimits}>Save limits</Btn>
+                  <Btn onClick={() => setEditOrg(null)}>Cancel</Btn>
+                </div>
+                <p className="text-xs text-slate-500 sm:col-span-2">A limit below current usage removes nothing — the client just can't add more.</p>
+              </div>
+            )}
+            </React.Fragment>
           ))}
           <div className="mt-3">
-            {!showNew && <Btn data-new-client onClick={() => setShowNew(true)}>+ New client</Btn>}
-            {showNew && <form onSubmit={createClient} className="grid gap-2 sm:grid-cols-2">
+            {!showNew && <Btn data-new-client onClick={() => { setEditOrg(null); setLimErr({}); setLim({ users: UNL, accounts: UNL }); setShowNew(true); }}>+ New client</Btn>}
+            {showNew && <form noValidate onSubmit={createClient} className="grid gap-2 sm:grid-cols-2">
               <Input placeholder="Client name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} />
               <Input placeholder="Admin name" value={v.adminName} onChange={e => setV({ ...v, adminName: e.target.value })} />
               <Input type="email" placeholder="Admin email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} />
               <Input type="password" placeholder="Temporary password" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} />
+              <LimitField kind="users" label="Max users" value={lim.users} error={limErr.users}
+                onChange={x => setLim({ ...lim, users: x })} />
+              <LimitField kind="accounts" label="Max accounts" value={lim.accounts} error={limErr.accounts}
+                onChange={x => setLim({ ...lim, accounts: x })} />
               <div className="sm:col-span-2"><Btn kind="primary" type="submit" disabled={busy}>{busy ? "…" : "Create client"}</Btn></div>
             </form>}
           </div>

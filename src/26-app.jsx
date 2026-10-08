@@ -118,6 +118,18 @@ function App({ user, onBackToClients }) {
     if (!user.platform_admin || !user.org_id) return;
     sb.from("orgs").select("name").eq("id", user.org_id).single().then(({ data }) => data && setOrgName(data.name));
   }, [user.org_id, user.platform_admin]);
+  // Client limits: every member reads their own org row (orgs_select), not just platform admins.
+  useEffect(() => {
+    // Reset first so a platform admin switching clients never keeps the previous client's limit,
+    // and ignore a slow response that lands after the org changed again.
+    ORG_LIMITS.maxAccounts = null; ORG_LIMITS.loaded = false;
+    if (!user.org_id) return;
+    let cancelled = false;
+    sb.from("orgs").select("max_accounts").eq("id", user.org_id).single()
+      .then(({ data }) => { if (cancelled) return; ORG_LIMITS.maxAccounts = data?.max_accounts ?? null; ORG_LIMITS.loaded = true; })
+      .catch(() => { if (!cancelled) ORG_LIMITS.loaded = true; }); // a failed read is treated as Unlimited, as before
+    return () => { cancelled = true; };
+  }, [user.org_id]);
   const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
@@ -576,6 +588,7 @@ function Root() {
   // throws before any view renders, and without this the user gets a blank white page.
   return <ToastProvider><ViewBoundary view="the app"><App user={profile} onBackToClients={() => { inClientSet(false); setInClient(false); }} /></ViewBoundary></ToastProvider>;
 }
+window.__orgLimits = ORG_LIMITS; // test seam: lets tests wait for the org limit to load
 window.__health = { bandImpact, windowScore, recencyBreakdown, scoreComponents, healthScore, mergeSettings, ACTIVITY_TYPES, VALUE_ITEMS, parseCsvDate, csvDateOrder, importBillingCSV, isoPlus, addMonths, BAND_RANK, healthPlaybookOf, DEFAULT_HEALTH_PLAYBOOK, backfillCandidates, bucketTasks, filterTasks, parseCSV, importAccountsCSV, accountsCSVText,
   retentionStats, cohortData, churnRows, renewalOutcomeRows, quarterKey, monthsBetween, toUSD, diffRow, writeQueue, reportError, fingerprintOf,
   lastCompletedDecember, arrAsOf, accountRetention, amBookMovement };

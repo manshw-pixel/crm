@@ -20,6 +20,19 @@ alter table public.orgs enable row level security;
 -- ANDed into is_active() AND is_admin(), so every policy and every definer RPC that gates
 -- on either inherits it. Data is kept; re-enabling restores access.
 alter table public.orgs add column if not exists disabled boolean not null default false;
+-- Client limits, set by the platform admin on the Clients console. null = Unlimited.
+-- The minimums live in the table, so no writer (RPC, SQL editor) can store a smaller value.
+alter table public.orgs add column if not exists max_users int;
+alter table public.orgs add column if not exists max_accounts int;
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'orgs_max_users_min') then
+    alter table public.orgs add constraint orgs_max_users_min check (max_users is null or max_users >= 2);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'orgs_max_accounts_min') then
+    alter table public.orgs add constraint orgs_max_accounts_min check (max_accounts is null or max_accounts >= 5);
+  end if;
+end $$;
 insert into public.orgs (id, name)
 values ('00000000-0000-0000-0000-000000000001', 'My Company')   -- EDIT ME: your company name
 on conflict (id) do nothing;
@@ -451,6 +464,7 @@ returns void language plpgsql security invoker set search_path = public as $$
 declare
   t text;
   items jsonb;
+  lim int;
 begin
   -- Explicit, not incidental. An RLS-denied DELETE raises nothing and simply affects zero
   -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
@@ -464,6 +478,13 @@ begin
   -- success, since there is nothing for the row-id check to reject.
   if payload is null then
     raise exception 'replace_all: no payload';
+  end if;
+
+  -- Refuse an over-limit restore BEFORE the deletes, with the plan message, rather than letting
+  -- the account trigger fail it part-way (it would roll back, but with a less useful error).
+  select max_accounts into lim from orgs where id = public.current_org();
+  if lim is not null and jsonb_array_length(coalesce(payload -> 'accounts', '[]'::jsonb)) > lim then
+    raise exception 'Your plan allows % accounts — contact OneVio to raise it.', lim;
   end if;
 
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
@@ -864,6 +885,86 @@ begin
 end $$;
 revoke execute on function public.attach_orgless_login(text, text, uuid, uuid, text) from public, anon, authenticated;
 
+-- ---------- client limits: seats ----------
+-- A seat is an enabled member or an open invite. The platform admin never uses one: switch_org
+-- puts their profile inside whichever client they open.
+create or replace function public.org_seat_count(p_org uuid)
+returns int language sql stable security definer set search_path = public as
+$$ select (select count(*) from profiles where org_id = p_org and not disabled and not platform_admin)::int
+        + (select count(*) from invites where org_id = p_org and accepted_at is null)::int $$;
+
+-- Locks the org row first, so two concurrent invites cannot both see the last free seat.
+create or replace function public.assert_seat_available(p_org uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare lim int;
+begin
+  select max_users into lim from orgs where id = p_org for update;
+  if lim is not null and public.org_seat_count(p_org) >= lim then
+    raise exception 'Your plan allows % users — contact OneVio to raise it.', lim;
+  end if;
+end $$;
+revoke execute on function public.org_seat_count(uuid) from public, anon, authenticated;
+revoke execute on function public.assert_seat_available(uuid) from public, anon, authenticated;
+
+-- The invites_insert policy lets an org admin insert invites straight through the API, which
+-- would walk around invite_user's check. Hold every open-invite insert to the limit here.
+-- BEFORE INSERT also fires for `insert ... on conflict do update`, so an address that already
+-- has an open invite in this org (a re-send) takes no new seat and passes.
+create or replace function public.guard_invite_seat()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.accepted_at is null
+     and not exists (select 1 from invites where lower(email) = lower(new.email)
+                     and org_id = new.org_id and accepted_at is null) then
+    perform public.assert_seat_available(new.org_id);
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_invite_seat on public.invites;
+create trigger guard_invite_seat
+  before insert on public.invites
+  for each row execute function public.guard_invite_seat();
+
+-- Re-enabling a disabled user takes a seat back, so it is held to the same limit. The row
+-- being enabled is still disabled while this runs, so it is not in the count yet.
+create or replace function public.guard_seat_on_enable()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if old.disabled and not new.disabled and new.org_id is not null and not new.platform_admin then
+    perform public.assert_seat_available(new.org_id);
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_seat_on_enable on public.profiles;
+create trigger guard_seat_on_enable
+  before update of disabled on public.profiles
+  for each row execute function public.guard_seat_on_enable();
+
+-- ---------- client limits: accounts ----------
+-- BEFORE INSERT also fires for `insert ... on conflict do update`, which merge_row uses for
+-- EVERY account edit. An id that already exists is an edit, not a new account: let it through,
+-- or every save is refused once a client reaches its limit.
+create or replace function public.guard_account_limit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare lim int;
+begin
+  -- Unlocked fast path: Unlimited orgs and edits of existing accounts never touch the org row lock.
+  select max_accounts into lim from orgs where id = new.org_id;
+  if lim is null then return new; end if;
+  if exists (select 1 from accounts where org_id = new.org_id and id = new.id) then return new; end if;
+  -- A real insert under a limit: lock the org row and re-read, so concurrent inserts cannot both take the last slot.
+  select max_accounts into lim from orgs where id = new.org_id for update;
+  if lim is null then return new; end if;
+  if (select count(*) from accounts where org_id = new.org_id) >= lim then
+    raise exception 'Your plan allows % accounts — contact OneVio to raise it.', lim;
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_account_limit on public.accounts;
+create trigger guard_account_limit
+  before insert on public.accounts
+  for each row execute function public.guard_account_limit();
+
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.
@@ -900,6 +1001,7 @@ begin
     elsif existing.org_id is not null then
       raise exception 'invite_user: % already belongs to another workspace', addr;
     end if;
+    perform public.assert_seat_available(public.current_org());
     perform public.attach_orgless_login('invite_user', addr, existing.id, public.current_org(), p_role);
     insert into invites (email, org_id, role, created_by, accepted_at)
     values (addr, public.current_org(), p_role, auth.uid(), now())
@@ -911,6 +1013,11 @@ begin
              and org_id <> public.current_org()) then
     raise exception 'invite_user: % already has an open invite to another workspace', addr;
   end if;
+  -- Re-sending an open invite to the same address takes no new seat.
+  if not exists (select 1 from invites where lower(email) = addr and org_id = public.current_org()
+                 and accepted_at is null) then
+    perform public.assert_seat_available(public.current_org());
+  end if;
   insert into invites (email, org_id, role, created_by)
   values (addr, public.current_org(), p_role, auth.uid())
   on conflict (email, org_id) do update
@@ -918,7 +1025,9 @@ begin
   return 'invited';
 end $$;
 
-create or replace function public.create_org(p_name text, p_admin_email text)
+drop function if exists public.create_org(text, text);
+create or replace function public.create_org(p_name text, p_admin_email text,
+                                             p_max_users int default null, p_max_accounts int default null)
 returns uuid language plpgsql security definer set search_path = public as $$
 declare
   new_id uuid;
@@ -934,6 +1043,12 @@ begin
   end if;
   if not public.valid_email(addr) then
     raise exception 'create_org: % is not a valid email address', p_admin_email;
+  end if;
+  if p_max_users is not null and p_max_users < 2 then
+    raise exception 'create_org: max users must be at least 2';
+  end if;
+  if p_max_accounts is not null and p_max_accounts < 5 then
+    raise exception 'create_org: max accounts must be at least 5';
   end if;
   -- A retry must error, not duplicate. Both checks run before any insert; and the whole body
   -- is one transaction, so a later failure leaves no half-created org behind.
@@ -952,7 +1067,7 @@ begin
   if existing_org is not null then
     raise exception 'create_org: % already belongs to another workspace', addr;
   end if;
-  insert into orgs (name) values (trim(p_name)) returning id into new_id;
+  insert into orgs (name, max_users, max_accounts) values (trim(p_name), p_max_users, p_max_accounts) returning id into new_id;
   insert into settings (org_id, data) values (new_id, '{}'::jsonb);
   -- org_alert_prefs lives in email-alerts.sql, which may not be installed on a fresh stack.
   if to_regclass('public.org_alert_prefs') is not null then
@@ -983,7 +1098,8 @@ end $$;
 
 drop function if exists public.list_orgs();
 create or replace function public.list_orgs()
-returns table(id uuid, name text, created_at timestamptz, users int, disabled boolean)
+returns table(id uuid, name text, created_at timestamptz, users int, disabled boolean,
+              seats int, accounts int, max_users int, max_accounts int)
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_platform_admin() then
@@ -992,7 +1108,10 @@ begin
   return query
     select o.id, o.name, o.created_at,
            (select count(*)::int from profiles p where p.org_id = o.id and not p.disabled),
-           o.disabled
+           o.disabled,
+           public.org_seat_count(o.id),
+           (select count(*)::int from accounts a where a.org_id = o.id),
+           o.max_users, o.max_accounts
     from orgs o order by o.created_at;
 end $$;
 
@@ -1010,16 +1129,37 @@ begin
   end if;
 end $$;
 
+-- A limit below current usage is allowed: nothing is removed, the client just cannot add more.
+create or replace function public.set_org_limits(p_org_id uuid, p_max_users int, p_max_accounts int)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then
+    raise exception 'set_org_limits: platform admin only';
+  end if;
+  if p_max_users is not null and p_max_users < 2 then
+    raise exception 'set_org_limits: max users must be at least 2';
+  end if;
+  if p_max_accounts is not null and p_max_accounts < 5 then
+    raise exception 'set_org_limits: max accounts must be at least 5';
+  end if;
+  update orgs set max_users = p_max_users, max_accounts = p_max_accounts where id = p_org_id;
+  if not found then
+    raise exception 'set_org_limits: no such org';
+  end if;
+end $$;
+
 revoke execute on function public.invite_user(text, text) from public, anon;
-revoke execute on function public.create_org(text, text) from public, anon;
+revoke execute on function public.create_org(text, text, int, int) from public, anon;
 revoke execute on function public.switch_org(uuid) from public, anon;
 revoke execute on function public.list_orgs() from public, anon;
 revoke execute on function public.set_org_disabled(uuid, boolean) from public, anon;
 grant execute on function public.invite_user(text, text) to authenticated;
-grant execute on function public.create_org(text, text) to authenticated;
+grant execute on function public.create_org(text, text, int, int) to authenticated;
 grant execute on function public.switch_org(uuid) to authenticated;
 grant execute on function public.list_orgs() to authenticated;
 grant execute on function public.set_org_disabled(uuid, boolean) to authenticated;
+revoke execute on function public.set_org_limits(uuid, int, int) from public, anon;
+grant execute on function public.set_org_limits(uuid, int, int) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
