@@ -17,6 +17,9 @@ teams. It has two jobs:
   testimonials, user counts or uptime figures. Screenshots use **demo data only**, never
   production data.
 
+## Contact address
+`manshw@gmail.com` is the contact address shown on the site (form error state, footer, privacy page) and the inbox demo-request emails go to.
+
 ## Components and where they live
 
 | Unit | Repo | Responsibility |
@@ -101,7 +104,7 @@ sold or shared, and the contact address for deletion. `404.html` links home and 
 
 **Email** (in `email-alerts.sql`, so it's absent when alerts aren't installed):
 - `notify_demo_request(p_id uuid)` sends one Brevo email via the existing `alert_post` and
-  `alert_config` (api_key, from_email, from_name, api_base) to every platform admin's email.
+  `alert_config` (api_key, from_email, from_name, api_base) to `manshw@gmail.com` (the platform admin's sign-in email; recipients are read from platform-admin profiles, so it follows that account).
 - Subject: `New demo request: <company>`.
 - Body: the escaped fields, using `html_escape`.
 - A missing key or config means it silently skips: the request is still stored, and the console is the source of truth.
