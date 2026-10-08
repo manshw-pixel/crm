@@ -20,8 +20,8 @@ const writes = page => page.evaluate(() => {
     edits: acc.filter(c => seeded(c.args.row_id) && ("arr" in c.args.patch || "name" in c.args.patch)).length };
 });
 const ready = (page, n) => page.waitForFunction(k => window.__store && window.__store.getState().accounts.length === k, n);
-// ORG_LIMITS loads from an async orgs read after mount; give it time before acting.
-const settle = async page => { await page.waitForTimeout(600); await page.click('button[title="Accounts"]', { timeout: 10000 }); };
+// ORG_LIMITS loads from an async orgs read after mount; wait for the loaded marker, not a timer.
+const settle = async page => { await page.waitForFunction(() => window.__orgLimits && window.__orgLimits.loaded === true, null, { timeout: 15000 }); await page.click('button[title="Accounts"]', { timeout: 10000 }); };
 
 async function addAccount(page, name) {
   await page.click("text=+ New account", { timeout: 10000 });
@@ -94,6 +94,7 @@ test("Unlimited (max_accounts null) never blocks the form", async () => {
   const { page, browser } = await launch(seed(50, null));
   try {
     await ready(page, 50); await settle(page);
+    assert(await page.evaluate(() => window.__orgLimits.loaded && window.__orgLimits.maxAccounts === null), "expected loaded Unlimited, not an unloaded default");
     await addAccount(page, "Plenty");
     await page.waitForFunction(() => window.__store.getState().accounts.length === 51, null, { timeout: 15000 });
     await page.waitForTimeout(500);

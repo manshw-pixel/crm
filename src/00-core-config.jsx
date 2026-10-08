@@ -67,6 +67,7 @@ const signOut = async () => {
 // on the client: every other org decision is made by RLS and the org-stamping RPCs.
 // Client limits for the signed-in user's org, loaded by App from the orgs row. null = Unlimited.
 // The server enforces them; this only lets the UI refuse before an optimistic write.
-const ORG_LIMITS = { maxAccounts: null };
+// `loaded` flips true once the org row has been read (null maxAccounts then means Unlimited, not "not yet known").
+const ORG_LIMITS = { maxAccounts: null, loaded: false };
 let CURRENT_ORG = null;
 
