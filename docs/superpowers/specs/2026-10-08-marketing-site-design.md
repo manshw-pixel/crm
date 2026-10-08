@@ -29,9 +29,47 @@ teams. It has two jobs:
 | Demo requests list | `crm` (src/25-auth-admin.jsx, Clients console) | Platform admin reads requests |
 | Screenshot script | `crm` (`tests/site-shots.mjs`) | Render the app with a rich demo dataset and save PNGs |
 | Static site | new `onevio-site` repo | The pages, assets, form JS, Pages deploy |
+| Demo-form Worker | `crm` (`workers/demo-form/`) | Verify Cloudflare Turnstile, then call `submit_demo_request` with the shared secret |
 
-The site never ships CRM code. It only calls one RPC over HTTPS with the public anon key, which
-is the same key the CRM's browser bundle already ships.
+The site never ships CRM code, and never calls the database itself. The form posts to the demo-form
+Worker.
+
+## Captcha: Cloudflare Turnstile (agreed with user)
+**Flow:**
+1. The site loads the Turnstile widget (`https://challenges.cloudflare.com/turnstile/v0/api.js`),
+   which needs the **site key** (public).
+2. The form POSTs JSON `{name, company, email, team_size, message, website, token}` to the Worker
+   at `https://demo.onevio.in/` (a Worker custom domain).
+3. The Worker:
+   - Accepts only `POST` with `Origin` `https://onevio.in` or `https://www.onevio.in`. It answers the CORS preflight for those origins only.
+   - Rejects bodies over 8 KB.
+   - Verifies `token` at `https://challenges.cloudflare.com/turnstile/v0/siteverify` with the
+     **secret key** (Worker secret `TURNSTILE_SECRET`) and the visitor IP (`CF-Connecting-IP`).
+     A failed check returns 400 `{ok:false,error:"captcha"}`.
+   - On success, calls `submit_demo_request` with the anon key plus `p_secret` =
+     Worker secret `DEMO_FORM_SECRET`. This is the same shared-secret pattern as the touchpoints
+     Worker.
+   - Maps the RPC result to `{ok:true}`, or to `{ok:false,error:"<message>"}` with a safe, user-facing message. Secrets never appear in responses or logs.
+
+**Database side:** `submit_demo_request` gains `p_secret` and refuses unless it equals
+`demo_form_config.secret`. That's a one-row table with RLS on and no policies, set once by the operator in SQL. So
+calling the RPC directly with the public anon key, which skips the captcha, is refused.
+
+**Worker config:** vars `SUPABASE_URL`, `SUPABASE_ANON_KEY`; secrets `TURNSTILE_SECRET`,
+`DEMO_FORM_SECRET`. Same build/test layout as `workers/touchpoints` (esbuild bundle, node unit
+tests with a mocked fetch).
+
+**Failure behaviour:** if the widget fails to load or the Worker is unreachable, the form shows its
+error state with the contact email. The site never falls back to an unverified submit.
+
+**Privacy:** Turnstile sets no tracking cookies. The privacy page names Cloudflare Turnstile as the
+spam check.
+
+**User setup steps** (walked through in the plan):
+1. Cloudflare dashboard → Turnstile → add a widget for `onevio.in` and `www.onevio.in`, then copy the site key and the secret key.
+2. Deploy the Worker with the two secrets.
+3. Attach the custom domain `demo.onevio.in`.
+4. Run one SQL line to set `demo_form_config.secret`.
 
 ## Site structure (onevio-site)
 Files: `index.html`, `privacy.html`, `404.html`, `assets/` (screenshots as optimised PNG/WebP,
@@ -90,13 +128,14 @@ sold or shared, and the contact address for deletion. `404.html` links home and 
 - RLS is enabled with **no policies**, so nothing is readable or writable directly by anon or authenticated.
 
 **`submit_demo_request(p_name, p_company, p_email, p_team_size, p_message, p_website)`:**
-- Security definer, executable by `anon` and `authenticated`.
+- Security definer, executable by `anon` and `authenticated`, but useless without the shared secret held only by the Worker.
 - **Honeypot:** `p_website` is a hidden field. If it's non-empty, return `ok` and store nothing.
 - **Validation:** trims all fields. Name and company 1–120 characters; email passes `valid_email()` and is
   ≤ 200 characters; team_size is one of the four options or null; message ≤ 2000 characters.
   Violations raise `submit_demo_request: <field> ...`.
 - **Rate limit:** at most 3 requests per email per 24h, and 200 per 24h overall. Beyond that,
   raise `Too many requests — please email us instead.`
+- Requires `p_secret` = `demo_form_config.secret` (see Captcha); refuses otherwise.
 - Inserts the row, then calls the request email (below) when email alerts are installed.
 - Returns `'ok'`.
 
@@ -144,11 +183,12 @@ sold or shared, and the contact address for deletion. `404.html` links home and 
   - an org admin cannot.
   - Positive controls throughout.
 - **Health tests:** the Demo requests card renders the rows and the "new" highlight; a non-platform admin never calls `list_demo_requests`.
+- **Worker unit tests** (`tests/worker/demo-form.test.mjs`, mocked fetch): bad origin refused; preflight; oversized body; captcha failure stops before any RPC call; success passes the secret and form fields; RPC refusal mapped to a safe message; secrets never in responses.
 - **Site:**
   - A Playwright check against the static files, served locally: the Login href is exact, every anchor target exists, no horizontal scroll at 360px, and both themes render.
   - The form posts the right RPC args with the mocked fetch, shows the success state, and shows the error state.
 - **Manual after DNS:** https://onevio.in loads with a valid certificate; a real demo request appears on the console and arrives by email.
 
 ## Out of scope
-Blog, pricing, analytics/tracking scripts, cookie banner (no cookies are set), multi-language,
+Blog, pricing, analytics/tracking scripts, cookie banner (no tracking cookies are set), multi-language,
 self-serve sign-up.
