@@ -5,7 +5,8 @@
   "scripts": {
     "build": "node build.mjs",
     "build:worker": "node workers/touchpoints/build.mjs",
-    "test:worker": "node tests/worker/touchpoints.test.mjs",
+    "build:demo-worker": "node workers/demo-form/build.mjs",
+    "test:worker": "node tests/worker/touchpoints.test.mjs && node tests/worker/demo-form.test.mjs",
     "test:unit": "node --test \"tests/unit/*.test.mjs\""
   },
   "devDependencies": {
