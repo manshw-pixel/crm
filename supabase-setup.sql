@@ -464,6 +464,7 @@ returns void language plpgsql security invoker set search_path = public as $$
 declare
   t text;
   items jsonb;
+  lim int;
 begin
   -- Explicit, not incidental. An RLS-denied DELETE raises nothing and simply affects zero
   -- rows, so without this a non-admin's call would sail past `accounts` and still wipe the
@@ -477,6 +478,13 @@ begin
   -- success, since there is nothing for the row-id check to reject.
   if payload is null then
     raise exception 'replace_all: no payload';
+  end if;
+
+  -- Refuse an over-limit restore BEFORE the deletes, with the plan message, rather than letting
+  -- the account trigger fail it part-way (it would roll back, but with a less useful error).
+  select max_accounts into lim from orgs where id = public.current_org();
+  if lim is not null and jsonb_array_length(coalesce(payload -> 'accounts', '[]'::jsonb)) > lim then
+    raise exception 'Your plan allows % accounts — contact OneVio to raise it.', lim;
   end if;
 
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
@@ -912,6 +920,27 @@ drop trigger if exists guard_seat_on_enable on public.profiles;
 create trigger guard_seat_on_enable
   before update of disabled on public.profiles
   for each row execute function public.guard_seat_on_enable();
+
+-- ---------- client limits: accounts ----------
+-- BEFORE INSERT also fires for `insert ... on conflict do update`, which merge_row uses for
+-- EVERY account edit. An id that already exists is an edit, not a new account: let it through,
+-- or every save is refused once a client reaches its limit.
+create or replace function public.guard_account_limit()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare lim int;
+begin
+  select max_accounts into lim from orgs where id = new.org_id for update;
+  if lim is null then return new; end if;
+  if exists (select 1 from accounts where org_id = new.org_id and id = new.id) then return new; end if;
+  if (select count(*) from accounts where org_id = new.org_id) >= lim then
+    raise exception 'Your plan allows % accounts — contact OneVio to raise it.', lim;
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_account_limit on public.accounts;
+create trigger guard_account_limit
+  before insert on public.accounts
+  for each row execute function public.guard_account_limit();
 
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not

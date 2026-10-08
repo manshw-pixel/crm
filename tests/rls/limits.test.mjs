@@ -84,3 +84,54 @@ test("limits below the minimums are rejected by the table", async () => {
   await setLimits(ORG_B, 2, 5); // control: the minimums themselves are valid
   await setLimits(ORG_B, null, null);
 });
+
+const ACCTS_MSG = /Your plan allows \d+ accounts — contact OneVio to raise it\./;
+const acctCount = async org => (await sql(`select count(*)::int as n from accounts where org_id = $1`, [org]))[0].n;
+const dropLimAccounts = () => sql(`delete from accounts where id like 'lim-%'`);
+
+// Fill org B to exactly lim accounts (lim >= 5) BEFORE setting the limit (the trigger would block the fill).
+async function atAccountLimit(org) {
+  let n = await acctCount(org);
+  for (let i = 0; n < 5; i++, n++)
+    await sql(`insert into accounts (org_id, id, data) values ($1, $2, '{"name":"lim fill"}')`, [org, `lim-fill${i}`]);
+  await setLimits(org, null, n);
+  return n;
+}
+
+test("a new account is blocked at max_accounts; editing an existing one is not; one below is allowed", async () => {
+  try {
+    const lim = await atAccountLimit(ORG_B);
+    const existing = (await sql(`select id from accounts where org_id = $1 limit 1`, [ORG_B]))[0].id;
+    const edit = await sessions.userB.rpc("merge_row", { tbl: "accounts", row_id: existing, patch: { limTouch: 1 }, appends: {} });
+    assert(!edit.error, `editing an existing account at the limit was blocked: ${edit.error?.message}`);
+    const blocked = await sessions.userB.rpc("merge_row", { tbl: "accounts", row_id: "lim-new", patch: { name: "New" }, appends: {} });
+    assert(blocked.error && ACCTS_MSG.test(blocked.error.message), `new account at the limit not blocked: ${JSON.stringify(blocked)}`);
+    assert(await acctCount(ORG_B) === lim, "an account was written past the limit");
+    await setLimits(ORG_B, null, lim + 1);
+    const ok = await sessions.userB.rpc("merge_row", { tbl: "accounts", row_id: "lim-new", patch: { name: "New" }, appends: {} });
+    assert(!ok.error, `control: new account below the limit failed: ${ok.error?.message}`);
+  } finally { await setLimits(ORG_B, null, null); await dropLimAccounts(); }
+});
+
+test("Unlimited never blocks, and lowering a limit below usage keeps every account", async () => {
+  try {
+    const lim = await atAccountLimit(ORG_B);
+    await setLimits(ORG_B, null, null);
+    const ok = await sessions.userB.rpc("merge_row", { tbl: "accounts", row_id: "lim-unl", patch: { name: "U" }, appends: {} });
+    assert(!ok.error, `Unlimited blocked an insert: ${ok.error?.message}`);
+    await setLimits(ORG_B, null, 5); // below usage (lim + 1 >= 6)
+    assert(await acctCount(ORG_B) === lim + 1, "lowering the limit removed accounts");
+  } finally { await setLimits(ORG_B, null, null); await dropLimAccounts(); }
+});
+
+test("replace_all over the account limit fails before deleting anything", async () => {
+  try {
+    const lim = await atAccountLimit(ORG_B);
+    const before = await acctCount(ORG_B);
+    const payload = { accounts: Array.from({ length: lim + 1 }, (_, i) => ({ id: `lim-r${i}`, name: `R${i}` })),
+      contacts: [], activities: [], tasks: [], opportunities: [], settings: {} };
+    const r = await sessions.adminB.rpc("replace_all", { payload });
+    assert(r.error && r.error.message.includes(`allows ${lim} accounts`), `over-limit replace_all not refused: ${JSON.stringify(r)}`);
+    assert(await acctCount(ORG_B) === before, "replace_all changed accounts despite refusing");
+  } finally { await setLimits(ORG_B, null, null); await dropLimAccounts(); }
+});
