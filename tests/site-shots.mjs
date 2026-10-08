@@ -60,6 +60,14 @@ const EVENTS = {
 // A few genuinely new customers in the last 12 months (start date inside the window).
 const NEW_START = { 18: 150, 22: 200, 25: 240, 24: 120 };
 
+// Health mix target: 16 Green, 6 Yellow, 3 Red (index into ROWS). Inputs are set per band so the
+// book reads as a well-run team with a few realistic risks.
+const RED = new Set([6, 7, 16]), YELLOW = new Set([3, 12, 10, 4, 21, 19]);
+const inputsFor = (i, usage, sentiment, tickets, nps) => RED.has(i) ? { usage: 20 + (i % 3), sentiment: 18 + (i % 3), tickets: 10, nps: -55 }
+  : YELLOW.has(i) ? { usage: 60 + (i % 5), sentiment: 54 + (i % 4), tickets: 4, nps: 5 }
+  : { usage: 84 + (i % 9), sentiment: 80 + (i % 8), tickets: i % 3, nps: 40 + (i % 4) * 5 };
+const PENDING_BILLING = new Set([7, 6, 3, 16]); // the four renewing soonest
+const QBR_IN = { 3: 5, 8: 12, 13: 19, 18: 24, 23: 29, 7: -4 }; // 5 due in 30d, 1 overdue
 const accounts = [];
 ROWS.forEach((r, i) => {
   const [name, tier, usd, cur, industry, csm, [usage, sentiment, tickets, nps], renewIn, startAgo, lic] = r;
@@ -71,12 +79,13 @@ ROWS.forEach((r, i) => {
     id: `acc${i + 1}`, accountNo: i + 1, name, tier, arr, currency: cur, industry, csm,
     startDate: day(-(NEW_START[i] ?? startAgo)), renewalDate: day(renewIn),
     contractStatus: renewIn < 30 ? "In negotiation" : "Active",
-    inputs: { usage: usage >= 60 ? Math.min(96, usage + 8) : usage, sentiment: sentiment >= 55 ? Math.min(96, sentiment + 8) : sentiment, tickets, nps }, inputsUpdatedAt: day(-8),
+    inputs: inputsFor(i, usage, sentiment, tickets, nps), inputsUpdatedAt: day(-8),
+    billingCompleted: !PENDING_BILLING.has(i), billingCompletedDate: PENDING_BILLING.has(i) ? null : day(-(20 + (i * 7) % 60)),
     playbookSeededFor: day(renewIn), // stops the app auto-creating a renewal playbook task burst on load
     history: [-90, -60, -30, -7].map((off, k) => ({ d: day(off), s: Math.max(5, Math.min(98, base + trend[k] * 2)) })),
     arrEvents: ev,
     ...(lic ? { licenses: lic[0], ...(lic[1] != null ? { deployedLicenses: lic[1] } : {}) } : {}),
-    qbrFrequency: "Quarterly", nextQbrDate: day(((i * 11) % 80) - 8),
+    qbrFrequency: "Quarterly", nextQbrDate: day(QBR_IN[i] ?? 35 + (i * 13) % 50),
   }));
 });
 CHURNED.forEach(([name, tier, usd, cur, industry, csm, ago, reason], j) => {
@@ -108,6 +117,13 @@ const activities = [
   act("a10", "acc9", "call", -4, "Tidewater: kickoff for the field-ops rollout"),
 ];
 
+// Every other account gets one recent touch (7-25 days ago) so the book looks actively managed;
+// one account (acc12) is left quiet on purpose so a single "no activity" flag appears.
+const KINDS = [["call", "Check-in call: adoption on track"], ["email", "Sent usage summary and next steps"], ["call", "Roadmap walkthrough with the sponsor"], ["note", "Champion confirmed rollout plan"]];
+accounts.filter(a => !a.churn && a.id !== SHOW).forEach((a, k) => {
+  const [type, summary] = KINDS[k % 4];
+  activities.push(act("g" + k, a.id, type, a.id === "acc12" ? -40 : -(7 + (k * 5) % 19), summary, { loggedBy: a.csm }));
+});
 const tasks = [];
 const T = (accountId, title, off, priority, owner, status = "Open") => tasks.push({ id: `t${tasks.length}`, accountId, title, due: day(off), priority, status, owner });
 T("acc1", "Send multi-year renewal proposal", 3, "High", "Priya"); T("acc1", "Schedule expansion scoping for 100 seats", 9, "Medium", "Priya");
@@ -222,6 +238,8 @@ try {
 
   // Tasks
   await view("Tasks"); await page.waitForFunction(() => /Work queue/.test(document.getElementById("root").textContent));
+  for (const g of ["THIS WEEK", "LATER"]) await page.locator(`text=/^${g}$/i`).first().click();
+  await page.waitForFunction(() => document.querySelectorAll("#root input[type=checkbox]").length > 20);
   await top(); await shot("tasks");
 
   // Account page
