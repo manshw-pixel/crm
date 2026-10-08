@@ -75,14 +75,29 @@ test("re-enabling a user is blocked at max_users and allowed below", async () =>
 });
 
 test("limits below the minimums are rejected by the table", async () => {
-  let e1, e2;
-  try { await setLimits(ORG_B, 1, null); } catch (e) { e1 = e; }
-  try { await setLimits(ORG_B, null, 4); } catch (e) { e2 = e; }
-  await setLimits(ORG_B, null, null);
-  assert(e1 && /orgs_max_users_min/.test(e1.message), `max_users = 1 accepted (${e1?.message})`);
-  assert(e2 && /orgs_max_accounts_min/.test(e2.message), `max_accounts = 4 accepted (${e2?.message})`);
-  await setLimits(ORG_B, 2, 5); // control: the minimums themselves are valid
-  await setLimits(ORG_B, null, null);
+  try {
+    let e1, e2;
+    try { await setLimits(ORG_B, 1, null); } catch (e) { e1 = e; }
+    try { await setLimits(ORG_B, null, 4); } catch (e) { e2 = e; }
+    await setLimits(ORG_B, null, null);
+    assert(e1 && /orgs_max_users_min/.test(e1.message), `max_users = 1 accepted (${e1?.message})`);
+    assert(e2 && /orgs_max_accounts_min/.test(e2.message), `max_accounts = 4 accepted (${e2?.message})`);
+    await setLimits(ORG_B, 2, 5); // control: the minimums themselves are valid
+  } finally { await setLimits(ORG_B, null, null); }
+});
+
+test("a direct insert into invites cannot walk around max_users", async () => {
+  const direct = () => sessions.adminB.from("invites").insert({ email: "lim-direct@example.com", org_id: ORG_B, role: "user" });
+  const rows = async () => (await sql(`select 1 from invites where email = 'lim-direct@example.com'`)).length;
+  try {
+    const lim = await atSeatLimit(ORG_B);
+    const blocked = await direct();
+    assert(blocked.error && USERS_MSG.test(blocked.error.message), `direct invite at the limit not blocked: ${JSON.stringify(blocked)}`);
+    assert(await rows() === 0, "a direct invite row exists past the limit");
+    await setLimits(ORG_B, lim + 1, null);
+    const ok = await direct();
+    assert(!ok.error && await rows() === 1, `control: direct invite below the limit failed: ${ok.error?.message}`);
+  } finally { await setLimits(ORG_B, null, null); await dropInvites(); }
 });
 
 const ACCTS_MSG = /Your plan allows \d+ accounts — contact OneVio to raise it\./;

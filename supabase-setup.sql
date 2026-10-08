@@ -906,6 +906,25 @@ end $$;
 revoke execute on function public.org_seat_count(uuid) from public, anon, authenticated;
 revoke execute on function public.assert_seat_available(uuid) from public, anon, authenticated;
 
+-- The invites_insert policy lets an org admin insert invites straight through the API, which
+-- would walk around invite_user's check. Hold every open-invite insert to the limit here.
+-- BEFORE INSERT also fires for `insert ... on conflict do update`, so an address that already
+-- has an open invite in this org (a re-send) takes no new seat and passes.
+create or replace function public.guard_invite_seat()
+returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if new.accepted_at is null
+     and not exists (select 1 from invites where lower(email) = lower(new.email)
+                     and org_id = new.org_id and accepted_at is null) then
+    perform public.assert_seat_available(new.org_id);
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_invite_seat on public.invites;
+create trigger guard_invite_seat
+  before insert on public.invites
+  for each row execute function public.guard_invite_seat();
+
 -- Re-enabling a disabled user takes a seat back, so it is held to the same limit. The row
 -- being enabled is still disabled while this runs, so it is not in the count yet.
 create or replace function public.guard_seat_on_enable()
@@ -929,9 +948,13 @@ create or replace function public.guard_account_limit()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare lim int;
 begin
-  select max_accounts into lim from orgs where id = new.org_id for update;
+  -- Unlocked fast path: Unlimited orgs and edits of existing accounts never touch the org row lock.
+  select max_accounts into lim from orgs where id = new.org_id;
   if lim is null then return new; end if;
   if exists (select 1 from accounts where org_id = new.org_id and id = new.id) then return new; end if;
+  -- A real insert under a limit: lock the org row and re-read, so concurrent inserts cannot both take the last slot.
+  select max_accounts into lim from orgs where id = new.org_id for update;
+  if lim is null then return new; end if;
   if (select count(*) from accounts where org_id = new.org_id) >= lim then
     raise exception 'Your plan allows % accounts — contact OneVio to raise it.', lim;
   end if;
