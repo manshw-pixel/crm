@@ -1161,6 +1161,85 @@ grant execute on function public.set_org_disabled(uuid, boolean) to authenticate
 revoke execute on function public.set_org_limits(uuid, int, int) from public, anon;
 grant execute on function public.set_org_limits(uuid, int, int) to authenticated;
 
+-- ---------- demo requests (onevio.in) ----------
+-- The public site posts to the demo-form Worker, which checks Cloudflare Turnstile and then
+-- calls submit_demo_request with a shared secret. The anon key alone can reach this function,
+-- so the secret -- not the captcha -- is what the database relies on.
+create table if not exists public.demo_requests (
+  id uuid primary key default gen_random_uuid(),
+  created_at timestamptz not null default now(),
+  name text not null, company text not null, email text not null,
+  team_size text, message text, source text not null default 'onevio.in'
+);
+alter table public.demo_requests enable row level security;   -- no policies: RPCs only
+create index if not exists demo_requests_email_time on public.demo_requests (lower(email), created_at);
+
+create table if not exists public.demo_form_config (
+  id int primary key check (id = 1),
+  secret text not null default ''
+);
+alter table public.demo_form_config enable row level security; -- no policies: operator SQL only
+insert into public.demo_form_config (id) values (1) on conflict (id) do nothing;
+
+create or replace function public.submit_demo_request(p_secret text, p_name text, p_company text,
+  p_email text, p_team_size text, p_message text, p_website text)
+returns text language plpgsql security definer set search_path = public as $$
+declare
+  cfg text; n text := trim(coalesce(p_name, '')); c text := trim(coalesce(p_company, ''));
+  e text := lower(trim(coalesce(p_email, ''))); ts text := nullif(trim(coalesce(p_team_size, '')), '');
+  m text := nullif(trim(coalesce(p_message, '')), ''); new_id uuid;
+begin
+  select secret into cfg from demo_form_config where id = 1;
+  if coalesce(cfg, '') = '' or p_secret is null or p_secret <> cfg then
+    raise exception 'submit_demo_request: not allowed';
+  end if;
+  if coalesce(trim(p_website), '') <> '' then return 'ok'; end if;   -- honeypot: pretend success
+  if length(n) not between 1 and 120 then raise exception 'submit_demo_request: name must be 1-120 characters'; end if;
+  if length(c) not between 1 and 120 then raise exception 'submit_demo_request: company must be 1-120 characters'; end if;
+  if length(e) > 200 or not public.valid_email(e) then raise exception 'submit_demo_request: email is not valid'; end if;
+  if ts is not null and ts not in ('1–5', '6–20', '21–50', '50+') then raise exception 'submit_demo_request: team size is not valid'; end if;
+  if m is not null and length(m) > 2000 then raise exception 'submit_demo_request: message is too long'; end if;
+  if (select count(*) from demo_requests where lower(email) = e and created_at > now() - interval '24 hours') >= 3
+     or (select count(*) from demo_requests where created_at > now() - interval '24 hours') >= 200 then
+    raise exception 'Too many requests — please email us instead.';
+  end if;
+  insert into demo_requests (name, company, email, team_size, message)
+    values (n, c, e, ts, m) returning id into new_id;
+  -- The email lives in email-alerts.sql, which may not be installed. Never let mail break a request.
+  -- Both it and log_error_system are looked up at run time and called dynamically, so this file
+  -- does not depend on email-alerts.sql.
+  if to_regprocedure('public.notify_demo_request(uuid)') is not null then
+    begin
+      execute 'select public.notify_demo_request($1)' using new_id;
+    exception when others then
+      if to_regprocedure('public.log_error_system(text, text, text, jsonb)') is not null then
+        begin
+          execute 'select public.log_error_system($1, $2, $3, $4)'
+            using 'demo-request-email-failed', 'write_failed', sqlerrm, jsonb_build_object('id', new_id);
+        exception when others then null;
+        end;
+      else
+        null;
+      end if;
+    end;
+  end if;
+  return 'ok';
+end $$;
+
+create or replace function public.list_demo_requests()
+returns table(id uuid, created_at timestamptz, name text, company text, email text, team_size text, message text)
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_platform_admin() then raise exception 'list_demo_requests: platform admin only'; end if;
+  return query select d.id, d.created_at, d.name, d.company, d.email, d.team_size, d.message
+    from demo_requests d order by d.created_at desc limit 200;
+end $$;
+
+revoke execute on function public.submit_demo_request(text, text, text, text, text, text, text) from public;
+revoke execute on function public.list_demo_requests() from public, anon;
+grant execute on function public.submit_demo_request(text, text, text, text, text, text, text) to anon, authenticated;
+grant execute on function public.list_demo_requests() to authenticated;
+
 -- ---------- attachments (Supabase Storage) ----------
 -- Public bucket: anyone with a file's URL can view it (links are long
 -- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
