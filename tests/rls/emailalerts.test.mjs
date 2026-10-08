@@ -1322,3 +1322,52 @@ test("a refused log_error_system() call writes no error_log row", async () => {
   assert(after[0].message === "owner control",
     `a refused log_error_system() overwrote the message with: ${after[0].message}`);
 });
+
+// ---------- demo request notification ----------
+// submit_demo_request lives in supabase-setup.sql and calls notify_demo_request (above) only
+// when it exists. Submissions go through the owner connection so the shared secret is set
+// here rather than depending on demo-requests.test.mjs.
+const DEMO_SECRET = "test-demo-secret-0123456789";
+const submitDemo = (o = {}) => sql(
+  `select submit_demo_request($1, $2, $3, $4, $5, $6, '')`,
+  [DEMO_SECRET, o.name ?? "Asha Menon", o.company ?? "Kestrel Analytics",
+   o.email ?? `asha${Date.now()}@kestrel.test`, "6–20", "Renewals"]);
+const demoSetup = async () => {
+  await stubSend();
+  await sql(`insert into demo_form_config (id, secret) values (1, $1)
+    on conflict (id) do update set secret = excluded.secret`, [DEMO_SECRET]);
+  await sql(`delete from test_sent`);
+};
+const demoClean = () => sql(`delete from demo_requests where email like '%@kestrel.test'`);
+
+test("a demo request sends one email to the platform admin, with the name escaped", async () => {
+  try {
+    await demoSetup();
+    await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+    await submitDemo({ name: "<b>x</b>" });
+    const sent = await sql(`select * from test_sent`);
+    assert(sent.length === 1, `expected exactly 1 outbound post, got ${sent.length}`);
+    const body = typeof sent[0].body === "string" ? JSON.parse(sent[0].body) : sent[0].body;
+    assert(body.to.some(t => t.email === "platform@test.local"),
+      `platform admin is not a recipient: ${JSON.stringify(body.to)}`);
+    assert(body.subject === "New demo request: Kestrel Analytics", `subject was: ${body.subject}`);
+    assert(body.htmlContent.includes("&lt;b&gt;x&lt;/b&gt;"), `name not escaped: ${body.htmlContent}`);
+    assert(!body.htmlContent.includes("<b>x</b>"), "raw name markup leaked into the email");
+  } finally { await demoClean(); await sql(`delete from test_sent`); }
+});
+
+test("a demo request is still stored, and nothing is sent, while Brevo is unconfigured", async () => {
+  try {
+    await demoSetup();
+    await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+    const email = `unset${Date.now()}@kestrel.test`;
+    await submitDemo({ email });
+    const sent = await sql(`select * from test_sent`);
+    assert(sent.length === 0, `an email was sent with no Brevo key: ${sent.length}`);
+    const stored = await sql(`select count(*)::int n from demo_requests where email = $1`, [email]);
+    assert(stored[0].n === 1, "positive control failed: the request was not stored");
+  } finally {
+    await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+    await demoClean(); await sql(`delete from test_sent`);
+  }
+});

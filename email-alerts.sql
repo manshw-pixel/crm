@@ -575,6 +575,38 @@ begin
   return format('%s settled, %s abandoned', n_settled, n_unknown);
 end $$;
 
+-- ---------- demo request notification (onevio.in) ----------
+-- One email per demo request to every platform admin. Silent when Brevo is not configured:
+-- the Clients console list is the record, the email a convenience. Called by
+-- submit_demo_request (supabase-setup.sql) through a to_regprocedure guard, inside its own
+-- exception block, so a failure here can never lose the stored request.
+-- Request shape mirrors send_alerts: api_base URL, api-key + content-type headers.
+create or replace function public.notify_demo_request(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare cfg record; r record; tos jsonb;
+begin
+  select * into cfg from alert_config where id = 1;
+  if not found or cfg.api_key is null or cfg.api_key = '' or cfg.api_key like 'PASTE_%' then return; end if;
+  select * into r from demo_requests where id = p_id;
+  if not found then return; end if;
+  select coalesce(jsonb_agg(jsonb_build_object('email', u.email)), '[]'::jsonb) into tos
+    from profiles p join auth.users u on u.id = p.id
+   where p.platform_admin and not p.disabled and u.email is not null;
+  if jsonb_array_length(tos) = 0 then return; end if;
+  perform public.alert_post(cfg.api_base,
+    jsonb_build_object('api-key', cfg.api_key, 'content-type', 'application/json'),
+    jsonb_build_object(
+      'sender', jsonb_build_object('email', cfg.from_email, 'name', cfg.from_name),
+      'to', tos,
+      'replyTo', jsonb_build_object('email', r.email, 'name', r.name),
+      'subject', 'New demo request: ' || r.company,
+      'htmlContent', '<h2>New demo request</h2><p><b>' || html_escape(r.name) || '</b>, '
+        || html_escape(r.company) || '<br>' || html_escape(r.email)
+        || '<br>Team size: ' || html_escape(coalesce(r.team_size, '—')) || '</p><p>'
+        || html_escape(r.message) || '</p>'));
+end $$;
+revoke execute on function public.notify_demo_request(uuid) from public, anon, authenticated;
+
 -- log_error requires auth.uid(), which a cron job does not have -- pg_cron runs with no
 -- signed-in user, so the plan's "failures flow into error_log" requirement is otherwise
 -- unimplementable. This is the scheduler's way in: same table, same fingerprint collapsing,
