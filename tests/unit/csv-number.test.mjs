@@ -25,3 +25,7 @@ test("parseCsvNumber: blank is '' (leave alone), garbage is null (report)", () =
 test("importSummary reports unreadable numbers", () => {
   assert.match(importSummary({ ok: 0, updated: 2, skipped: 0, badNumber: 2 }), /2 unreadable number/);
 });
+
+test("importSummary names licenses and deployedLicenses in the unreadable-number warning", () => {
+  assert.match(importSummary({ ok: 0, updated: 1, skipped: 0, badNumber: 1 }), /arr\/licenses\/deployedLicenses/);
+});
