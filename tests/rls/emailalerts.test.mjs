@@ -1356,6 +1356,23 @@ test("a demo request sends one email to the platform admin, with the name escape
   } finally { await demoClean(); await sql(`delete from test_sent`); }
 });
 
+test("demo_notify_email, when set, replaces the platform admins as the only recipient", async () => {
+  try {
+    await demoSetup();
+    await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test',
+      demo_notify_email = ' support@onevio.test ' where id = 1`);
+    await submitDemo();
+    const sent = await sql(`select * from test_sent`);
+    assert(sent.length === 1, `expected exactly 1 outbound post, got ${sent.length}`);
+    const body = typeof sent[0].body === "string" ? JSON.parse(sent[0].body) : sent[0].body;
+    assert(body.to.length === 1 && body.to[0].email === "support@onevio.test",
+      `recipients were: ${JSON.stringify(body.to)}`);
+  } finally {
+    await sql(`update alert_config set demo_notify_email = null where id = 1`);
+    await demoClean(); await sql(`delete from test_sent`);
+  }
+});
+
 test("a demo request is still stored, and nothing is sent, while Brevo is unconfigured", async () => {
   try {
     await demoSetup();
