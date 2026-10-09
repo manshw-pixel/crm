@@ -38,7 +38,10 @@ alter table public.alert_config
   add column if not exists health_drop_points int not null default 10,
   add column if not exists health_drop_window_days int not null default 7,
   add column if not exists api_base text not null
-    default 'https://api.brevo.com/v3/smtp/email';
+    default 'https://api.brevo.com/v3/smtp/email',
+  -- Where demo-request emails go. NULL = every platform admin's sign-in email.
+  --   update public.alert_config set demo_notify_email = 'support@onevio.in' where id = 1;
+  add column if not exists demo_notify_email text;
 
 insert into public.alert_config (id, api_key, from_email, from_name)
 values (1,
@@ -576,7 +579,8 @@ begin
 end $$;
 
 -- ---------- demo request notification (onevio.in) ----------
--- One email per demo request to every platform admin. Silent when Brevo is not configured:
+-- One email per demo request to alert_config.demo_notify_email when set, else to every
+-- platform admin. Silent when Brevo is not configured:
 -- the Clients console list is the record, the email a convenience. Called by
 -- submit_demo_request (supabase-setup.sql) through a to_regprocedure guard, inside its own
 -- exception block, so a failure here can never lose the stored request.
@@ -589,9 +593,13 @@ begin
   if not found or cfg.api_key is null or cfg.api_key = '' or cfg.api_key like 'PASTE_%' then return; end if;
   select * into r from demo_requests where id = p_id;
   if not found then return; end if;
-  select coalesce(jsonb_agg(jsonb_build_object('email', u.email)), '[]'::jsonb) into tos
-    from profiles p join auth.users u on u.id = p.id
-   where p.platform_admin and not p.disabled and u.email is not null;
+  if nullif(trim(cfg.demo_notify_email), '') is not null then
+    tos := jsonb_build_array(jsonb_build_object('email', trim(cfg.demo_notify_email)));
+  else
+    select coalesce(jsonb_agg(jsonb_build_object('email', u.email)), '[]'::jsonb) into tos
+      from profiles p join auth.users u on u.id = p.id
+     where p.platform_admin and not p.disabled and u.email is not null;
+  end if;
   if jsonb_array_length(tos) = 0 then return; end if;
   perform public.alert_post(cfg.api_base,
     jsonb_build_object('api-key', cfg.api_key, 'content-type', 'application/json'),
