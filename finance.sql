@@ -138,6 +138,35 @@ $$;
 -- Postgres `date + interval 'n months'` clamps from the ORIGINAL date each time, which
 -- matches the JS anchor-day rule (31 Jan + 3 months = 30 Apr, + 6 months = 31 Jul).
 
+-- Best effort: a missing Brevo config or an unknown submitter address must NOT block the
+-- approval itself, so this swallows its own errors into error_log, the same way
+-- send_alerts guards per recipient. A missing billing_settings row (orgs created after this
+-- file first ran) falls back to the column defaults rather than skipping the mail.
+create or replace function public.notify_po_decision(po purchase_orders)
+returns void language plpgsql security definer set search_path = public, auth as $$
+declare cfg alert_config; bs billing_settings; addr text;
+begin
+  select * into cfg from alert_config where id = 1;
+  select * into bs from billing_settings where org_id = po.org_id;
+  select email into addr from auth.users where id = po.submitted_by;
+  if cfg is null or cfg.api_key like 'PASTE%' or addr is null then return; end if;
+  perform public.alert_post(cfg.api_base,
+    jsonb_build_object('api-key', cfg.api_key, 'content-type', 'application/json', 'accept', 'application/json'),
+    jsonb_build_object('sender', jsonb_build_object('email', coalesce(nullif(bs.sender_email, ''), 'support@onevio.in'),
+                                                    'name', coalesce(nullif(bs.sender_name, ''), 'OneVio Billing')),
+      'to', jsonb_build_array(jsonb_build_object('email', addr)),
+      'subject', format('[OneVio] PO %s for %s was %s', po.po_number, po.account_name, po.status),
+      'htmlContent', format('<p>PO <b>%s</b> for <b>%s</b> (%s %s) was <b>%s</b>.</p>%s',
+         html_escape(po.po_number), html_escape(po.account_name), po.currency, to_char(po.po_value, 'FM999,999,999,990.00'), po.status,
+         case when po.status = 'rejected' then format('<p>Reason: %s</p><p>Edit the PO on the account and resubmit.</p>', html_escape(po.reject_reason)) else '' end)));
+exception when others then
+  begin
+    perform public.log_error_system('notify_po_decision', 'write_failed', sqlerrm, jsonb_build_object('po_id', po.id));
+  exception when others then null;
+  end;
+end $$;
+revoke execute on function public.notify_po_decision(purchase_orders) from public;
+
 create or replace function public.approve_po(p_id uuid, p_amounts numeric[], p_confirm_mismatch boolean default false)
 returns public.purchase_orders language plpgsql security definer set search_path = public as $$
 declare po purchase_orders; cnt int;
@@ -159,6 +188,7 @@ begin
     from po_schedule_rows(po) r;
   update purchase_orders set status = 'approved', reviewed_by = auth.uid(), reviewed_at = now(), reject_reason = null
    where id = po.id returning * into po;
+  perform public.notify_po_decision(po);
   return po;
 end $$;
 
@@ -171,6 +201,7 @@ begin
   update purchase_orders set status = 'rejected', reviewed_by = auth.uid(), reviewed_at = now(), reject_reason = trim(p_reason)
    where id = p_id and org_id = public.current_org() and status = 'submitted' returning * into po;
   if po is null then raise exception 'only a submitted PO can be rejected'; end if;
+  perform public.notify_po_decision(po);
   return po;
 end $$;
 
@@ -306,6 +337,46 @@ grant execute on function public.create_invoice(jsonb) to authenticated;
 grant execute on function public.set_invoice_status(uuid, text, date, text, text) to authenticated;
 grant execute on function public.attach_invoice_pdf(uuid, text) to authenticated;
 grant execute on function public.is_finance() to authenticated;
+
+-- ---------- send invoice ----------
+-- alert_post is the same seam send_alerts uses (pg_net in production, a recorder in tests).
+-- The send is asynchronous: a Brevo-side rejection (bad sender, quota) is visible only in
+-- net._http_response, exactly as with alerts.
+create or replace function public.send_invoice(p_id uuid, p_pdf_base64 text)
+returns public.invoices language plpgsql security definer set search_path = public as $$
+declare cfg alert_config; bs billing_settings; inv invoices; e billing_entities; po purchase_orders; req bigint;
+begin
+  if not public.is_finance() then raise exception 'finance access required'; end if;
+  select * into cfg from alert_config where id = 1;
+  select * into bs from billing_settings where org_id = public.current_org();
+  if cfg is null or cfg.api_key like 'PASTE%' then
+    raise exception 'email not configured: set the Brevo key (alert_config)';
+  end if;
+  select * into inv from invoices where id = p_id and org_id = public.current_org();
+  if inv is null then raise exception 'invoice not found'; end if;
+  if inv.status = 'waived' then raise exception 'invoice is waived'; end if;
+  if coalesce(p_pdf_base64, '') = '' then raise exception 'pdf required'; end if;
+  select * into e from billing_entities where id = inv.entity_id;
+  select * into po from purchase_orders where id = inv.po_id;
+  req := public.alert_post(cfg.api_base,
+    jsonb_build_object('api-key', cfg.api_key, 'content-type', 'application/json', 'accept', 'application/json'),
+    jsonb_strip_nulls(jsonb_build_object(
+      'sender', jsonb_build_object('email', coalesce(nullif(bs.sender_email, ''), 'support@onevio.in'),
+                                   'name', coalesce(nullif(bs.sender_name, ''), 'OneVio Billing')),
+      'to', jsonb_build_array(jsonb_build_object('email', inv.sent_to)),
+      'cc', case when inv.sent_cc is not null then jsonb_build_array(jsonb_build_object('email', inv.sent_cc)) end,
+      'subject', format('Invoice %s (PO %s) from %s', inv.number, po.po_number, e.name),
+      'htmlContent', format('<p>Dear %s,</p><p>Please find attached invoice <b>%s</b> against PO <b>%s</b> for %s %s, due on %s.</p><p>Regards,<br>%s</p>',
+         html_escape(inv.account_name), html_escape(inv.number), html_escape(po.po_number), inv.currency, to_char(inv.total, 'FM999,999,999,990.00'),
+         to_char(inv.due_date, 'DD Mon YYYY'), html_escape(e.name)),
+      'attachment', jsonb_build_array(jsonb_build_object(
+         'name', regexp_replace(inv.number, '[^A-Za-z0-9-]', '_', 'g') || '.pdf', 'content', p_pdf_base64)))));
+  if req is null then raise exception 'send failed: no request id'; end if;
+  update invoices set sent_at = now(), sent_by = auth.uid() where id = inv.id returning * into inv;
+  return inv;
+end $$;
+revoke execute on function public.send_invoice(uuid, text) from public;
+grant execute on function public.send_invoice(uuid, text) to authenticated;
 
 -- ---------- storage ----------
 insert into storage.buckets (id, name, public) values ('invoices', 'invoices', false) on conflict (id) do nothing;

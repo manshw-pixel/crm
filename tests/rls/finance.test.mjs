@@ -179,6 +179,127 @@ test("finance: admin_user_list returns the finance column", async () => {
   assert.ifError(error); assert.ok("finance" in data[0]);
 });
 
+// ---------- send_invoice and PO decision emails ----------
+// Same recorder as emailalerts.test.mjs (stubSend): alert_post is replaced wholesale by a function that
+// inserts into test_sent, so the network never enters the suite. approve_po / reject_po also post (the
+// decision mail), so every test below clears test_sent right before the call it asserts on.
+const stub = () => sql(`
+  create table if not exists public.test_sent (
+    id bigserial primary key, url text, body jsonb, at timestamptz default now());
+  create or replace function public.alert_post(p_url text, p_headers jsonb, p_body jsonb)
+  returns bigint language plpgsql as $$
+  declare n bigint;
+  begin
+    insert into test_sent (url, body) values (p_url, p_body) returning id into n;
+    return n;
+  end $$;`);
+const KEY = () => sql(`update alert_config set api_key = 'k-test' where id = 1`);
+const lastPost = async () => (await sql(`select body from test_sent order by id desc limit 1`))[0]?.body;
+const postCount = async () => (await sql(`select count(*)::int n from test_sent`))[0].n;
+const userId = async () => (await sessions.user.auth.getUser()).data.user.id;
+
+test("finance: send_invoice posts one Brevo email with the PDF attached", async () => {
+  await stub(); await KEY();
+  await sessions.admin.from("profiles").update({ finance: true }).eq("id", await userId());
+  const c = await sessions.user.rpc("create_invoice", { p: P() });
+  assert.ifError(c.error);
+  await sql(`delete from test_sent`);
+  const s = await sessions.user.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "JVBERi0xLjQK" });
+  assert.ifError(s.error);
+  assert.ok(s.data.sent_at, "sent_at set");
+  assert.equal(s.data.sent_by, await userId());
+  assert.equal(await postCount(), 1);
+  const body = await lastPost();
+  assert.equal(body.sender.email, "support@onevio.in");
+  assert.deepEqual(body.to, [{ email: "ap@acme.test" }]);
+  assert.equal(body.attachment[0].content, "JVBERi0xLjQK");
+  assert.equal(body.attachment[0].name, `${c.data.number.replace(/[^A-Za-z0-9-]/g, "_")}.pdf`);
+  assert.match(body.subject, new RegExp(c.data.number));
+});
+
+test("finance: send_invoice escapes account text in the email body", async () => {
+  // account_name is copied from the PO by create_invoice, so the PO itself must carry the markup.
+  const me = await userId();
+  const ins = await sessions.user.from("purchase_orders").insert({ ...PO({ account_name: "<script>x</script> Co" }), submitted_by: me }).select().single();
+  assert.ifError(ins.error);
+  const ap = await sessions.admin.rpc("approve_po", { p_id: ins.data.id, p_amounts: null, p_confirm_mismatch: false });
+  assert.ifError(ap.error);
+  const [item] = await sql(`select id from po_schedule where po_id = $1 order by seq limit 1`, [ins.data.id]);
+  const c = await sessions.user.rpc("create_invoice", { p: P({ schedule_id: item.id }) });
+  assert.ifError(c.error);
+  assert.equal(c.data.account_name, "<script>x</script> Co", "positive control: the markup reached the invoice");
+  await sql(`delete from test_sent`);
+  const s = await sessions.user.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "JVBERi0xLjQK" });
+  assert.ifError(s.error);
+  const body = await lastPost();
+  assert.match(body.htmlContent, /&lt;script&gt;/);
+  assert.doesNotMatch(body.htmlContent, /<script>/);
+});
+
+test("finance: send_invoice falls back to the default sender when billing_settings has no row", async () => {
+  const [orig] = await sql(`select sender_email, sender_name from billing_settings where org_id = $1`, [ORG_A]);
+  assert.ok(orig, "precondition: ORG_A has a billing_settings row");
+  const [item] = await sql(`select id from po_schedule where po_id = $1 and invoice_id is null order by seq limit 1`, [poId]);
+  const c = await sessions.admin.rpc("create_invoice", { p: P({ schedule_id: item.id }) });
+  assert.ifError(c.error);
+  try {
+    await sql(`delete from billing_settings where org_id = $1`, [ORG_A]);
+    await sql(`delete from test_sent`);
+    const s = await sessions.admin.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "eA==" });
+    assert.ifError(s.error);
+    const body = await lastPost();
+    assert.equal(body.sender.email, "support@onevio.in");
+    assert.equal(body.sender.name, "OneVio Billing");
+  } finally {
+    await sql(`insert into billing_settings (org_id, sender_email, sender_name) values ($1, $2, $3) on conflict (org_id) do nothing`,
+      [ORG_A, orig.sender_email, orig.sender_name]);
+  }
+  assert.equal((await sql(`select count(*)::int n from billing_settings where org_id = $1`, [ORG_A]))[0].n, 1, "row restored");
+});
+
+test("po: reject emails the submitter with the reason escaped; no Brevo key still rejects", async () => {
+  const me = await userId();
+  const [{ email }] = await sql(`select email from auth.users where id = $1`, [me]);
+  const mk = async () => (await sessions.user.from("purchase_orders").insert({ ...PO(), submitted_by: me }).select().single()).data;
+  const a = await mk();
+  await sql(`delete from test_sent`);
+  const r = await sessions.admin.rpc("reject_po", { p_id: a.id, p_reason: "<b>bad</b>" });
+  assert.ifError(r.error);
+  assert.equal(await postCount(), 1);
+  const body = await lastPost();
+  assert.deepEqual(body.to, [{ email }]);
+  assert.match(body.subject, /was rejected/);
+  assert.match(body.htmlContent, /&lt;b&gt;bad&lt;\/b&gt;/);
+  assert.doesNotMatch(body.htmlContent, /<b>bad<\/b>/);
+
+  const b = await mk();
+  await sql(`delete from test_sent`);
+  try {
+    await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+    const r2 = await sessions.admin.rpc("reject_po", { p_id: b.id, p_reason: "no key" });
+    assert.ifError(r2.error);
+    assert.equal(r2.data.status, "rejected");
+    assert.equal(await postCount(), 0, "no post without a Brevo key");
+  } finally { await KEY(); }
+});
+
+test("finance: send_invoice refuses placeholder config and a plain user", async () => {
+  const [inv] = await sql(`select id from invoices where sent_at is null limit 1`);
+  assert.ok(inv, "precondition: an unsent invoice exists");
+  try {
+    await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+    const r = await sessions.admin.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
+    assert.match(r.error?.message || "", /email not configured/);
+  } finally { await KEY(); }
+  await sessions.admin.from("profiles").update({ finance: false }).eq("id", await userId());
+  const r2 = await sessions.user.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
+  assert.match(r2.error?.message || "", /finance access required/);
+  // Leave alert_config as the preceding files (demo-requests) leave it, which is what migration.test.mjs and
+  // anything later expects; test_sent and the stubbed alert_post stay, as they do after those files too.
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+  await sql(`delete from test_sent`);
+});
+
 test("po: cancel removes only un-raised items and keeps invoices", async () => {
   const before = await sql("select count(*)::int n from invoices where po_id = $1", [poId]);
   const r = await sessions.admin.rpc("cancel_po", { p_id: poId });
