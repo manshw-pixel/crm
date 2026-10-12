@@ -73,6 +73,8 @@ A SQL function `next_invoice_number(entity_id)` increments `next_number` under a
 - **US entity:** `default_tax_pct` (0 by default). If above 0, one "Sales tax" line.
 - **PH entity:** VAT 12%.
 
+- **Tax exemption:** an account can be marked **Tax exempt**, with an optional exemption note (e.g. "SEZ unit — LUT/Bond no. …" or "Tax-exempt certificate #…"). The invoice form has an **Apply tax** checkbox, which defaults to unchecked for exempt accounts and checked otherwise, and Finance can change it on any invoice. Unchecked means no tax lines, and the exemption note (or "Tax exempt") is printed on the PDF. The invoice stores `tax_exempt boolean` so the decision is auditable.
+
 Rates come from the entity row, not constants, except the CGST/SGST split rule. `src/lib/invoice-totals.js` handles line amounts, subtotal and total, with rounding to 2 decimals per line and on the total.
 
 ## UI

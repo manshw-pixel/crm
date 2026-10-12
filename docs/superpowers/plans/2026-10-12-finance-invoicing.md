@@ -77,8 +77,8 @@
 
 **Interfaces:**
 - Produces:
-  - `computeTax(entity, account, subtotal) → { lines: [{label, pct, amount}], note: string|null }`
-  - `computeTotals(lineItems, entity, account) → { lines: [{description, qty, rate, amount}], subtotal, taxLines, taxNote, total }`
+  - `computeTax(entity, account, subtotal, opts?: {exempt?: boolean}) → { lines: [{label, pct, amount}], note: string|null }`
+  - `computeTotals(lineItems, entity, account, opts?: {exempt?: boolean}) → { lines: [{description, qty, rate, amount}], subtotal, taxLines, taxNote, total }`
   - `invoiceStatus(inv, todayISO) → "paid"|"waived"|"overdue"|"pending"|"unsent"`
   - `summarizeInvoices(invoices, todayISO) → { [currency]: { paid, pending, waived, overdue, overdueCount } }`
   - `buildSchedule({po_value, years, billing_cycle, billing_start}) → [{seq, period_start, period_end, amount}]` (`[]` on bad input)`n  - `periodLabel(po, item) → "Year 2 Q1" | "Year 1 H2" | "Year 3"``n  - `scheduleLineItem(po, item) → {description, qty: 1, rate}``n  - `dueItems(items, todayISO) → items` (un-raised, `period_start <= today`)
@@ -126,6 +126,13 @@ test("US default 0 adds no tax line; non-zero adds Sales tax", () => {
 });
 test("PH VAT 12", () => {
   assert.deepEqual(computeTax(PH, { country: "PH" }, 250).lines, [{ label: "VAT", pct: 12, amount: 30 }]);
+});
+test("exempt: no tax lines, note from account or default", () => {
+  assert.deepEqual(computeTax(IN, { country: "IN", customerState: "Maharashtra", taxExemptNote: "SEZ unit, LUT 123" }, 1000, { exempt: true }),
+    { lines: [], note: "SEZ unit, LUT 123" });
+  assert.deepEqual(computeTax(PH, { country: "PH" }, 1000, { exempt: true }), { lines: [], note: "Tax exempt" });
+  const r = computeTotals([{ description: "x", qty: 1, rate: 100 }], PH, { country: "PH" }, { exempt: true });
+  assert.equal(r.total, 100); assert.deepEqual(r.taxLines, []);
 });
 test("computeTotals is exact in cents (no float drift)", () => {
   const r = computeTotals([{ description: "a", qty: 3, rate: 33.33 }, { description: "b", qty: 1, rate: 0.1 }, { description: "c", qty: 1, rate: 0.2 }], PH, { country: "PH" });
@@ -234,8 +241,9 @@ const fromCents = c => c / 100;
 const pctOf = (cents, pct) => Math.round(cents * Number(pct) / 100 + 1e-9);
 const norm = s => String(s || "").trim().toLowerCase();
 
-export function computeTax(entity, account, subtotal) {
+export function computeTax(entity, account, subtotal, opts = {}) {
   const base = toCents(subtotal);
+  if (opts.exempt) return { lines: [], note: String((account && account.taxExemptNote) || "").trim() || "Tax exempt" };
   const line = (label, pct) => ({ label, pct, amount: fromCents(pctOf(base, pct)) });
   const cust = (account && account.country) || entity.country;
   if (entity.country === "IN") {
@@ -250,7 +258,7 @@ export function computeTax(entity, account, subtotal) {
   return { lines: [line(entity.country === "PH" ? "VAT" : "Sales tax", pct)], note: null };
 }
 
-export function computeTotals(lineItems, entity, account) {
+export function computeTotals(lineItems, entity, account, opts = {}) {
   const lines = (lineItems || [])
     .filter(l => String(l.description || "").trim() || Number(l.rate))
     .map(l => {
@@ -258,7 +266,7 @@ export function computeTotals(lineItems, entity, account) {
       return { description: String(l.description || "").trim(), qty, rate, amount: fromCents(toCents(qty * rate)) };
     });
   const subC = lines.reduce((s, l) => s + toCents(l.amount), 0);
-  const tax = computeTax(entity, account, fromCents(subC));
+  const tax = computeTax(entity, account, fromCents(subC), opts);
   const taxC = tax.lines.reduce((s, t) => s + toCents(t.amount), 0);
   return { lines, subtotal: fromCents(subC), taxLines: tax.lines, taxNote: tax.note, total: fromCents(subC + taxC) };
 }
@@ -755,6 +763,7 @@ create table if not exists public.invoices (
   subtotal numeric(14,2) not null default 0,
   tax_lines jsonb not null default '[]',
   tax_note text,
+  tax_exempt boolean not null default false,
   total numeric(14,2) not null,
   status text not null default 'pending' check (status in ('pending','paid','waived')),
   paid_date date,
@@ -802,11 +811,11 @@ begin
   update billing_entities set next_number = n + 1 where id = e.id;
   if e.currency <> po.currency then raise exception 'entity currency % does not match PO currency %', e.currency, po.currency; end if;
   insert into invoices (org_id, po_id, schedule_id, account_id, account_name, entity_id, number, issue_date, due_date, currency,
-                        line_items, subtotal, tax_lines, tax_note, total, sent_to, sent_cc)
+                        line_items, subtotal, tax_lines, tax_note, tax_exempt, total, sent_to, sent_cc)
   values (e.org_id, po.id, si.id, po.account_id, po.account_name, e.id, e.invoice_prefix || lpad(n::text, 4, '0'),
           (p->>'issue_date')::date, (p->>'due_date')::date, e.currency,
           coalesce(p->'line_items', '[]'), coalesce((p->>'subtotal')::numeric, 0), coalesce(p->'tax_lines', '[]'),
-          p->>'tax_note', (p->>'total')::numeric, trim(p->>'sent_to'), nullif(trim(coalesce(p->>'sent_cc', '')), ''))
+          p->>'tax_note', coalesce((p->>'tax_exempt')::boolean, false), (p->>'total')::numeric, trim(p->>'sent_to'), nullif(trim(coalesce(p->>'sent_cc', '')), ''))
   returning * into inv;
   update po_schedule set invoice_id = inv.id where id = si.id;
   return inv;
@@ -1177,7 +1186,7 @@ Write out the waive test body in full: assert `[data-waive-confirm]` is disabled
 
 - [ ] **Step 3: Implement**
 
-Account form: add a collapsible "Billing" fieldset with `country` (select: blank/IN/US/PH), `billingEntityId` (select from `billing_entities`, blank meaning "Auto from country"), `billingEmail`, `billingAddress` (textarea), `customerTaxId`, and `customerState` (only when the country is IN). Save through the existing account-save path, so the fields land in `accounts.data`. Blank values are stored as `""`, never deleted. Do not add these fields to the CSV import/export columns (out of scope; keeps the CSV contract unchanged).
+Account form: add a collapsible "Billing" fieldset with `country` (select: blank/IN/US/PH), `billingEntityId` (select from `billing_entities`, blank meaning "Auto from country"), `billingEmail`, `billingAddress` (textarea), `customerTaxId`, `customerState` (only when the country is IN), `taxExempt` (checkbox "Tax exempt") and `taxExemptNote` (shown when exempt). Save through the existing account-save path, so the fields land in `accounts.data`. Blank values are stored as `""`, never deleted. Do not add these fields to the CSV import/export columns (out of scope; keeps the CSV contract unchanged).
 
 `src/14-invoices.jsx` core:
 
@@ -1396,6 +1405,20 @@ Add `"vendor/jspdf.umd.min.js"` to `vendorJs` in `build.mjs`. Run `npm run build
 //   years: 1, billing_cycle: "quarterly", billing_start: "2026-10-01", status: "approved" }
 // ITEMS = buildSchedule(APPROVED_PO) mapped to { id: `s${seq}`, po_id: "po1", org_id, invoice_id: null, ...row }
 // The clock is pinned to 2026-10-12, so only s1 (2026-10-01) is due.
+test("raise invoice: Apply tax defaults off for a tax-exempt account and can be toggled", async () => {
+  const page = await openApp({ user: { role: "user", finance: true }, entities: [IN_ENTITY], pos: [APPROVED_PO], schedule: ITEMS,
+    accountPatch: { a1: { country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test", taxExempt: true, taxExemptNote: "SEZ unit" } } });
+  await openFinance(page);
+  await page.click('[data-due-item="s1"] [data-raise]');
+  assert.equal(await page.isChecked("[data-apply-tax]"), false);
+  assert.match(await page.innerText("[data-inv-total]"), /120,000\.00/);
+  assert.match(await page.innerText("[data-invoice-form]"), /SEZ unit/);
+  await page.check("[data-apply-tax]");
+  assert.match(await page.innerText("[data-inv-total]"), /141,600\.00/);
+  await page.uncheck("[data-apply-tax]");
+  await page.click("[data-inv-send]");
+  await page.waitForFunction(() => window.__rpcCalls.some(c => c.name === "create_invoice" && c.args.p.tax_exempt === true && c.args.p.tax_lines.length === 0));
+});
 test("raise invoice: blocks without billing email", async () => {
   const page = await openApp({ user: { role: "user", finance: true }, entities: [IN_ENTITY], pos: [APPROVED_PO], schedule: ITEMS,
     accountPatch: { a1: { country: "IN", billingEmail: "" } } });
@@ -1481,7 +1504,8 @@ function InvoiceForm({ po, item, account, entities, user, onClose, onSent }) {
   const [f, setF] = useState({ issue_date: today, due_date: plus30, sent_to: account.billingEmail || "",
     sent_cc: (user.team || []).find?.(t => t.name === account.csm)?.email || "", lines: [scheduleLineItem(po, item)] });
   const [busy, setBusy] = useState(false), [msg, setMsg] = useState("");
-  const totals = entity ? computeTotals(f.lines, entity, account) : null;
+  const [applyTax, setApplyTax] = useState(!account.taxExempt);   // checkbox data-apply-tax
+  const totals = entity ? computeTotals(f.lines, entity, account, { exempt: !applyTax }) : null;
   const block = !canFinance(user) ? "You need finance access to create invoices."
     : !entity ? "No billing entity for this account. Set Billing entity or Country on the account, or add an entity in Settings → Billing."
     : entity.currency !== po.currency ? `This PO is in ${po.currency} but ${entity.name} bills in ${entity.currency}. Pick a ${po.currency} entity.``n    : !f.sent_to.trim() ? "This account has no billing email. Add one on the account's Billing section or type it here."
@@ -1495,7 +1519,7 @@ function InvoiceForm({ po, item, account, entities, user, onClose, onSent }) {
     try {
       const c = await sb.rpc("create_invoice", { p: { schedule_id: item.id, entity_id: entity.id,
         issue_date: f.issue_date, due_date: f.due_date, line_items: totals.lines, subtotal: totals.subtotal,
-        tax_lines: totals.taxLines, tax_note: totals.taxNote, total: totals.total, sent_to: f.sent_to.trim(), sent_cc: f.sent_cc.trim() || null } });
+        tax_lines: totals.taxLines, tax_note: totals.taxNote, tax_exempt: !applyTax, total: totals.total, sent_to: f.sent_to.trim(), sent_cc: f.sent_cc.trim() || null } });
       if (c.error) throw c.error;
       const inv = c.data;
       const blob = renderInvoicePdf({ inv, entity, account, po });
