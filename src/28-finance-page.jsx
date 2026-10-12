@@ -47,14 +47,14 @@ function FinanceSummary({ invoices }) {
 function invoicesCSVText(rows, entities, today) {
   const cols = ["Number", "Account", "Entity", "Currency", "Issue date", "Due date", "Subtotal", "Tax", "Total", "Status", "Paid date", "Payment ref", "Waive reason"];
   const ent = id => (entities.find(e => e.id === id) || {}).name || "";
-  const lines = rows.map(i => [i.number, i.account_name, ent(i.entity_id), i.currency, i.issue_date, i.due_date, i.subtotal, (Math.round(Number(i.total) * 100) - Math.round(Number(i.subtotal) * 100)) / 100, i.total,
+  const lines = rows.map(i => [i.number, i.account_name, ent(i.entity_id), i.currency, i.issue_date, i.due_date, i.subtotal, fromCents(toCents(i.total) - toCents(i.subtotal)), i.total,
     invoiceStatus(i, today), i.paid_date, i.payment_ref, i.waive_reason].map(csvCell).join(","));
   return [cols.map(csvCell).join(","), ...lines].join("\n");
 }
 function exportInvoicesCSV(rows, entities, today) {
   const url = URL.createObjectURL(new Blob([invoicesCSVText(rows, entities, today)], { type: "text/csv" }));
   const el = Object.assign(document.createElement("a"), { href: url, download: "invoices.csv" });
-  el.click(); URL.revokeObjectURL(url);
+  el.click(); setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
 function FinancePage({ st, user, openAccount }) {
@@ -78,7 +78,7 @@ function FinancePage({ st, user, openAccount }) {
       <FinanceSummary invoices={scoped} />
       <div className="flex flex-wrap items-center gap-2">
         <div className="min-w-[10rem] flex-1"><Input data-fin-search placeholder="Search number or account" aria-label="Search invoices" value={q} onChange={e => setQ(e.target.value)} /></div>
-        <Select data-fin-filter-status aria-label="Status" value={status} onChange={e => setStatus(e.target.value)} options={["all", "pending", "overdue", "paid", "waived", "unsent"]} />
+        <Select data-fin-filter-status aria-label="Status" value={status} onChange={e => setStatus(e.target.value)} options={["all", "pending", "overdue", "paid", "waived", "unsent"]} labels={{ pending: "pending (not yet due)" }} />
         <Select data-fin-filter-entity aria-label="Entity" value={ent} onChange={e => setEnt(e.target.value)} options={["all", ...entities.map(e => e.id)]} labels={{ all: "all", ...entLabels }} />
         <label className="text-xs text-slate-500">From <Input type="date" aria-label="Issued from" value={from} onChange={e => setFrom(e.target.value)} /></label>
         <label className="text-xs text-slate-500">To <Input type="date" aria-label="Issued to" value={to} onChange={e => setTo(e.target.value)} /></label>

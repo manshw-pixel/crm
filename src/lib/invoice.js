@@ -2,11 +2,11 @@
 // 0.1 + 0.2 never drifts; values are converted back to 2-decimal numbers at the edge.
 // Shift the decimal point as text ("1.005e2"), so 1.005 rounds to 101 instead of 100.4999...
 // Exponent strings ("1e-7") break that shift, so fall back to plain multiplication.
-const toCents = n => {
+export const toCents = n => {
   const x = Number(n) || 0, c = Math.round(Number(x + "e2"));
   return Number.isFinite(c) ? c : Math.round(x * 100);
 };
-const fromCents = c => c / 100;
+export const fromCents = c => c / 100;
 const pctOf = (cents, pct) => Math.round(cents * Number(pct) / 100 + 1e-9);
 const norm = s => String(s || "").trim().toLowerCase();
 
