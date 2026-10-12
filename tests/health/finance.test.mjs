@@ -536,3 +536,55 @@ test("raise invoice: renderInvoicePdf produces a multi-line PDF and tolerates ho
   assert(head.type === "application/pdf" && head.text === "%PDF-", JSON.stringify(head));
   await browser.close();
 });
+
+// ---- finance page
+const openPage = async (invoices, extra = {}, user = { role: "user", finance: true }) => {
+  const r = await launchFinance({ user, tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices, billing_entities: [IN_ENTITY], ...extra } });
+  await r.page.click('button[title="Finance"]', { timeout: 15000 });
+  await r.page.waitForSelector("[data-finance-page]");
+  return r;
+};
+const MIXED = [
+  INV({ id: "i1", number: "IN-0001", total: 100, status: "paid", paid_date: "2026-10-02", account_name: "Acme Ltd", subtotal: 100 }),
+  INV({ id: "i2", number: "IN-0002", total: 50, due_date: "2026-10-05", account_name: "Acme Ltd", subtotal: 50 }),
+  INV({ id: "i3", number: "IN-0003", currency: "USD", total: 10, status: "waived", waive_reason: "goodwill", account_name: "Acme Ltd", subtotal: 10, entity_id: "e2" })];
+
+test("finance page: summary per currency, status filter, summary ignores status filter", async () => {
+  const { page, browser } = await openPage(MIXED);
+  await page.waitForSelector("[data-invoice-row]");
+  assert(/100\.00/.test(await page.innerText("[data-fin-summary-INR-paid]")));
+  assert(/50\.00/.test(await page.innerText("[data-fin-summary-INR-overdue]")));
+  assert(/50\.00/.test(await page.innerText("[data-fin-summary-INR-pending]")), "pending includes overdue");
+  assert(/10\.00/.test(await page.innerText("[data-fin-summary-USD-waived]")));
+  await page.selectOption("[data-fin-filter-status]", "overdue");
+  assert((await page.locator("[data-invoice-row]").count()) === 1);
+  assert(/100\.00/.test(await page.innerText("[data-fin-summary-INR-paid]")), "summary unaffected by the status filter");
+  await page.selectOption("[data-fin-filter-status]", "all");
+  await page.fill("[data-fin-search]", "0003");
+  assert((await page.locator("[data-invoice-row]").count()) === 1);
+  await browser.close();
+});
+
+test("finance page: PO queue is mounted, and upcoming periods are greyed out with no Raise", async () => {
+  const { page, browser } = await openPage([], { purchase_orders: [{ ...APPROVED_PO, id: "po2", po_number: "SUB1", status: "submitted" }, APPROVED_PO], po_schedule: ITEMS });
+  await page.waitForSelector("[data-po-queue] [data-po-review]", { timeout: 5000 });
+  assert((await page.locator("[data-due-item]").count()) === 1, "only period 1 is due");
+  assert((await page.locator("[data-upcoming-item]").count()) === 0, "hidden until toggled");
+  await page.click("[data-upcoming-toggle]");
+  assert((await page.locator("[data-upcoming-item]").count()) === 3);
+  assert((await page.locator("[data-upcoming-item] [data-raise]").count()) === 0);
+  await browser.close();
+});
+
+test("finance page: CSV export neutralises formula cells", async () => {
+  const { page, browser } = await openPage([INV({ id: "i9", number: "IN-0009", account_name: '=HYPERLINK("http://x","y")', subtotal: 1000 })]);
+  await page.waitForSelector("[data-invoice-row]");
+  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 8000 }), page.click("[data-fin-export]")]);
+  const chunks = []; for await (const c of await dl.createReadStream()) chunks.push(c);
+  const text = Buffer.concat(chunks).toString("utf8");
+  assert(dl.suggestedFilename() === "invoices.csv");
+  assert(text.split("\n")[0].startsWith('"Number","Account","Entity"'), text);
+  assert(text.includes(`"'=HYPERLINK(""http://x"",""y"")"`), text);
+  assert(text.includes('"180"') || text.includes('"IN-0009"'), text);
+  await browser.close();
+});
