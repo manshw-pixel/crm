@@ -415,3 +415,37 @@ test("po: a failed load shows the error, not the empty state", async () => {
   assert((await page.locator("[data-po-empty]").count()) === 0);
   await browser.close();
 });
+
+test("po: amounts with more than 2 decimals are refused and approve stays disabled", async () => {
+  const { page, browser } = await openPO({ role: "admin" }, [PO()]);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-review]");
+  await page.waitForSelector("[data-po-amount]");
+  const first = page.locator("[data-po-amount]").first();
+  await first.fill("150000.005");
+  await page.waitForSelector("[data-po-amount-error]");
+  assert(await page.locator("[data-po-approve]").isDisabled(), "approve disabled for 3dp");
+  await first.fill("150000.5");
+  assert((await page.locator("[data-po-amount-error]").count()) === 0, "1dp is fine");
+  await page.check("[data-po-mismatch-ok]");
+  await page.click("[data-po-approve]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Approved")', { timeout: 5000 });
+  const c = (await rpcCalls(page, "approve_po"))[0];
+  assert(c.args.p_amounts[0] === 150000.5, JSON.stringify(c.args.p_amounts));
+  await browser.close();
+});
+
+test("po: years above 10 block submit", async () => {
+  const { page, browser } = await openPO({ role: "user", finance: false }, []);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-submit]");
+  await page.setInputFiles("[data-po-file]", PDF);
+  await page.fill('[name="po_number"]', "P-1");
+  await page.fill('[name="po_value"]', "1000");
+  await page.fill('[name="years"]', "10");
+  assert(!(await page.locator("[data-po-submit-confirm]").isDisabled()), "10 allowed");
+  await page.fill('[name="years"]', "11");
+  assert(await page.locator("[data-po-submit-confirm]").isDisabled(), "11 blocked");
+  assert((await page.locator("[data-po-preview]").innerText()).includes("1 to 10"));
+  await browser.close();
+});

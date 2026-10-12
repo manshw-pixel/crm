@@ -62,7 +62,8 @@ function POForm({ account, user, existing, onClose, onSaved }) {
       years: "1", billing_cycle: "annual", billing_start: today });
   const [busy, setBusy] = useState(false), [err, setErr] = useState("");
   const set = k => e => setV(p => ({ ...p, [k]: e.target.value }));
-  const preview = buildSchedule(v);
+  const yrs = Number(v.years), yearsOk = Number.isInteger(yrs) && yrs >= 1 && yrs <= 10;
+  const preview = yearsOk ? buildSchedule(v) : [];
   const ok = (file || existing) && v.po_number.trim() && v.po_date && preview.length > 0;
   const submit = async () => {
     setBusy(true); setErr("");
@@ -87,7 +88,7 @@ function POForm({ account, user, existing, onClose, onSaved }) {
         <label className="block text-xs text-slate-700">First billing date<Input type="date" name="billing_start" value={v.billing_start} onChange={set("billing_start")} /></label>
       </div>
       <div data-po-preview className="mt-3 max-h-48 overflow-auto text-xs">
-        {preview.length === 0 ? <div className="text-slate-500">Enter value, years, cycle and start date</div>
+        {preview.length === 0 ? <div className="text-slate-500">Enter value, years, cycle and start date{v.years !== "" && !yearsOk ? " (years must be a whole number from 1 to 10)" : ""}</div>
           : <table className="w-full"><thead><tr className="text-left text-slate-500"><th className="p-1">Period</th><th className="p-1">From</th><th className="p-1">To</th><th className="p-1 text-right">Amount</th></tr></thead>
             <tbody>{preview.map(r => <tr key={r.seq} data-period={r.seq} className="border-t border-slate-100">
               <td className="p-1">{periodLabel(v, r)}</td><td className="p-1 tabular-nums">{r.period_start}</td><td className="p-1 tabular-nums">{r.period_end}</td>
@@ -112,7 +113,9 @@ function POReview({ po, user, schedule, onClose, onDone }) {
   const total = amounts.reduce((s, a) => s + poCents(a), 0);
   const mismatch = total !== poCents(po.po_value);
   const edited = amounts.some((a, i) => poCents(a) !== poCents(base[i].amount));
-  const valid = amounts.every(a => poCents(a) > 0);
+  const twoDp = a => /^\d+(\.\d{1,2})?$/.test(String(a).trim());
+  const badDp = amounts.some(a => String(a).trim() !== "" && !twoDp(a));
+  const valid = !badDp && amounts.every(a => poCents(a) > 0);
   const act = async (fn, args, msg) => {
     setBusy(true);
     const { error } = await sb.rpc(fn, args);
@@ -133,12 +136,13 @@ function POReview({ po, user, schedule, onClose, onDone }) {
               onChange={e => { const x = e.target.value; setAmounts(a => a.map((y, j) => j === i ? x : y)); setMismatchOk(false); }}
               className="nm-inset w-28 border-0 px-2 py-1 text-right text-xs tabular-nums outline-none" /></td></tr>)}</tbody></table></div>
         <div className="mt-2 text-xs text-slate-700">Total <span data-po-amount-total className="font-semibold tabular-nums">{poMoney(po.currency, total / 100)}</span> of {poMoney(po.currency, po.po_value)}</div>
-        {mismatch && <label data-po-mismatch className="mt-1 block rounded bg-amber-50 p-2 text-xs text-amber-800">
+        {badDp && <div data-po-amount-error className="mt-1 text-xs text-rose-600">Amounts can have at most 2 decimal places.</div>}
+        {mismatch && !badDp && <label data-po-mismatch className="mt-1 block rounded bg-amber-50 p-2 text-xs text-amber-800">
           The amounts do not add up to the PO value ({poMoney(po.currency, (total - poCents(po.po_value)) / 100)} difference).
           <span className="mt-1 flex items-center gap-2"><input type="checkbox" data-po-mismatch-ok checked={mismatchOk} onChange={e => setMismatchOk(e.target.checked)} /> Approve anyway</span></label>}
         <div className="mt-3 flex gap-2">
           <Btn kind="primary" data-po-approve disabled={busy || !valid || (mismatch && !mismatchOk)}
-            onClick={() => act("approve_po", { p_id: po.id, p_amounts: edited ? amounts.map(Number) : null, p_confirm_mismatch: mismatch && mismatchOk }, `PO ${po.po_number} approved`)}>Approve</Btn>
+            onClick={() => act("approve_po", { p_id: po.id, p_amounts: edited ? amounts.map(a => Number(String(a).trim())) : null, p_confirm_mismatch: mismatch && mismatchOk }, `PO ${po.po_number} approved`)}>Approve</Btn>
         </div>
         <div className="mt-4 border-t border-slate-100 pt-3">
           <label className="block text-xs text-slate-700">Reject reason (required)
@@ -169,7 +173,7 @@ function PORow({ po, schedule, user, account, showAccount, openAccount, onEdit, 
     <td className="p-2 text-xs" data-po-invoiced>{po.status === "approved" ? `${raised} of ${mine.length} raised` : ""}</td>
     <td className="p-2 whitespace-nowrap text-xs">
       <button data-po-file-link className="text-indigo-600 hover:underline" onClick={() => viewPOFile(po)}>File</button>
-      {canEdit && <button data-po-edit className="ml-2 text-indigo-600 hover:underline" onClick={() => onEdit(po)}>Edit</button>}
+      {canEdit && onEdit && <button data-po-edit className="ml-2 text-indigo-600 hover:underline" onClick={() => onEdit(po)}>Edit</button>}
       {fin && (po.status === "submitted" || po.status === "approved") && <button data-po-review className="ml-2 text-indigo-600 hover:underline" onClick={() => onReview(po)}>{po.status === "submitted" ? "Review" : "Manage"}</button>}
     </td></tr>;
 }
@@ -199,7 +203,7 @@ function POQueue({ user, openAccount }) {
   const { pos, schedule, reload, error } = usePurchaseOrders({ status: "submitted" });
   const [review, setReview] = useState(null);
   return <div data-po-queue>
-    <POTable pos={pos} schedule={schedule} user={user} error={error} showAccount openAccount={openAccount} onEdit={() => {}} onReview={setReview} emptyText="No purchase orders awaiting approval." />
+    <POTable pos={pos} schedule={schedule} user={user} error={error} showAccount openAccount={openAccount} onReview={setReview} emptyText="No purchase orders awaiting approval." />
     {review && <POReview po={review} user={user} schedule={schedule} onClose={() => setReview(null)} onDone={reload} />}
   </div>;
 }
