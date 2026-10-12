@@ -1,7 +1,7 @@
 // tests/rls/finance.test.mjs
 import assert from "node:assert/strict";
 import { test } from "../health/framework.mjs";
-import { sessions, sql, ORG_A } from "./fixtures.mjs";
+import { sessions, sql, ORG_A, invitedFresh } from "./fixtures.mjs";
 
 let entityId, finUser, poId, items = [];
 const nextItem = () => items.shift();
@@ -71,8 +71,22 @@ test("po: rejected needs a reason; CSM can edit and resubmit a rejected PO", asy
 });
 
 test("po: approved PO is locked against CSM edits", async () => {
-  const u = await sessions.user.from("purchase_orders").update({ po_value: 1 }).eq("id", poId).select("id");
+  const u = await sessions.user.from("purchase_orders").update({ po_value: 1, status: "submitted" }).eq("id", poId).select("id");
   assert.equal((u.data || []).length, 0);
+  const [row] = await sql("select po_value, status from purchase_orders where id = $1", [poId]);
+  assert.equal(Number(row.po_value), 800); assert.equal(row.status, "approved");
+});
+
+test("po: another CSM cannot edit or take over someone else's submitted PO", async () => {
+  const owner = (await sessions.user.auth.getUser()).data.user.id;
+  const { data } = await sessions.user.from("purchase_orders").insert({ ...PO(), submitted_by: owner }).select().single();
+  const other = await invitedFresh("fin-other-csm@test.local");
+  const otherId = (await other.client.auth.getUser()).data.user.id;
+  await other.client.from("purchase_orders").update({ po_value: 1 }).eq("id", data.id);
+  await other.client.from("purchase_orders").update({ submitted_by: otherId }).eq("id", data.id);
+  const [row] = await sql("select po_value, submitted_by from purchase_orders where id = $1", [data.id]);
+  assert.equal(Number(row.po_value), Number(data.po_value));
+  assert.equal(row.submitted_by, owner);
 });
 
 test("finance: plain user without the flag cannot create_invoice", async () => {
@@ -91,7 +105,8 @@ test("finance: admin toggles finance on; user can then create, numbers are seque
   assert.equal(a.data.currency, "INR"); assert.equal(a.data.status, "pending"); assert.equal(a.data.sent_at, null);
 });
 
-test("finance: user cannot grant themselves the flag", async () => {
+// guard_profile_finance is defence-in-depth: no non-admin update path reaches it, so only RLS is observable here.
+test("finance: plain user cannot grant themselves the flag (RLS)", async () => {
   const me = (await sessions.user.auth.getUser()).data.user.id;
   await sessions.admin.from("profiles").update({ finance: false }).eq("id", me);
   const { data } = await sessions.user.from("profiles").update({ finance: true }).eq("id", me).select("finance");
@@ -130,15 +145,6 @@ test("finance storage: admin uploads an invoice PDF; flagless user cannot; user 
   assert.ok(other.error, "another org must not read the invoice");
 });
 
-test("po: cancel removes only un-raised items and keeps invoices", async () => {
-  const before = await sql("select count(*)::int n from invoices where po_id = $1", [poId]);
-  const r = await sessions.admin.rpc("cancel_po", { p_id: poId });
-  assert.ifError(r.error);
-  const left = await sql("select count(*)::int n, count(invoice_id)::int raised from po_schedule where po_id = $1", [poId]);
-  assert.equal(left[0].n, left[0].raised, "only raised items remain");
-  assert.equal(r.data, 8 - left[0].raised);
-  assert.equal((await sql("select count(*)::int n from invoices where po_id = $1", [poId]))[0].n, before[0].n);
-});
 
 test("finance: mark paid needs a date; waive needs a reason; plain user refused", async () => {
   const [inv] = await sql("select id from invoices where number = 'IN-0001' and entity_id = $1", [entityId]);
@@ -171,4 +177,14 @@ test("finance: plain user reads invoices; other org sees none", async () => {
 test("finance: admin_user_list returns the finance column", async () => {
   const { data, error } = await sessions.admin.rpc("admin_user_list");
   assert.ifError(error); assert.ok("finance" in data[0]);
+});
+
+test("po: cancel removes only un-raised items and keeps invoices", async () => {
+  const before = await sql("select count(*)::int n from invoices where po_id = $1", [poId]);
+  const r = await sessions.admin.rpc("cancel_po", { p_id: poId });
+  assert.ifError(r.error);
+  const left = await sql("select count(*)::int n, count(invoice_id)::int raised from po_schedule where po_id = $1", [poId]);
+  assert.equal(left[0].n, left[0].raised, "only raised items remain");
+  assert.equal(r.data, 8 - left[0].raised);
+  assert.equal((await sql("select count(*)::int n from invoices where po_id = $1", [poId]))[0].n, before[0].n);
 });

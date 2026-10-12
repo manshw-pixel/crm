@@ -99,9 +99,10 @@ create policy purchase_orders_insert on public.purchase_orders for insert to aut
 -- with the review fields cleared. Approve/reject/cancel are the definer RPCs below.
 drop policy if exists purchase_orders_update on public.purchase_orders;
 create policy purchase_orders_update on public.purchase_orders for update to authenticated
-  using ((select public.is_active()) and org_id = (select public.current_org()) and status in ('submitted','rejected'))
-  with check ((select public.is_active()) and org_id = (select public.current_org()) and status = 'submitted'
-              and reviewed_by is null and reject_reason is null);
+  using ((select public.is_active()) and org_id = (select public.current_org()) and submitted_by = auth.uid()
+         and status in ('submitted','rejected'))
+  with check ((select public.is_active()) and org_id = (select public.current_org()) and submitted_by = auth.uid()
+              and status = 'submitted' and reviewed_by is null and reject_reason is null);
 
 create table if not exists public.po_schedule (
   id uuid primary key default gen_random_uuid(),
@@ -255,9 +256,9 @@ begin
   if e is null then raise exception 'billing entity not found'; end if;
   if coalesce(trim(p->>'sent_to'), '') = '' then raise exception 'billing email required'; end if;
   if coalesce((p->>'total')::numeric, 0) <= 0 then raise exception 'total must be above 0'; end if;
+  if e.currency <> po.currency then raise exception 'entity currency % does not match PO currency %', e.currency, po.currency; end if;
   n := e.next_number;
   update billing_entities set next_number = n + 1 where id = e.id;
-  if e.currency <> po.currency then raise exception 'entity currency % does not match PO currency %', e.currency, po.currency; end if;
   insert into invoices (org_id, po_id, schedule_id, account_id, account_name, entity_id, number, issue_date, due_date, currency,
                         line_items, subtotal, tax_lines, tax_note, tax_exempt, total, sent_to, sent_cc)
   values (e.org_id, po.id, si.id, po.account_id, po.account_name, e.id, e.invoice_prefix || lpad(n::text, 4, '0'),
@@ -294,6 +295,7 @@ begin
   if not public.is_finance() then raise exception 'finance access required'; end if;
   if split_part(p_path, '/', 1) <> public.current_org()::text then raise exception 'bad path'; end if;
   update invoices set pdf_path = p_path where id = p_id and org_id = public.current_org();
+  if not found then raise exception 'invoice not found'; end if;
 end $$;
 
 revoke execute on function public.create_invoice(jsonb) from public;
