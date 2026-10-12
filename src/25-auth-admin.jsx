@@ -349,6 +349,11 @@ function UsersCard({ me }) {
     const { error } = await sb.from("profiles").update({ role }).eq("id", u.id);
     if (error) setErr(error.message); else load();
   };
+  const setFinance = async (u, finance) => {
+    setErr(""); setMsg("");
+    const { error } = await sb.from("profiles").update({ finance }).eq("id", u.id);
+    if (error) setErr(error.message); else load();
+  };
   const [confirmDisable, setConfirmDisable] = useState(null); // the user pending disable
   const applyDisabled = async (u, disabled) => {
     setErr(""); setMsg("");
@@ -436,7 +441,7 @@ function UsersCard({ me }) {
   return (
     <Card title={`Users (${users.length})`}>
       {users.map(u => (
-        <div key={u.id} className={`flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0 ${u.disabled ? "opacity-60" : ""}`}>
+        <div key={u.id} data-user-id={u.id} className={`flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0 ${u.disabled ? "opacity-60" : ""}`}>
           {editing && editing.id === u.id ? (
             <span className="flex flex-1 flex-wrap items-center gap-2">
               <Input autoFocus value={editing.name} onChange={e => setEditing({ ...editing, name: e.target.value })}
@@ -456,6 +461,9 @@ function UsersCard({ me }) {
             </span>
           )}
           <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
+          <button data-finance-toggle aria-pressed={u.finance ? "true" : "false"} title="Finance access: create, send and mark invoices"
+            className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.finance ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+            onClick={() => setFinance(u, !u.finance)}>{u.finance ? "finance ✓" : "finance"}</button>
           {u.id !== me.id && (u.role === "user"
             ? <button className="text-xs text-indigo-600 hover:underline" onClick={() => setRole(u, "admin")}>make admin</button>
             : <button className="text-xs text-rose-500 hover:underline" onClick={() => setRole(u, "user")}>demote</button>)}

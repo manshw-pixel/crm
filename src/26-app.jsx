@@ -523,7 +523,7 @@ function Root() {
   }, []);
   useEffect(() => {
     if (!session) { setProfile(null); return; }
-    sb.from("profiles").select("id,name,role,disabled,org_id,platform_admin").eq("id", session.user.id).single()
+    sb.from("profiles").select("id,name,role,disabled,org_id,platform_admin,finance").eq("id", session.user.id).single()
       // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
       // wraps App, so window.__toast is genuinely undefined here and alert is the only
       // channel left. Deliberately kept.

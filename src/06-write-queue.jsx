@@ -22,7 +22,7 @@ async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
     sb.from("settings").select("data"),
-    sb.from("profiles").select("id,name,role,disabled"),
+    sb.from("profiles").select("id,name,role,disabled,finance"),
   ]);
   const bad = res.find(r => r.error);
   if (bad) throw bad.error;
