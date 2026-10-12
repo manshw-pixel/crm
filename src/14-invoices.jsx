@@ -42,6 +42,23 @@ async function resendInvoice(inv) {
   return r.data;
 }
 
+// An invoice whose PDF never reached storage: rebuild it from the stored fields, upload, attach, then send.
+async function rebuildAndSendInvoice(inv, entities, account) {
+  const entity = entities.find(e => e.id === inv.entity_id);
+  if (!entity) throw new Error("Billing entity not found for this invoice.");
+  const { data: po, error: pe } = await sb.from("purchase_orders").select("po_number").eq("id", inv.po_id).maybeSingle();
+  if (pe || !po) throw new Error(pe ? pe.message : "Purchase order not found for this invoice.");
+  const blob = renderInvoicePdf({ inv, entity, account: account || {}, po });
+  const path = `${inv.org_id}/${inv.id}.pdf`;
+  const up = await sb.storage.from("invoices").upload(path, blob, { contentType: "application/pdf", upsert: true });
+  if (up.error) throw new Error(`PDF upload failed: ${up.error.message}`);
+  const at = await sb.rpc("attach_invoice_pdf", { p_id: inv.id, p_path: path });
+  if (at.error) throw new Error(`Attaching the PDF failed: ${at.error.message}`);
+  const r = await sb.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: await blobToBase64(blob) });
+  if (r.error) throw r.error;
+  return r.data;
+}
+
 function MarkPaidDialog({ inv, onDone, onClose }) {
   const [date, setDate] = useState(invToday());
   const [ref, setRef] = useState("");
@@ -82,7 +99,7 @@ function WaiveDialog({ inv, onDone, onClose }) {
   );
 }
 
-function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAccount, error }) {
+function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAccount, error, accountOf }) {
   const fin = canFinance(user);
   const [paying, setPaying] = useState(null), [waiving, setWaiving] = useState(null), [reverting, setReverting] = useState(null);
   const today = invToday();
@@ -105,8 +122,8 @@ function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAc
         <td className="p-2"><span data-invoice-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${cls}`} title={inv.waive_reason || inv.payment_ref || ""}>{label}</span></td>
         <td className="p-2 whitespace-nowrap text-xs">
           {inv.pdf_path && <button data-download className="text-indigo-600 hover:underline" onClick={() => downloadInvoice(inv)}>PDF</button>}
-          {fin && inv.status === "pending" && inv.pdf_path && <button data-resend className="ml-2 text-indigo-600 hover:underline"
-            onClick={async () => { try { await resendInvoice(inv); invToast(`${inv.number} sent`, "success"); onChanged(); } catch (e) { invToast(e.message, "error"); } }}>
+          {fin && inv.status === "pending" && <button data-resend className="ml-2 text-indigo-600 hover:underline"
+            onClick={async () => { try { if (inv.pdf_path) await resendInvoice(inv); else await rebuildAndSendInvoice(inv, entities, accountOf && accountOf(inv.account_id)); invToast(`${inv.number} sent`, "success"); onChanged(); } catch (e) { invToast(e.message, "error"); } }}>
             {inv.sent_at ? "Re-send" : "Retry send"}</button>}
           {fin && inv.status === "pending" && <button data-waive className="ml-2 text-rose-500 hover:underline" onClick={() => setWaiving(inv)}>{inv.sent_at ? "Waive" : "Discard"}</button>}
         </td></tr>; })}</tbody></table>
@@ -120,5 +137,5 @@ function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAc
 
 function AccountInvoices({ account, user }) {
   const { invoices, entities, reload, error } = useInvoices({ accountId: account.id });
-  return <InvoiceTable invoices={invoices} entities={entities} user={user} onChanged={reload} error={error} />;
+  return <InvoiceTable invoices={invoices} entities={entities} user={user} onChanged={reload} error={error} accountOf={() => account} />;
 }

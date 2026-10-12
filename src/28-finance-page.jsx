@@ -84,7 +84,7 @@ function FinancePage({ st, user, openAccount }) {
         <label className="text-xs text-slate-500">To <Input type="date" aria-label="Issued to" value={to} onChange={e => setTo(e.target.value)} /></label>
         <Btn data-fin-export disabled={!rows.length} onClick={() => exportInvoicesCSV(rows, entities, today)}>Export CSV</Btn>
       </div>
-      <InvoiceTable invoices={rows} entities={entities} user={user} onChanged={reload} showAccount openAccount={openAccount} error={error} />
+      <InvoiceTable invoices={rows} entities={entities} user={user} onChanged={reload} showAccount openAccount={openAccount} error={error} accountOf={account} />
     </section>
   </div>;
 }

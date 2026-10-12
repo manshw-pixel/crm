@@ -329,6 +329,17 @@ test("finance: send_invoice refuses placeholder config and a plain user", async 
   }
 });
 
+test("po: approve_po rejects amounts with more than 2 decimals", async () => {
+  const me = await userId();
+  const ins = await sessions.user.from("purchase_orders").insert({ ...PO(), submitted_by: me }).select().single();
+  assert.ifError(ins.error);
+  const amounts = Array(8).fill(12.5).map((a, i) => i === 0 ? 12.505 : a);
+  const r = await sessions.admin.rpc("approve_po", { p_id: ins.data.id, p_amounts: amounts, p_confirm_mismatch: true });
+  assert.match(r.error?.message || "", /amounts must have at most 2 decimals/);
+  const [row] = await sql("select status from purchase_orders where id = $1", [ins.data.id]);
+  assert.equal(row.status, "submitted");
+});
+
 test("po: cancel removes only un-raised items and keeps invoices", async () => {
   const before = await sql("select count(*)::int n from invoices where po_id = $1", [poId]);
   const r = await sessions.admin.rpc("cancel_po", { p_id: poId });

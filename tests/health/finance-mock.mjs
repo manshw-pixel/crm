@@ -245,6 +245,7 @@ export function financeExt() {
         if (!m) return baseStorageFrom(bucket);
         return {
           upload: async (path, body, opts) => {
+            if (bucket === "invoices" && window.__uploadFailOnce) { window.__uploadFailOnce = false; return { data: null, error: { message: "network blip" } }; }
             if (m.has(path) && !(opts && opts.upsert)) return { data: null, error: { message: "The resource already exists" } };
             m.set(path, { body, contentType: (opts && opts.contentType) || (body && body.type) || "application/octet-stream" });
             return { data: { path }, error: null };

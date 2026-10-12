@@ -79,9 +79,9 @@ function InvoiceForm({ po, item, account, entities, user, onClose, onSent }) {
       const blob = renderInvoicePdf({ inv, entity, account, po });
       const path = `${inv.org_id}/${inv.id}.pdf`;
       const up = await sb.storage.from("invoices").upload(path, blob, { contentType: "application/pdf", upsert: true });
-      if (up.error) throw new Error(`${inv.number} was created but the PDF upload failed: ${up.error.message}. Use Retry send in the list.`);
+      if (up.error) throw new Error(`${inv.number} was created but the PDF upload failed: ${up.error.message}. It shows as Unsent; use Retry send in the list, which rebuilds the PDF.`);
       const at = await sb.rpc("attach_invoice_pdf", { p_id: inv.id, p_path: path });
-      if (at.error) throw new Error(`${inv.number} was created but attaching the PDF failed: ${at.error.message}. Use Retry send in the list.`);
+      if (at.error) throw new Error(`${inv.number} was created but attaching the PDF failed: ${at.error.message}. It shows as Unsent; use Retry send in the list, which rebuilds the PDF.`);
       const s = await sb.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: await blobToBase64(blob) });
       if (s.error) throw new Error(`${inv.number} was saved but not sent: ${s.error.message}. It shows as Unsent; use Retry send.`);
       invToast(`${inv.number} sent to ${f.sent_to.trim()}`, "success");

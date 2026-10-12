@@ -178,6 +178,7 @@ begin
   if po.status <> 'submitted' then raise exception 'only a submitted PO can be approved'; end if;
   select count(*) into cnt from po_schedule_rows(po);
   if p_amounts is not null then
+    if exists (select 1 from unnest(p_amounts) a where a <> round(a, 2)) then raise exception 'amounts must have at most 2 decimals'; end if;
     if coalesce(array_length(p_amounts, 1), 0) <> cnt then raise exception 'expected % amounts', cnt; end if;
     if exists (select 1 from unnest(p_amounts) a where a is null or a <= 0) then raise exception 'every amount must be above 0'; end if;
     if (select sum(a) from unnest(p_amounts) a) <> po.po_value and not p_confirm_mismatch then

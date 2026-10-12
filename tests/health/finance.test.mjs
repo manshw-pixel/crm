@@ -523,6 +523,24 @@ test("raise invoice: a send failure leaves an Unsent invoice with Retry and keep
   await browser.close();
 });
 
+test("raise invoice: a failed PDF upload leaves Unsent with Retry, and retry rebuilds, attaches and sends", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test" }, undefined, `window.__uploadFailOnce = true;`);
+  await page.click('[data-due-item="s1"] [data-raise]');
+  await page.click("[data-inv-send]");
+  await page.waitForSelector('[data-invoice-form] :text("PDF upload failed")', { timeout: 8000 });
+  await page.waitForSelector('[data-invoice-row="IN-0001"] [data-invoice-status]:has-text("Unsent")', { timeout: 5000 });
+  assert((await rpcCalls(page, "send_invoice")).length === 0, "nothing sent yet");
+  assert((await page.locator('[data-invoice-row="IN-0001"] [data-download]').count()) === 0, "no PDF to download");
+  assert((await page.locator('[data-invoice-row="IN-0001"] [data-resend]').innerText()) === "Retry send", "Retry send offered without a PDF");
+  await page.keyboard.press("Escape");   // close the raise form, as a user would, to reach the list
+  await page.click('[data-invoice-row="IN-0001"] [data-resend]');
+  await page.waitForSelector('[data-invoice-row="IN-0001"] [data-invoice-status]:has-text("Pending")', { timeout: 8000 });
+  assert((await rpcCalls(page, "attach_invoice_pdf")).length === 1, "PDF attached on retry");
+  const send = (await rpcCalls(page, "send_invoice"))[0];
+  assert(send && Buffer.from(send.args.p_pdf_base64, "base64").toString("latin1").startsWith("%PDF"), "a rebuilt PDF was sent");
+  await browser.close();
+});
+
 test("raise invoice: renderInvoicePdf produces a multi-line PDF and tolerates hostile text", async () => {
   const { page, browser } = await openRaise({ country: "IN" });
   const head = await page.evaluate(async () => {

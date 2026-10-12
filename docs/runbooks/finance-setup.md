@@ -1,6 +1,7 @@
 # Finance invoicing — operator setup
 
-1. Supabase SQL Editor: run `supabase-setup.sql` (adds `profiles.finance` + `admin_user_list` v2), then `finance.sql`.
+1. **Before merging the finance PR**, in the Supabase SQL Editor run `supabase-setup.sql` (adds `profiles.finance` + `admin_user_list` v2), then `finance.sql`.
+   The app selects `profiles.finance`; if the site deploys first, sign-in breaks for everyone. Both scripts are additive, so running them early is safe.
    Order matters: `finance.sql` needs `email-alerts.sql`'s `alert_config` / `alert_post` / `html_escape`, which are already live.
 2. In Brevo, confirm `support@onevio.in` is a verified sender (it is the default in `billing_settings`).
 3. Supabase SQL: confirm `select id from storage.buckets where id in ('invoices','purchase-orders')` returns 2 rows.
