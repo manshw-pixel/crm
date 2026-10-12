@@ -53,6 +53,10 @@ test("computeTotals rounds half-up", () => {
   const r = computeTotals([{ description: "x", qty: 1, rate: 0.125 }], US, { country: "US" });
   assert.equal(r.lines[0].amount, 0.13);
 });
+test("computeTotals rounds half-up on large and binary-inexact values", () => {
+  assert.equal(computeTotals([{ description: "x", qty: 1, rate: 1234567.005 }], US, { country: "US" }).lines[0].amount, 1234567.01);
+  assert.equal(computeTotals([{ description: "x", qty: 1, rate: 1.005 }], US, { country: "US" }).lines[0].amount, 1.01);
+});
 test("computeTotals drops blank lines and coerces strings", () => {
   const r = computeTotals([{ description: "", qty: "", rate: "" }, { description: "Seat", qty: "2", rate: "10" }], US, { country: "US" });
   assert.equal(r.lines.length, 1);
@@ -103,6 +107,7 @@ test("buildSchedule: month-end start clamps (31 Jan quarterly)", () => {
 test("buildSchedule: rejects bad input with []", () => {
   assert.deepEqual(buildSchedule({ po_value: 0, years: 1, billing_cycle: "annual", billing_start: "2026-01-01" }), []);
   assert.deepEqual(buildSchedule({ po_value: 10, years: 1, billing_cycle: "monthly", billing_start: "2026-01-01" }), []);
+  assert.deepEqual(buildSchedule({ po_value: 100, years: 1.5, billing_cycle: "annual", billing_start: "2026-01-01" }), []);
 });
 test("periodLabel and scheduleLineItem", () => {
   const po = { po_number: "4500123", billing_cycle: "quarterly" };

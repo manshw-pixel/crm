@@ -1,6 +1,11 @@
 // Pure invoice math. Money is computed in integer minor units (cents/paise/centavos) so
 // 0.1 + 0.2 never drifts; values are converted back to 2-decimal numbers at the edge.
-const toCents = n => Math.round((Number(n) || 0) * 100 + Number.EPSILON * 100);
+// Shift the decimal point as text ("1.005e2"), so 1.005 rounds to 101 instead of 100.4999...
+// Exponent strings ("1e-7") break that shift, so fall back to plain multiplication.
+const toCents = n => {
+  const x = Number(n) || 0, c = Math.round(Number(x + "e2"));
+  return Number.isFinite(c) ? c : Math.round(x * 100);
+};
 const fromCents = c => c / 100;
 const pctOf = (cents, pct) => Math.round(cents * Number(pct) / 100 + 1e-9);
 const norm = s => String(s || "").trim().toLowerCase();
@@ -72,7 +77,7 @@ const dayBefore = iso => new Date(Date.parse(iso + "T00:00:00Z") - 864e5).toISOS
 // Every period is anchored on the ORIGINAL start day, so 31 Jan -> 30 Apr -> 31 Jul (not 30 Jul).
 export function buildSchedule(po) {
   const step = CYCLE_MONTHS[po.billing_cycle], years = Number(po.years) || 0, total = toCents(po.po_value);
-  if (!step || years < 1 || total <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(po.billing_start || "")) return [];
+  if (!step || !Number.isInteger(years) || years < 1 || total <= 0 || !/^\d{4}-\d{2}-\d{2}$/.test(po.billing_start || "")) return [];
   const n = years * 12 / step, each = Math.floor(total / n), anchor = Number(po.billing_start.slice(8));
   return Array.from({ length: n }, (_, i) => ({
     seq: i + 1,
