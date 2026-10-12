@@ -165,7 +165,8 @@ exception when others then
   exception when others then null;
   end;
 end $$;
-revoke execute on function public.notify_po_decision(purchase_orders) from public;
+-- definer with no caller checks: close it to the API roles as well (same pattern as email-alerts.sql)
+revoke execute on function public.notify_po_decision(purchase_orders) from public, anon, authenticated;
 
 create or replace function public.approve_po(p_id uuid, p_amounts numeric[], p_confirm_mismatch boolean default false)
 returns public.purchase_orders language plpgsql security definer set search_path = public as $$
@@ -355,6 +356,7 @@ begin
   select * into inv from invoices where id = p_id and org_id = public.current_org();
   if inv is null then raise exception 'invoice not found'; end if;
   if inv.status = 'waived' then raise exception 'invoice is waived'; end if;
+  if coalesce(trim(inv.sent_to), '') = '' then raise exception 'no recipient'; end if;
   if coalesce(p_pdf_base64, '') = '' then raise exception 'pdf required'; end if;
   select * into e from billing_entities where id = inv.entity_id;
   select * into po from purchase_orders where id = inv.po_id;

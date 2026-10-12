@@ -283,21 +283,50 @@ test("po: reject emails the submitter with the reason escaped; no Brevo key stil
   } finally { await KEY(); }
 });
 
+test("finance: send_invoice refuses another org, a waived invoice and an empty PDF", async () => {
+  const [item] = await sql(`select id from po_schedule where po_id = $1 and invoice_id is null order by seq limit 1`, [poId]);
+  assert.ok(item, "precondition: an un-raised schedule item remains");
+  const c = await sessions.admin.rpc("create_invoice", { p: P({ schedule_id: item.id }) });
+  assert.ifError(c.error);
+  await KEY();
+  const other = await sessions.adminB.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "eA==" });
+  assert.match(other.error?.message || "", /invoice not found/);
+  const empty = await sessions.admin.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "" });
+  assert.match(empty.error?.message || "", /pdf required/);
+  const w = await sessions.admin.rpc("set_invoice_status", { p_id: c.data.id, p_status: "waived", p_paid_date: null, p_ref: null, p_reason: "goodwill" });
+  assert.ifError(w.error);
+  const r = await sessions.admin.rpc("send_invoice", { p_id: c.data.id, p_pdf_base64: "eA==" });
+  assert.match(r.error?.message || "", /invoice is waived/);
+  const [row] = await sql(`select sent_at from invoices where id = $1`, [c.data.id]);
+  assert.equal(row.sent_at, null, "none of the refusals sent anything");
+});
+
+test("finance: notify_po_decision is not callable through the API", async () => {
+  const [po] = await sql(`select to_jsonb(p) j from purchase_orders p where id = $1`, [poId]);
+  const before = await postCount();
+  const r = await sessions.user.rpc("notify_po_decision", { po: po.j });
+  assert.ok(r.error, "an API caller must not reach the definer mailer");
+  assert.equal(await postCount(), before);
+});
+
 test("finance: send_invoice refuses placeholder config and a plain user", async () => {
-  const [inv] = await sql(`select id from invoices where sent_at is null limit 1`);
-  assert.ok(inv, "precondition: an unsent invoice exists");
   try {
-    await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
-    const r = await sessions.admin.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
-    assert.match(r.error?.message || "", /email not configured/);
-  } finally { await KEY(); }
-  await sessions.admin.from("profiles").update({ finance: false }).eq("id", await userId());
-  const r2 = await sessions.user.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
-  assert.match(r2.error?.message || "", /finance access required/);
-  // Leave alert_config as the preceding files (demo-requests) leave it, which is what migration.test.mjs and
-  // anything later expects; test_sent and the stubbed alert_post stay, as they do after those files too.
-  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
-  await sql(`delete from test_sent`);
+    const [inv] = await sql(`select id from invoices where sent_at is null and status <> 'waived' limit 1`);
+    assert.ok(inv, "precondition: an unsent invoice exists");
+    try {
+      await sql(`update alert_config set api_key = 'PASTE_YOUR_BREVO_API_KEY' where id = 1`);
+      const r = await sessions.admin.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
+      assert.match(r.error?.message || "", /email not configured/);
+    } finally { await KEY(); }
+    await sessions.admin.from("profiles").update({ finance: false }).eq("id", await userId());
+    const r2 = await sessions.user.rpc("send_invoice", { p_id: inv.id, p_pdf_base64: "eA==" });
+    assert.match(r2.error?.message || "", /finance access required/);
+  } finally {
+    // Leave alert_config as demo-requests leaves it (what migration.test.mjs and anything later expects);
+    // test_sent and the stubbed alert_post stay, as they do after those files too.
+    await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+    await sql(`delete from test_sent`);
+  }
 });
 
 test("po: cancel removes only un-raised items and keeps invoices", async () => {
