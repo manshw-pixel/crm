@@ -275,3 +275,143 @@ test("account detail: the tab resets to overview when another account opens", as
   assert((await page.locator('[data-account-tab="overview"]').getAttribute("aria-selected")) === "true");
   await browser.close();
 });
+
+// ---- Task 5B: purchase orders ----
+const PO = (o = {}) => ({ id: "po1", org_id: "org-a", account_id: "a1", account_name: "Acme Ltd", po_number: "4500123", po_date: "2026-10-01", po_value: 800000,
+  currency: "INR", years: 2, billing_cycle: "quarterly", billing_start: "2026-11-01", file_path: "org-a/a1/x.pdf", status: "submitted",
+  submitted_by: "u1", reviewed_by: null, reviewed_at: null, reject_reason: null, created_at: "2026-10-01T00:00:00Z", ...o });
+const openPO = (user, pos, schedule = []) => launchFinance({ user, tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices: [], billing_entities: [], purchase_orders: pos, po_schedule: schedule } });
+const PDF = { name: "po.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 test") };
+const rpcCalls = (page, fn) => page.evaluate(f => window.__rpcCalls.filter(c => c.fn === f), fn);
+
+test("po: CSM submits a PO with a file; preview shows 8 quarterly periods", async () => {
+  const { page, browser } = await openPO({ role: "user", finance: false }, []);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-submit]");
+  await page.setInputFiles("[data-po-file]", PDF);
+  await page.fill('[name="po_number"]', "4500123");
+  await page.fill('[name="po_value"]', "800000");
+  await page.fill('[name="years"]', "2");
+  await page.selectOption('[name="billing_cycle"]', "quarterly");
+  await page.fill('[name="billing_start"]', "2026-11-01");
+  assert((await page.locator("[data-po-preview] tr[data-period]").count()) === 8, "8 periods");
+  await page.click("[data-po-submit-confirm]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Awaiting approval")', { timeout: 5000 });
+  const po = await page.evaluate(() => window.__mockDb.purchase_orders.at(-1));
+  assert(/^[^/]+\/a1\/.+\.pdf$/.test(po.file_path), "path is <org>/<account>/<uuid>.pdf, got " + po.file_path);
+  assert(po.file_path.startsWith("org-a/"), "org prefix");
+  assert((await page.evaluate(p => window.__mockStorage["purchase-orders"].has(p), po.file_path)), "file uploaded");
+  assert((await page.locator("[data-po-approve]").count()) === 0, "CSM never sees approve");
+  assert((await page.locator("[data-po-review]").count()) === 0, "CSM never sees review");
+  await browser.close();
+});
+
+test("po: submit blocked without file, number or a valid schedule", async () => {
+  const { page, browser } = await openPO({ role: "user", finance: false }, []);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-submit]");
+  const btn = page.locator("[data-po-submit-confirm]");
+  assert(await btn.isDisabled(), "disabled when empty");
+  await page.fill('[name="po_number"]', "P-1");
+  await page.fill('[name="po_value"]', "1000");
+  assert(await btn.isDisabled(), "still disabled without a file");
+  await page.setInputFiles("[data-po-file]", PDF);
+  assert(!(await btn.isDisabled()), "enabled with file, number and schedule");
+  await page.fill('[name="po_number"]', "   ");
+  assert(await btn.isDisabled(), "blank number disables");
+  await page.fill('[name="po_number"]', "P-1");
+  await page.fill('[name="years"]', "0");
+  assert(await btn.isDisabled(), "years 0 disables");
+  assert((await page.locator("[data-po-preview]").innerText()).includes("Enter value, years, cycle and start date"));
+  await page.fill('[name="years"]', "1.5");
+  assert(await btn.isDisabled(), "fractional years disables");
+  await browser.close();
+});
+
+test("po: finance edits amounts, mismatch needs confirmation, approve creates schedule", async () => {
+  const { page, browser } = await openPO({ role: "user", finance: true }, [PO()]);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-review]");
+  await page.waitForSelector("[data-po-amount]");
+  assert((await page.locator("[data-po-amount]").count()) === 8);
+  assert((await page.locator("[data-po-mismatch]").count()) === 0, "no warning while the amounts add up");
+  assert(!(await page.locator("[data-po-approve]").isDisabled()), "approve enabled when matching");
+  await page.locator("[data-po-amount]").first().fill("150000");
+  await page.waitForSelector("[data-po-mismatch]");
+  assert(await page.locator("[data-po-approve]").isDisabled(), "approve blocked until mismatch confirmed");
+  await page.check("[data-po-mismatch-ok]");
+  assert(!(await page.locator("[data-po-approve]").isDisabled()));
+  await page.click("[data-po-approve]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Approved")', { timeout: 5000 });
+  const c = (await rpcCalls(page, "approve_po"))[0];
+  assert(c.args.p_amounts[0] === 150000 && c.args.p_confirm_mismatch === true, JSON.stringify(c.args).slice(0, 120));
+  assert((await page.locator('[data-po-row="4500123"] [data-po-invoiced]').innerText()) === "0 of 8 raised");
+  assert((await page.evaluate(() => window.__mockDb.po_schedule.length)) === 8);
+  await browser.close();
+});
+
+test("po: approving without edits sends no amounts and no mismatch confirmation", async () => {
+  const { page, browser } = await openPO({ role: "admin" }, [PO()]);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-review]");
+  await page.waitForSelector("[data-po-approve]");
+  await page.click("[data-po-approve]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Approved")', { timeout: 5000 });
+  const c = (await rpcCalls(page, "approve_po"))[0];
+  assert(c.args.p_amounts === null && c.args.p_confirm_mismatch === false, JSON.stringify(c.args));
+  await browser.close();
+});
+
+test("po: reject requires a reason; CSM sees the reason and can resubmit", async () => {
+  const { page, browser } = await openPO({ role: "admin" }, [PO()]);
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.click("[data-po-review]");
+  assert(await page.locator("[data-po-reject]").isDisabled(), "disabled with no reason");
+  await page.fill("[data-po-reject-reason]", "   ");
+  assert(await page.locator("[data-po-reject]").isDisabled(), "whitespace is blank");
+  await page.fill("[data-po-reject-reason]", "Wrong value");
+  await page.click("[data-po-reject]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Rejected — Wrong value")', { timeout: 5000 });
+  const rc = (await rpcCalls(page, "reject_po"))[0];
+  assert(rc.args.p_reason === "Wrong value");
+  await browser.close();
+  // as the submitting CSM
+  const b = await openPO({ role: "user", finance: false }, [PO({ status: "rejected", reject_reason: "Wrong value", reviewed_by: "u9" })]);
+  await openAccountTab(b.page, "a1", "Purchase orders");
+  await b.page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Rejected — Wrong value")');
+  await b.page.click("[data-po-edit]");
+  assert((await b.page.locator('[name="po_number"]').inputValue()) === "4500123", "prefilled");
+  assert((await b.page.locator('[name="po_value"]').inputValue()) === "800000", "prefilled value");
+  assert(!(await b.page.locator("[data-po-submit-confirm]").isDisabled()), "existing file satisfies the file rule");
+  await b.page.fill('[name="po_value"]', "900000");
+  await b.page.click("[data-po-submit-confirm]");
+  await b.page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Awaiting approval")', { timeout: 5000 });
+  const po = await b.page.evaluate(() => window.__mockDb.purchase_orders);
+  assert(po.length === 1, "an edit must update, not insert");
+  assert(po[0].status === "submitted" && po[0].reviewed_by === null && po[0].reject_reason === null && Number(po[0].po_value) === 900000, JSON.stringify(po[0]));
+  assert(po[0].file_path === "org-a/a1/x.pdf", "file kept when none chosen");
+  await b.browser.close();
+});
+
+test("po: finance cancels an approved PO after a confirm that counts un-raised periods", async () => {
+  const sch = [1, 2, 3].map(i => ({ id: "s" + i, org_id: "org-a", po_id: "po1", seq: i, period_start: "2026-11-01", period_end: "2027-01-31", amount: 100, invoice_id: i === 1 ? "inv9" : null }));
+  const { page, browser } = await openPO({ role: "admin" }, [PO({ status: "approved" })], sch);
+  await openAccountTab(page, "a1", "Purchase orders");
+  assert((await page.locator('[data-po-row="4500123"] [data-po-invoiced]').innerText()) === "1 of 3 raised");
+  await page.click("[data-po-review]");
+  await page.click("[data-po-cancel]");
+  assert((await page.locator("[data-confirmdialog]").innerText()).includes("Removes 2 un-raised periods. Invoices already raised are kept."));
+  await page.click("[data-confirm-go]");
+  await page.waitForSelector('[data-po-row="4500123"] [data-po-status]:has-text("Cancelled")', { timeout: 5000 });
+  assert((await rpcCalls(page, "cancel_po")).length === 1);
+  await browser.close();
+});
+
+test("po: a failed load shows the error, not the empty state", async () => {
+  const { page, browser } = await launchFinance({ user: { role: "user", finance: false }, seed: `window.__selectErrors = { purchase_orders: "permission denied" };`,
+    tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices: [], billing_entities: [] } });
+  await openAccountTab(page, "a1", "Purchase orders");
+  await page.waitForSelector("[data-po-load-error]");
+  assert((await page.locator("[data-po-empty]").count()) === 0);
+  await browser.close();
+});

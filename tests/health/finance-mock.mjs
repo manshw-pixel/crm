@@ -55,7 +55,7 @@ export function financeExt() {
       const f = { filters: [], order: null, limit: null, op: "select", payload: null, conflict: null, wantRows: false, one: null };
       const run = () => {
         const rows = db[t];
-        const match = r => f.filters.every(x => String(r[x[0]]) === String(x[1]));
+        const match = r => f.filters.every(x => x[2] === "in" ? x[1].map(String).includes(String(r[x[0]])) : String(r[x[0]]) === String(x[1]));
         const fin = (data, error) => {
           if (error) return { data: null, error: { message: error } };
           if (f.one) {
@@ -103,6 +103,7 @@ export function financeExt() {
         upsert(p, o) { f.op = "upsert"; f.payload = p; f.conflict = o && o.onConflict; return b; },
         delete() { f.op = "delete"; return b; },
         eq(c, v) { f.filters.push([c, v]); return b; },
+        in(c, vs) { f.filters.push([c, vs, "in"]); return b; },
         order(c, o) { f.order = [c, !(o && o.ascending === false)]; return b; },
         limit(k) { f.limit = k; return b; },
         single() { f.one = "single"; return b; },

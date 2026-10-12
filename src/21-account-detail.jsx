@@ -188,10 +188,11 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form && form.t === "editTask" ? <AddTaskForm acct={a} existing={form.item} team={team} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="flex gap-2" role="tablist">
-        {[["overview", "Overview"], ["Invoices", "Invoices"]].map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
+        {[["overview", "Overview"], ["Invoices", "Invoices"], ["Purchase orders", "Purchase orders"]].map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
           className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(k)}>{label}</button>)}
       </div>
       {tab === "Invoices" && <Card title="Invoices"><AccountInvoices account={a} user={user} /></Card>}
+      {tab === "Purchase orders" && <Card title="Purchase orders"><AccountPurchaseOrders account={a} user={user} /></Card>}
       {tab === "overview" && <>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
