@@ -2,47 +2,108 @@
 // jsPDF's built-in Helvetica only has WinAnsi glyphs; anything else would print as mojibake.
 const pdfText = s => String(s == null ? "" : s).replace(/\u20B9/g, "Rs.").replace(/[^\t\n\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u20AC]/g, "?");
 
+// OneVio brand: navy #0f172a, indigo #4f46e5 (same as onevio.in). The mark is drawn as vectors, so no image asset.
+const PDF_NAVY = [15, 23, 42], PDF_INDIGO = [79, 70, 229], PDF_SLATE = [100, 116, 139], PDF_LINE = [226, 232, 240], PDF_TINT = [245, 246, 250];
+const pdfDate = iso => { const d = new Date(String(iso) + "T00:00:00Z");
+  return isNaN(d) ? pdfText(iso) : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }); };
+
+function drawOneVioMark(doc, x, y, s) {
+  // 64-unit favicon geometry scaled to s points: an "O" ring and a "V" chevron.
+  const k = s / 64;
+  doc.setLineWidth(7 * k).setDrawColor(...PDF_NAVY).circle(x + 19 * k, y + 32 * k, 11 * k, "S");
+  doc.setDrawColor(...PDF_INDIGO).setLineCap("round").setLineJoin("round")
+    .lines([[9 * k, 23.5 * k], [9 * k, -23.5 * k]], x + 38 * k, y + 20.5 * k, [1, 1], "S", false);
+  doc.setLineCap("butt").setLineJoin("miter").setLineWidth(1);
+}
+
 function renderInvoicePdf({ inv, entity, account, po }) {
   const doc = new window.jspdf.jsPDF({ unit: "pt", format: "a4" });
+  const W = 595.28, L = 40, R = W - 40, CW = R - L;
   const money = n => `${inv.currency} ${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const wrap = (s, w) => doc.splitTextToSize(pdfText(s), w);
-  let y = 50;
-  doc.setFont("helvetica", "bold").setFontSize(16).text(pdfText(entity.name), 40, y);
-  doc.setFont("helvetica", "normal").setFontSize(9);
-  const addr = wrap(entity.address || "", 260);
-  doc.text(addr, 40, (y += 16));
-  y += Math.max(addr.length, 1) * 11 + 4;
-  if (entity.tax_id) doc.text(pdfText(`${entity.tax_id_label || "Tax ID"}: ${entity.tax_id}`), 40, y);
-  doc.setFont("helvetica", "bold").setFontSize(20).text("INVOICE", 555, 50, { align: "right" });
-  doc.setFont("helvetica", "normal").setFontSize(10)
-    .text([`No. ${inv.number}`, `Date ${inv.issue_date}`, `Due ${inv.due_date}`, `PO ${pdfText(po.po_number)}`], 555, 70, { align: "right" });
-  y = Math.max(y + 30, 150);
-  doc.setFont("helvetica", "bold").text("Bill to", 40, y);
-  const bill = wrap([inv.account_name, account.billingAddress || "", account.customerTaxId ? `Tax ID: ${account.customerTaxId}` : ""].filter(Boolean).join("\n"), 300);
-  doc.setFont("helvetica", "normal").text(bill, 40, (y += 14));
-  y += Math.max(bill.length, 1) * 12 + 20;
-  doc.setFont("helvetica", "bold").text("Description", 40, y).text("Qty", 360, y, { align: "right" })
-    .text("Rate", 450, y, { align: "right" }).text("Amount", 555, y, { align: "right" });
-  doc.setFont("helvetica", "normal");
-  for (const l of inv.line_items) {
-    const desc = wrap(l.description, 290);
-    y += 18; if (y > 720) { doc.addPage(); y = 60; }
-    doc.text(desc, 40, y).text(String(l.qty), 360, y, { align: "right" })
-      .text(money(l.rate), 450, y, { align: "right" }).text(money(l.amount), 555, y, { align: "right" });
-    y += (desc.length - 1) * 12;
-  }
-  y += 24;
-  const row = (label, val, bold) => { if (y > 760) { doc.addPage(); y = 60; }
-    doc.setFont("helvetica", bold ? "bold" : "normal").text(label, 450, y, { align: "right" }).text(val, 555, y, { align: "right" }); y += 16; };
-  row("Subtotal", money(inv.subtotal));
-  for (const t of inv.tax_lines) row(pdfText(`${t.label} ${t.pct}%`), money(t.amount));
-  row("Total", money(inv.total), true);
-  doc.setFont("helvetica", "normal").setFontSize(9);
-  if (inv.tax_note) { y += 10; const n = wrap(inv.tax_note, 515); doc.text(n, 40, y); y += n.length * 11 + 10; }
-  if (entity.bank_details) {
-    if (y > 700) { doc.addPage(); y = 60; }
-    doc.setFont("helvetica", "bold").text("Payment details", 40, (y += 10));
-    doc.setFont("helvetica", "normal").text(wrap(entity.bank_details, 515), 40, (y += 12));
+  const font = (style, size, color = PDF_NAVY) => doc.setFont("helvetica", style).setFontSize(size).setTextColor(...color);
+  const india = entity.country === "IN";
+  const title = india && inv.tax_lines && inv.tax_lines.length ? "TAX INVOICE" : "INVOICE";
+
+  // Header: mark + wordmark left, title and number right, indigo rule under.
+  drawOneVioMark(doc, L, 34, 34);
+  font("bold", 20).text("One", L + 42, 58);
+  font("bold", 20, PDF_INDIGO).text("Vio", L + 42 + doc.getTextWidth("One"), 58);
+  font("bold", 18).text(title, R, 52, { align: "right" });
+  font("normal", 10, PDF_SLATE).text(pdfText(`# ${inv.number}`), R, 68, { align: "right" });
+  doc.setFillColor(...PDF_INDIGO).rect(L, 84, CW, 2.5, "F");
+
+  // From / Bill to columns.
+  let y = 108;
+  const col = (x, label, lines) => {
+    font("bold", 8, PDF_SLATE).text(label, x, y);
+    font("bold", 11).text(wrap(lines[0], 240), x, y + 15);
+    const rest = wrap(lines.slice(1).filter(Boolean).join("\n"), 240);
+    font("normal", 9).text(rest, x, y + 29);
+    return y + 29 + rest.length * 11.5;
+  };
+  const fromEnd = col(L, "FROM", [entity.name, entity.address || "", entity.tax_id ? `${entity.tax_id_label || "Tax ID"}: ${entity.tax_id}` : "",
+    india && entity.state ? `State: ${entity.state}` : ""]);
+  const billEnd = col(L + CW / 2 + 10, "BILL TO", [inv.account_name, account.billingAddress || "",
+    account.customerTaxId ? `Tax ID: ${account.customerTaxId}` : "", inv.sent_to || ""]);
+  y = Math.max(fromEnd, billEnd) + 14;
+
+  // Details strip.
+  const facts = [["Issue date", pdfDate(inv.issue_date)], ["Due date", pdfDate(inv.due_date)], ["PO number", pdfText(po && po.po_number)], ["Currency", inv.currency]];
+  doc.setFillColor(...PDF_TINT).setDrawColor(...PDF_LINE).roundedRect(L, y, CW, 42, 4, 4, "FD");
+  facts.forEach(([k, v], i) => { const x = L + 14 + i * (CW / 4);
+    font("bold", 7.5, PDF_SLATE).text(k.toUpperCase(), x, y + 16); font("bold", 10).text(v || "-", x, y + 31); });
+  y += 62;
+
+  // Line items.
+  const cQty = 360, cRate = 455, head = () => {
+    doc.setFillColor(...PDF_INDIGO).rect(L, y, CW, 22, "F");
+    font("bold", 8.5, [255, 255, 255]).text("DESCRIPTION", L + 10, y + 14.5).text("QTY", cQty, y + 14.5, { align: "right" })
+      .text("RATE", cRate, y + 14.5, { align: "right" }).text("AMOUNT", R - 10, y + 14.5, { align: "right" });
+    y += 22; };
+  head();
+  inv.line_items.forEach((l, i) => {
+    const desc = wrap(l.description, cQty - L - 60), h = Math.max(desc.length, 1) * 12 + 12;
+    if (y + h > 740) { doc.addPage(); y = 50; head(); }
+    if (i % 2) doc.setFillColor(...PDF_TINT).rect(L, y, CW, h, "F");
+    font("normal", 9.5).text(desc, L + 10, y + 15).text(String(l.qty), cQty, y + 15, { align: "right" })
+      .text(money(l.rate), cRate, y + 15, { align: "right" }).text(money(l.amount), R - 10, y + 15, { align: "right" });
+    y += h; });
+  doc.setDrawColor(...PDF_LINE).line(L, y, R, y);
+  y += 18;
+
+  // Totals, right-aligned, ending in an indigo "Total due" bar.
+  const tx = 330;
+  if (y > 680) { doc.addPage(); y = 50; }
+  const trow = (label, val) => { font("normal", 9.5, PDF_SLATE).text(label, tx, y); font("normal", 9.5).text(val, R - 10, y, { align: "right" }); y += 16; };
+  trow("Subtotal", money(inv.subtotal));
+  for (const t of inv.tax_lines || []) trow(pdfText(`${t.label} (${t.pct}%)`), money(t.amount));
+  if (inv.tax_exempt) trow("Tax", "Exempt");
+  y += 2;
+  doc.setFillColor(...PDF_INDIGO).roundedRect(tx - 10, y - 4, R - tx + 10, 28, 3, 3, "F");
+  font("bold", 11, [255, 255, 255]).text("Total due", tx, y + 14).text(money(inv.total), R - 10, y + 14, { align: "right" });
+  y += 42;
+
+  // Notes, LUT, payment panel.
+  const note = t => { const n = wrap(t, CW); if (y + n.length * 11 > 760) { doc.addPage(); y = 50; } font("normal", 8.5, PDF_SLATE).text(n, L, y); y += n.length * 11 + 6; };
+  if (inv.tax_note) note(inv.tax_note);
+  if (india && entity.lut_number && !(inv.tax_lines || []).length) note(`Supply meant for export under LUT No. ${entity.lut_number}, without payment of IGST.`);
+  y += 6;
+  const bank = entity.bank_details ? wrap(entity.bank_details, CW - 28) : [];
+  const ph = 44 + bank.length * 11.5;
+  if (y + ph > 770) { doc.addPage(); y = 50; }
+  doc.setDrawColor(...PDF_LINE).setFillColor(255, 255, 255).roundedRect(L, y, CW, ph, 4, 4, "FD");
+  font("bold", 8, PDF_SLATE).text("PAYMENT DETAILS", L + 14, y + 17);
+  font("bold", 9.5).text(pdfText(`Please pay ${money(inv.total)} by ${pdfDate(inv.due_date)}, quoting ${inv.number}.`), L + 14, y + 31);
+  if (bank.length) font("normal", 9).text(bank, L + 14, y + 45);
+
+  // Footer on every page.
+  const pages = doc.getNumberOfPages();
+  for (let p = 1; p <= pages; p++) {
+    doc.setPage(p);
+    doc.setDrawColor(...PDF_LINE).line(L, 800, R, 800);
+    font("normal", 8, PDF_SLATE).text(pdfText(`Thank you for your business · ${entity.name}`), L, 814)
+      .text(`Page ${p} of ${pages}`, R, 814, { align: "right" });
   }
   return doc.output("blob");
 }
