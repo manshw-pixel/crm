@@ -128,6 +128,14 @@ Legend: ✅ automated · ⚠️ partial · ❌ none (MANUAL)
 | UX-05 | Dark contrast: every text/background pair the app uses ≥ 4.5:1 | ✅ | `dark-mode` |
 | UX-06 | Light mode pixel-identical after the token change | ✅ (one-off) | `tests/visual/light-diff.mjs` |
 
+### 11. Finance & invoicing
+| ID | Case | Status | Where |
+|---|---|---|---|
+| FIN-01 | Invoice math: tax, exemption, cents rounding, PO schedule split | ✅ | `unit/invoice` |
+| FIN-02 | Finance access, entities, PO and invoice RLS, numbering, send refusals | ✅ | `rls/finance` |
+| FIN-03 | Settings billing, account Invoices/PO tabs, raise form, Finance page, Dashboard card | ✅ | `finance` |
+| FIN-04 | Real invoice email with PDF via Brevo; PDF layout | ❌ MANUAL | runbook dry run (docs/runbooks/finance-setup.md step 6) |
+
 ## Manual release checklist (the ❌ rows)
 
 1. AUTH-04 — request a reset for a test user; the link lands on the set-new-password screen; new password works.
@@ -174,6 +182,30 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
   - safeUrl keeps http(s) links unchanged
   - safeUrl blocks script-capable and non-web schemes
   - safeUrl rejects non-strings and relative junk
+- **invoice.test.mjs**
+  - India same state: CGST 9 + SGST 9
+  - India state compare ignores case and spaces
+  - India other state: IGST 18
+  - India missing customer state is treated as inter-state IGST
+  - India entity to foreign customer: zero-rated with LUT note
+  - US default 0 adds no tax line; non-zero adds Sales tax
+  - PH VAT 12
+  - exempt: no tax lines, note from account or default
+  - computeTotals is exact in cents (no float drift)
+  - computeTotals rounds half-up
+  - computeTotals rounds half-up on large and binary-inexact values
+  - computeTotals drops blank lines and coerces strings
+  - invoiceStatus derives overdue and unsent
+  - summarizeInvoices groups by currency and never mixes
+  - buildSchedule: 2 years quarterly = 8 even periods
+  - buildSchedule: remainder lands on the last item, sum is exact
+  - buildSchedule: half-yearly and annual period ends
+  - buildSchedule: month-end start clamps (31 Jan quarterly)
+  - buildSchedule: rejects bad input with []
+  - periodLabel and scheduleLineItem
+  - dueItems: un-raised and started only
+  - defaultEntityFor: explicit id wins, then country, else null
+  - canFinance: finance flag or admin, never disabled
 
 ### tests/health
 
@@ -640,6 +672,46 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
   - two edits to the same row are sent in order, never concurrently
   - the status is 'saving' while work is pending and 'saved' once it drains
   - a delete queued behind a slow merge is not resurrected as a partial ghost
+- **finance.test.mjs**
+  - finance settings: admin toggles finance access on a user
+  - finance settings: the toggle reflects an existing grant
+  - finance settings: admin adds a billing entity
+  - finance settings: a hand-edited currency survives a country change
+  - finance settings: editing an entity fills the form and saves in place
+  - finance settings: a rejected entity save surfaces the database message
+  - finance settings: sender shows the default when the org has no row, and the first save upserts
+  - finance settings: a blank or malformed sender email is refused and not saved
+  - finance settings: a blank or non-numeric tax % is refused, a literal 0 is saved
+  - finance settings: a non-admin never reaches Settings, so never sees billing
+  - account invoices tab: lists history; CSM sees no Paid checkbox but can download
+  - account invoices tab: finance marks paid with date and reference; unchecking reverts after confirm
+  - account invoices tab: waive requires a reason
+  - account invoices tab: an unsent invoice offers Discard with the reason prefilled
+  - account form: billing fields save into the account
+  - account invoices tab: a failed load shows the error, not the empty state
+  - account form: a malformed billing email opens the collapsed Billing section
+  - account detail: the tab resets to overview when another account opens
+  - po: CSM submits a PO with a file; preview shows 8 quarterly periods
+  - po: submit blocked without file, number or a valid schedule
+  - po: finance edits amounts, mismatch needs confirmation, approve creates schedule
+  - po: approving without edits sends no amounts and no mismatch confirmation
+  - po: reject requires a reason; CSM sees the reason and can resubmit
+  - po: finance cancels an approved PO after a confirm that counts un-raised periods
+  - po: a failed load shows the error, not the empty state
+  - po: amounts with more than 2 decimals are refused and approve stays disabled
+  - po: years above 10 block submit
+  - raise invoice: Apply tax defaults off for a tax-exempt account and can be toggled
+  - raise invoice: blocks without billing email
+  - raise invoice: only started periods are due; prefills from the PO item, computes GST, sends
+  - raise invoice: a send failure leaves an Unsent invoice with Retry and keeps the form open
+  - raise invoice: renderInvoicePdf produces a multi-line PDF and tolerates hostile text
+  - finance page: summary per currency, status filter, summary ignores status filter
+  - finance page: PO queue is mounted, and upcoming periods are greyed out with no Raise
+  - finance page: CSV export neutralises formula cells
+  - finance page: read-only for a CSM, who still sees the page, summary, filters and CSV
+  - dashboard finance card: this quarter per currency, link opens Finance
+  - dashboard finance card shows PO and due counts, and a load error
+  - dashboard finance card is absent when there are no invoices and no POs
 
 ### tests/rls
 
@@ -862,6 +934,34 @@ Generated from `tests/**/*.test.mjs`. Regenerate it when you add tests.
   - org admins read their own org's ingest_log, and no one else's
   - no API role can write ingest_log or touchpoint_config
   - only anon may call ingest_touchpoint, and nobody may call the helpers
+- **finance.test.mjs**
+  - finance: admin creates a billing entity; plain user cannot
+  - finance: plain user can READ entities (precondition for the refusals below)
+  - po: CSM submits; CSM cannot approve or self-approve via update
+  - po: invoice refused while the PO is only submitted
+  - po: amounts must match unless confirmed; approve builds 8 anchored periods
+  - po: rejected needs a reason; CSM can edit and resubmit a rejected PO
+  - po: approved PO is locked against CSM edits
+  - po: another CSM cannot edit or take over someone else's submitted PO
+  - finance: plain user without the flag cannot create_invoice
+  - finance: admin toggles finance on; user can then create, numbers are sequential
+  - finance: plain user cannot grant themselves the flag (RLS)
+  - finance: revoked flag takes effect on the live session
+  - finance: the same schedule item cannot be raised twice
+  - finance: entity currency must match the PO currency
+  - finance storage: admin uploads an invoice PDF; flagless user cannot; user can download; other org cannot
+  - finance: mark paid needs a date; waive needs a reason; plain user refused
+  - finance: amounts are immutable via direct update
+  - finance: plain user reads invoices; other org sees none
+  - finance: admin_user_list returns the finance column
+  - finance: send_invoice posts one Brevo email with the PDF attached
+  - finance: send_invoice escapes account text in the email body
+  - finance: send_invoice falls back to the default sender when billing_settings has no row
+  - po: reject emails the submitter with the reason escaped; no Brevo key still rejects
+  - finance: send_invoice refuses another org, a waived invoice and an empty PDF
+  - finance: notify_po_decision is not callable through the API
+  - finance: send_invoice refuses placeholder config and a plain user
+  - po: cancel removes only un-raised items and keeps invoices
 
 ### tests/worker
 
