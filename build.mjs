@@ -143,11 +143,12 @@ const vendorJs = [
   "vendor/react.production.min.js",
   "vendor/react-dom.production.min.js",
   "vendor/jspdf.umd.min.js",
-].map(read).join("\n;\n")
+].map(f => f.includes("jspdf")
   // jsPDF carries '<body>' inside string literals (its PDF-viewer HTML templates). Inlined into <head>
   // they become the first "<body" in the file, and the health harness injects its mock right after
-  // the first match -- i.e. into the middle of this script. b is the same string at runtime.
-  .replace(/<body/g, "<\\u0062ody");
+  // the first match -- i.e. into the middle of this script. \u0062 is the same string at runtime.
+  // Scoped to jsPDF so no other vendor file is touched.
+  ? read(f).replace(/<body/g, "<\\u0062ody") : read(f)).join("\n;\n");
 
 // supabase-js is a webpack bundle whose "automatic publicPath" probe reads
 // document.currentScript.src and THROWS when it is empty -- which is exactly what an

@@ -1,6 +1,6 @@
 /* ------------------------- invoice PDF and raise form ------------------------- */
 // jsPDF's built-in Helvetica only has WinAnsi glyphs; anything else would print as mojibake.
-const pdfText = s => String(s == null ? "" : s).replace(/[^\t\n\x20-\x7E\xA0-\xFF–—‘’“”•€]/g, "?");
+const pdfText = s => String(s == null ? "" : s).replace(/\u20B9/g, "Rs.").replace(/[^\t\n\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u20AC]/g, "?");
 
 function renderInvoicePdf({ inv, entity, account, po }) {
   const doc = new window.jspdf.jsPDF({ unit: "pt", format: "a4" });

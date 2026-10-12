@@ -532,6 +532,7 @@ test("raise invoice: renderInvoicePdf produces a multi-line PDF and tolerates ho
       entity: { name: "OneVio", address: "A\nB", tax_id: "T", tax_id_label: "GSTIN", bank_details: "bank" }, account: { billingAddress: "x" }, po: { po_number: "P1" } });
     return { type: blob.type, text: String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()).slice(0, 5)) };
   });
+  assert(await page.evaluate(() => pdfText("\u20B9 5,000 \u0939") === "Rs. 5,000 ?"), "rupee sign maps to Rs., other non-Latin to ?");
   assert(head.type === "application/pdf" && head.text === "%PDF-", JSON.stringify(head));
   await browser.close();
 });
