@@ -605,3 +605,47 @@ test("finance page: read-only for a CSM, who still sees the page, summary, filte
   assert(await page.locator("[data-fin-export]").isEnabled(), "CSV export allowed");
   await browser.close();
 });
+
+// ---- Task 8: dashboard finance card (real clock: dates are derived from today)
+const TODAY = isoDay(new Date());
+const QSTART = (() => { const [y, m] = TODAY.split("-").map(Number); return `${y}-${String(Math.floor((m - 1) / 3) * 3 + 1).padStart(2, "0")}-01`; })();
+const PREV_Q = isoDay(new Date(Date.parse(QSTART + "T00:00:00Z") - 864e5));
+const YESTERDAY = isoDay(new Date(Date.now() - 864e5));
+const openDash = async (invoices, extra = {}, user = { role: "user", finance: false }) => {
+  const r = await launchFinance({ user, tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices, billing_entities: [IN_ENTITY], ...extra } });
+  await r.page.waitForSelector("[data-license-card]", { timeout: 15000 });
+  await r.page.evaluate(() => new Promise(res => setTimeout(res, 300)));
+  return r;
+};
+
+test("dashboard finance card: this quarter per currency, link opens Finance", async () => {
+  const { page, browser } = await openDash([
+    INV({ id: "d1", number: "A", total: 100, subtotal: 100, status: "paid", paid_date: TODAY, issue_date: TODAY }),
+    INV({ id: "d2", number: "B", total: 40, subtotal: 40, issue_date: TODAY, due_date: YESTERDAY }),
+    INV({ id: "d3", number: "C", total: 999, subtotal: 999, status: "paid", paid_date: PREV_Q, issue_date: PREV_Q })]);
+  const row = await page.locator("[data-finance-card] [data-fin-card-INR]").innerText();
+  assert(/Paid\s*INR 100\.00/.test(row), row);
+  assert(/Pending \(incl\. overdue\)\s*INR 40\.00/.test(row), row);
+  assert(/1 overdue/.test(row), row);
+  assert((await page.locator("[data-fin-card-donut]").count()) === 1, "donut");
+  await page.click("[data-fin-card-link]");
+  await page.waitForSelector("[data-finance-page]");
+  await browser.close();
+});
+
+test("dashboard finance card shows PO and due counts, and a load error", async () => {
+  const { page, browser } = await openDash([], { purchase_orders: [APPROVED_PO, { ...APPROVED_PO, id: "po2", po_number: "X2", status: "submitted" }], po_schedule: ITEMS });
+  assert(/1 PO awaiting approval/.test(await page.innerText("[data-fin-card-pos]")));
+  assert(/1 invoice due to raise/.test(await page.innerText("[data-fin-card-due]")));
+  await browser.close();
+  const e = await launchFinance({ user: { role: "user" }, seed: 'window.__selectErrors = { invoices: "boom" };', tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices: [] } });
+  await e.page.waitForSelector("[data-fin-card-error]", { timeout: 15000 });
+  assert(/boom/.test(await e.page.innerText("[data-fin-card-error]")));
+  await e.browser.close();
+});
+
+test("dashboard finance card is absent when there are no invoices and no POs", async () => {
+  const { page, browser } = await openDash([]);
+  assert((await page.locator("[data-finance-card]").count()) === 0);
+  await browser.close();
+});

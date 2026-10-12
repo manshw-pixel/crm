@@ -1,7 +1,7 @@
 // Whole class strings so the Tailwind scanner sees them; themed for dark mode (inline hex was 4.4:1 for Red).
 const RISK_TEXT = { Green: "text-emerald-600", Yellow: "text-amber-600", Red: "text-rose-600" };
 
-function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts }) {
+function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts, goFinance }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   // `today` is in the deps so the card re-bases itself when the year turns, even in a
   // session that was left open over New Year -- without it the memo would hold last
@@ -197,6 +197,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
       </AnalyticsSection>
       <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
+      <FinanceCard goFinance={goFinance} />
     </div>
   );
 }

@@ -88,3 +88,45 @@ function FinancePage({ st, user, openAccount }) {
     </section>
   </div>;
 }
+
+/* Dashboard card: this calendar quarter's invoices per currency (never summed across currencies), plus PO and
+   due-to-raise counts. "Pending" includes overdue, as in summarizeInvoices. Hidden when there is nothing to show. */
+function FinanceCard({ goFinance }) {
+  const { invoices, error: invErr } = useInvoices();
+  const { pos, schedule, error: poErr } = usePurchaseOrders();
+  const today = invToday();
+  const [y, m] = today.split("-").map(Number);
+  const qStart = `${y}-${String((Math.floor((m - 1) / 3)) * 3 + 1).padStart(2, "0")}-01`;
+  const mine = invoices.filter(i => String(i.issue_date) >= qStart && String(i.issue_date) <= today);
+  const s = summarizeInvoices(mine, today);
+  const curs = Object.keys(s).sort();
+  const awaiting = pos.filter(p => p.status === "submitted").length;
+  const approvedIds = new Set(pos.filter(p => p.status === "approved").map(p => p.id));
+  const due = dueItems(schedule.filter(x => approvedIds.has(x.po_id)), today).length;
+  const err = invErr || poErr;
+  if (!err && !curs.length && !awaiting && !due) return null;
+  const count = cur => mine.filter(i => i.currency === cur && invoiceStatus(i, today) !== "unsent").length;
+  const top = curs.slice().sort((a, b) => count(b) - count(a) || a.localeCompare(b))[0];
+  const amt = (cur, k) => s[cur][k].toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  return (
+    <div data-finance-card>
+      <Card title="Finance · this quarter" className="!p-3">
+        {err && <div className="mb-2 text-sm text-rose-600" data-fin-card-error>Could not load finance data: {err}</div>}
+        {top && <div className="mb-2 flex items-center gap-3">
+          <Donut data-fin-card-donut parts={[{ label: "Paid", value: s[top].paid, color: "#10b981" }, { label: "Pending", value: s[top].pending, color: "#f59e0b" },
+            { label: "Waived", value: s[top].waived, color: "#94a3b8" }]} centre={top} />
+          <div className="text-xs text-slate-500">{top} · {plural(count(top), "invoice")}</div></div>}
+        {curs.map(cur => <div key={cur} {...{ [`data-fin-card-${cur}`]: "" }} className="mb-2 text-sm">
+          <div className="font-semibold">{cur}</div>
+          <div className="tabular-nums text-emerald-700">Paid {cur} {amt(cur, "paid")}</div>
+          <div className="tabular-nums text-amber-700">Pending (incl. overdue) {cur} {amt(cur, "pending")}</div>
+          <div className="tabular-nums text-slate-600">Waived {cur} {amt(cur, "waived")}</div>
+          {s[cur].overdueCount > 0 && <div className="text-rose-700">{s[cur].overdueCount} overdue</div>}</div>)}
+        {awaiting > 0 && <div data-fin-card-pos className="text-sm">{plural(awaiting, "PO")} awaiting approval</div>}
+        {due > 0 && <div data-fin-card-due className="text-sm">{plural(due, "invoice")} due to raise</div>}
+        <button data-fin-card-link className="mt-2 text-sm text-indigo-600 hover:underline" onClick={goFinance}>Open Finance →</button>
+      </Card>
+    </div>
+  );
+}
