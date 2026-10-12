@@ -70,8 +70,8 @@ function FinancePage({ st, user, openAccount }) {
   const entLabels = Object.fromEntries(entities.map(e => [e.id, e.name]));
   return <div data-finance-page className="space-y-6">
     <h1 className="text-lg font-bold text-slate-800">Finance</h1>
-    {canFinance(user) && <section><h2 className="mb-1 text-sm font-bold text-slate-800">POs awaiting approval</h2>
-      <POQueue user={user} openAccount={openAccount} /></section>}
+    <section><h2 className="mb-1 text-sm font-bold text-slate-800">POs awaiting approval</h2>
+      <POQueue user={user} openAccount={openAccount} /></section>
     <section><h2 className="mb-1 text-sm font-bold text-slate-800">Due to raise</h2>
       <DueToRaise account={account} user={user} entities={entities} onSent={reload} /></section>
     <section className="space-y-3"><h2 className="text-sm font-bold text-slate-800">Invoices</h2>

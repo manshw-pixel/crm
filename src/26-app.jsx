@@ -29,7 +29,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   const [sel, setSel] = useState(0);
   useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
   if (!open) return null;
-  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(canFinance(user) ? ["Finance"] : [])
+  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"])
     .filter(v => subseqMatch(q, "go to " + v))
     .map(v => ({ type: "view", id: "v-" + v, label: `Go to ${v}`, run: () => go(v) }));
   const prefix = t => t.toLowerCase().startsWith(q.toLowerCase());
@@ -131,7 +131,7 @@ function App({ user, onBackToClients }) {
       .catch(() => { if (!cancelled) ORG_LIMITS.loaded = true; }); // a failed read is treated as Unlimited, as before
     return () => { cancelled = true; };
   }, [user.org_id]);
-  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(canFinance(user) ? ["Finance"] : []);
+  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"]);
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
   // a failed first load falls back to rendering the (empty) views, as before the skeleton existed
@@ -491,7 +491,7 @@ function App({ user, onBackToClients }) {
           ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-        {view === "Finance" && canFinance(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
+        {view === "Finance" && <FinancePage st={st} user={user} openAccount={openAccount} />}
         {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} />}
         </>}
       </ViewBoundary>

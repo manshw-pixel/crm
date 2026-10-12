@@ -588,3 +588,20 @@ test("finance page: CSV export neutralises formula cells", async () => {
   assert(text.includes('"180"') || text.includes('"IN-0009"'), text);
   await browser.close();
 });
+
+test("finance page: read-only for a CSM, who still sees the page, summary, filters and CSV", async () => {
+  const { page, browser } = await openPage(MIXED, { purchase_orders: [{ ...APPROVED_PO, id: "po2", po_number: "SUB1", status: "submitted" }, APPROVED_PO], po_schedule: ITEMS },
+    { role: "user", finance: false });
+  await page.waitForSelector("[data-invoice-row]");
+  await page.waitForSelector("[data-po-queue] [data-po-row]");
+  assert(/100\.00/.test(await page.innerText("[data-fin-summary-INR-paid]")));
+  assert((await page.locator("[data-due-item]").count()) === 1, "due list is visible");
+  assert((await page.locator("[data-raise]").count()) === 0, "no Raise buttons");
+  assert((await page.locator("[data-po-review]").count()) === 0, "no approve/reject/manage");
+  assert((await page.locator("[data-paid-checkbox]").count()) === 0 && (await page.locator("[data-waive]").count()) === 0, "no status actions");
+  assert((await page.locator("[data-download]").count()) > 0, "PDF download allowed");
+  await page.selectOption("[data-fin-filter-status]", "overdue");
+  assert((await page.locator("[data-invoice-row]").count()) === 1);
+  assert(await page.locator("[data-fin-export]").isEnabled(), "CSV export allowed");
+  await browser.close();
+});
