@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
+import { financeExt } from "./finance-mock.mjs";
 
 // The BUILT artifact, not the source. The gate exists to verify what actually ships, so
 // it loads exactly the bytes CI publishes. Run `node build.mjs` first -- CI does, and
@@ -331,4 +332,30 @@ export async function launch(seedJs) {
   await page.goto(url);
   await page.waitForSelector("#root", { timeout: 15000 });
   return { page, browser };
+}
+
+// Launch the default mock with the finance extension (finance-mock.mjs) on top.
+// opts.user overrides the signed-in profile (role, finance, ...); opts.users adds teammates
+// (rows as admin_user_list returns them: id, name, role, finance, email, ...); opts.tables
+// seeds billing_entities / billing_settings / purchase_orders / po_schedule / invoices;
+// opts.seed is extra JS run before the app boots. Reads and writes go through window.__mockDb.
+export async function launchFinance(opts = {}) {
+  const me = { id: "u1", name: "Test User", role: "admin", org_id: "org-a", platform_admin: false, disabled: false, finance: false, email: "t@t.io", ...(opts.user || {}) };
+  const rows = { profiles: [me, ...(opts.users || [])], ...(opts.tables || {}) };
+  const seedJs = `window.__seedRows = ${JSON.stringify(rows)};\n${opts.seed || ""}`;
+  let html = readFileSync(CRM, "utf8");
+  html = html.replace(/<body[^>]*>/, m => `${m}<script>${MOCK}\n(${financeExt.toString()})();\n${seedJs}</script>`);
+  const dir = mkdtempSync(join(tmpdir(), "crm-health-"));
+  const file = join(dir, "crm.html");
+  writeFileSync(file, html);
+  const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
+  const page = await browser.newPage();
+  await page.goto("file://" + file.replace(/\\/g, "/"));
+  await page.waitForSelector("#root", { timeout: 15000 });
+  return { page, browser };
+}
+
+export async function gotoSettings(page) {
+  await page.click("text=Settings");
+  await page.waitForSelector("#set-users", { timeout: 10000 });
 }

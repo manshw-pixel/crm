@@ -50,6 +50,10 @@ create table if not exists public.profiles (
 alter table public.profiles
   add column if not exists disabled boolean not null default false;
 
+-- Finance access (invoicing): granted per user by an admin; guarded by guard_profile_finance in finance.sql.
+alter table public.profiles
+  add column if not exists finance boolean not null default false;
+
 -- org_id is NULL for a sign-up that matched no invite: such a user has a valid session and
 -- reads nothing (is_active() requires an org). platform_admin can only be set by SQL or by
 -- a platform admin (guard_profile_org below).
@@ -777,8 +781,10 @@ grant execute on function public.record_health(jsonb) to authenticated;
 -- profiles has no email column; addresses live in auth.users, which the browser cannot
 -- read. Definer rights are what make this join possible at all -- the same reason
 -- alert_recipients() in email-alerts.sql is a definer function.
+-- v2 adds `finance`; the return type changed, so the old signature is dropped first.
+drop function if exists public.admin_user_list();
 create or replace function public.admin_user_list()
-returns table(id uuid, name text, role text, disabled boolean, email text)
+returns table(id uuid, name text, role text, disabled boolean, email text, finance boolean)
 language plpgsql security definer set search_path = public, auth as $$
 begin
   -- A definer function runs as its owner and bypasses RLS, so it must assert its own
@@ -787,7 +793,7 @@ begin
     raise exception 'admin_user_list: admin only';
   end if;
   return query
-    select p.id, p.name, p.role, p.disabled, u.email::text
+    select p.id, p.name, p.role, p.disabled, u.email::text, p.finance
     from profiles p join auth.users u on u.id = p.id
     where p.org_id = public.current_org()
       -- A platform admin who has switched into this org is not one of its users: hide the

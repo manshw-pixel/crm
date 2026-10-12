@@ -145,3 +145,23 @@ function DistBar({ counts }) {
   );
 }
 
+
+// Ring of proportional arcs. `parts` = [{ label, value, color }]; the track and centre text use theme
+// variables via currentColor classes so it reads in dark mode. Zero-value parts are skipped.
+function Donut({ parts, size = 84, centre, ...rest }) {
+  const total = parts.reduce((s, p) => s + p.value, 0);
+  const r = size / 2 - 8, c = 2 * Math.PI * r;
+  let off = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label={parts.map(p => `${p.label} ${p.value}`).join(", ")} {...rest}>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" strokeWidth="10" className="stroke-slate-200" />
+      {total > 0 && parts.filter(p => p.value > 0).map(p => {
+        const len = (p.value / total) * c, el = (
+          <circle key={p.label} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={p.color} strokeWidth="10"
+            strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-off} transform={`rotate(-90 ${size / 2} ${size / 2})`} />);
+        off += len; return el;
+      })}
+      {centre && <text x="50%" y="50%" textAnchor="middle" dominantBaseline="central" className="fill-slate-700 text-[11px] font-semibold">{centre}</text>}
+    </svg>
+  );
+}

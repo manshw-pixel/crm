@@ -144,6 +144,114 @@ function RecencyWindowInputs({ type, cfg, onCommit }) {
 }
 
 /* ------------------------------- Settings ------------------------------- */
+// Country decides the entity's currency and default tax unless the admin has typed their own.
+const BILLING_COUNTRY_DEFAULTS = { IN: ["INR", 18], US: ["USD", 0], PH: ["PHP", 12] };
+const BILLING_SENDER_DEFAULT = { sender_email: "support@onevio.in", sender_name: "OneVio Billing" };
+const BLANK_ENTITY = { name: "", country: "IN", address: "", state: "", tax_id: "", tax_id_label: "", currency: "INR", bank_details: "", invoice_prefix: "", default_tax_pct: "18", lut_number: "" };
+function BillingSettingsCard({ user }) {
+  const [entities, setEntities] = useState([]);
+  const [sender, setSender] = useState(null);       // the billing_settings row, or null when the org has none yet
+  const [senderEmail, setSenderEmail] = useState(BILLING_SENDER_DEFAULT.sender_email);
+  const [f, setF] = useState(BLANK_ENTITY);
+  const [editingId, setEditingId] = useState(null);
+  const [touched, setTouched] = useState({});       // currency / default_tax_pct edited by hand
+  const [err, setErr] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = async () => {
+    const [en, se] = await Promise.all([
+      sb.from("billing_entities").select("*").order("created_at", { ascending: true }),
+      sb.from("billing_settings").select("*").maybeSingle(),
+    ]);
+    if (en.error) return setErr(en.error.message);
+    if (se.error) return setErr(se.error.message);
+    setEntities(en.data || []);
+    setSender(se.data || null);
+    setSenderEmail(se.data ? se.data.sender_email : BILLING_SENDER_DEFAULT.sender_email);
+  };
+  useEffect(() => { load(); }, []);
+  const set = (k, v) => setF(p => ({ ...p, [k]: v }));
+  const setCountry = country => setF(p => {
+    const [cur, tax] = BILLING_COUNTRY_DEFAULTS[country];
+    return { ...p, country, currency: touched.currency ? p.currency : cur, default_tax_pct: touched.default_tax_pct ? p.default_tax_pct : String(tax) };
+  });
+  const edit = e => {
+    setErr(""); setMsg(""); setEditingId(e.id); setTouched({ currency: true, default_tax_pct: true });
+    setF({ ...BLANK_ENTITY, ...Object.fromEntries(Object.keys(BLANK_ENTITY).map(k => [k, e[k] == null ? "" : String(e[k])])) });
+  };
+  const reset = () => { setEditingId(null); setTouched({}); setF(BLANK_ENTITY); };
+  const saveEntity = async ev => {
+    ev.preventDefault(); setErr(""); setMsg("");
+    const taxStr = String(f.default_tax_pct).trim();
+    if (taxStr === "" || !Number.isFinite(Number(taxStr))) return setErr("Default tax % must be a number (0 is allowed).");
+    setBusy(true);
+    const row = {
+      name: f.name.trim(), country: f.country, address: f.address.trim(), state: f.country === "IN" ? f.state.trim() : "",
+      tax_id: f.tax_id.trim(), tax_id_label: f.tax_id_label.trim(), currency: f.currency, bank_details: f.bank_details.trim(),
+      invoice_prefix: f.invoice_prefix.trim(), default_tax_pct: Number(taxStr),
+      lut_number: f.country === "IN" && f.lut_number.trim() ? f.lut_number.trim() : null,
+    };
+    const { error } = editingId
+      ? await sb.from("billing_entities").update(row).eq("id", editingId)
+      : await sb.from("billing_entities").insert(row);
+    setBusy(false);
+    if (error) return setErr(error.message);
+    setMsg(editingId ? `Updated ${row.name}.` : `Added ${row.name}.`);
+    reset(); load();
+  };
+  // billing_settings can have no row for an org created after the migration, so this upserts.
+  const saveSender = async () => {
+    setErr(""); setMsg("");
+    const email = senderEmail.trim();
+    if (!email || !email.includes("@")) return setErr("Enter a valid sender email address.");
+    const { error } = await sb.from("billing_settings").upsert(
+      { org_id: user.org_id, sender_email: email, sender_name: sender ? sender.sender_name : BILLING_SENDER_DEFAULT.sender_name },
+      { onConflict: "org_id" });
+    if (error) setErr(error.message); else { setMsg("Sender saved."); load(); }
+  };
+  const isIN = f.country === "IN";
+  return (
+    <Card title="Billing">
+      <div className="text-[11px] font-bold uppercase tracking-widest text-slate-500">Billing entities</div>
+      {!entities.length && <p className="mt-1 text-xs text-slate-500">No billing entity yet. Add the company that issues invoices, one per country.</p>}
+      {entities.map(e => (
+        <div key={e.id} data-billing-entity-row className="flex items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
+          <span className="flex-1">{e.name}
+            <span className="ml-2 text-xs text-slate-500">{e.country} · {e.currency} · {e.invoice_prefix} · next #{e.next_number}</span></span>
+          <button className="text-xs text-indigo-600 hover:underline" onClick={() => edit(e)}>edit</button>
+        </div>
+      ))}
+      <form data-billing-entity-form onSubmit={saveEntity} className="mt-3 grid gap-2 sm:grid-cols-2">
+        <div className="text-xs font-semibold text-slate-600 sm:col-span-2">{editingId ? "Edit entity" : "Add entity"}</div>
+        <Input name="name" placeholder="Legal name" value={f.name} onChange={e => set("name", e.target.value)} />
+        <Select name="country" value={f.country} onChange={e => setCountry(e.target.value)} options={["IN", "US", "PH"]} />
+        <Input name="address" placeholder="Address" value={f.address} onChange={e => set("address", e.target.value)} className="sm:col-span-2" />
+        {isIN && <Input name="state" placeholder="State" value={f.state} onChange={e => set("state", e.target.value)} />}
+        <Input name="tax_id" placeholder="Tax ID" value={f.tax_id} onChange={e => set("tax_id", e.target.value)} />
+        <Input name="tax_id_label" placeholder="Tax ID label (e.g. GSTIN)" value={f.tax_id_label} onChange={e => set("tax_id_label", e.target.value)} />
+        <Select name="currency" value={f.currency} onChange={e => { setTouched(t => ({ ...t, currency: true })); set("currency", e.target.value); }} options={["INR", "USD", "PHP"]} />
+        <Input name="invoice_prefix" placeholder="Invoice prefix (e.g. IN-)" value={f.invoice_prefix} onChange={e => set("invoice_prefix", e.target.value)} />
+        <Input name="default_tax_pct" type="number" step="0.01" min="0" max="100" placeholder="Default tax %" value={f.default_tax_pct}
+          onChange={e => { setTouched(t => ({ ...t, default_tax_pct: true })); set("default_tax_pct", e.target.value); }} />
+        {isIN && <Input name="lut_number" placeholder="LUT number (zero-rated exports)" value={f.lut_number} onChange={e => set("lut_number", e.target.value)} />}
+        <textarea name="bank_details" placeholder="Bank details shown on the invoice" rows={3} value={f.bank_details} onChange={e => set("bank_details", e.target.value)}
+          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 sm:col-span-2" />
+        <div className="flex gap-2 sm:col-span-2">
+          <Btn kind="primary" type="submit" disabled={busy}>{busy ? "Saving…" : editingId ? "Save entity" : "Add entity"}</Btn>
+          {editingId && <Btn onClick={reset}>Cancel</Btn>}
+        </div>
+      </form>
+      <div data-billing-sender className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <span className="text-xs font-semibold text-slate-600">Invoice sender</span>
+        <Input type="email" aria-label="Invoice sender email" value={senderEmail} onChange={e => setSenderEmail(e.target.value)} className="w-64" />
+        <Btn onClick={saveSender}>Save</Btn>
+      </div>
+      {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}
+      {msg && <div className="mt-2 rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">{msg}</div>}
+      <p className="mt-2 text-xs text-slate-500">The sender address must be verified in Brevo or invoices will not deliver. Invoice numbers are the prefix plus a counter that only ever moves forward.</p>
+    </Card>
+  );
+}
 function Settings({ st, dispatch, user, scored, theme }) {
   const toast = useToast();
   const w = st.settings.weights;
@@ -185,7 +293,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
     <div className="grid gap-4 lg:grid-cols-2">
       <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
         {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Users", "set-users"],
-          ...(user.role === "admin" ? [["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
+          ...(user.role === "admin" ? [["Billing", "set-billing"], ["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
           <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
       </nav>
       <Card title="Appearance" id="set-appearance">
@@ -258,6 +366,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
       <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
       <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
       <div id="set-users" className="scroll-mt-4"><UsersCard me={user} /></div>
+      {user.role === "admin" && <div id="set-billing" className="scroll-mt-4"><BillingSettingsCard user={user} /></div>}
       {user.role === "admin" && <div id="set-errors" className="scroll-mt-4"><ErrorLogCard /></div>}
       <Card title="Data" id="set-data">
         <div className="flex flex-wrap gap-2">

@@ -8,6 +8,7 @@ const NAV_ICONS = {
   Accounts: <NavIcon><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></NavIcon>,
   Renewals: <NavIcon><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></NavIcon>,
   Settings: <NavIcon><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></NavIcon>,
+  Finance: <NavIcon><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /><line x1="6" y1="15" x2="10" y2="15" /></NavIcon>,
 };
 /* --------------------------- command palette --------------------------- */
 /* case-insensitive subsequence match: "nrw" matches "Northwind" */
@@ -28,7 +29,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   const [sel, setSel] = useState(0);
   useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
   if (!open) return null;
-  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings"))
+  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"])
     .filter(v => subseqMatch(q, "go to " + v))
     .map(v => ({ type: "view", id: "v-" + v, label: `Go to ${v}`, run: () => go(v) }));
   const prefix = t => t.toLowerCase().startsWith(q.toLowerCase());
@@ -130,7 +131,7 @@ function App({ user, onBackToClients }) {
       .catch(() => { if (!cancelled) ORG_LIMITS.loaded = true; }); // a failed read is treated as Unlimited, as before
     return () => { cancelled = true; };
   }, [user.org_id]);
-  const views = user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings");
+  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"]);
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
   // a failed first load falls back to rendering the (empty) views, as before the skeleton existed
@@ -484,12 +485,13 @@ function App({ user, onBackToClients }) {
       </div>
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
-        {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} />}
+        {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
         {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
         {view === "Accounts" && (acctId
           ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
+        {view === "Finance" && <FinancePage st={st} user={user} openAccount={openAccount} />}
         {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} />}
         </>}
       </ViewBoundary>
@@ -523,7 +525,7 @@ function Root() {
   }, []);
   useEffect(() => {
     if (!session) { setProfile(null); return; }
-    sb.from("profiles").select("id,name,role,disabled,org_id,platform_admin").eq("id", session.user.id).single()
+    sb.from("profiles").select("id,name,role,disabled,org_id,platform_admin,finance").eq("id", session.user.id).single()
       // Same reasoning as the saveError helper: profile loading runs BEFORE ToastProvider
       // wraps App, so window.__toast is genuinely undefined here and alert is the only
       // channel left. Deliberately kept.

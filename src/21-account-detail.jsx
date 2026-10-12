@@ -35,6 +35,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
+  const [tab, setTab] = useState("overview");
+  useEffect(() => setTab("overview"), [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
@@ -185,6 +187,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form && form.t === "editActivity" ? <LogActivityForm acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editTask" ? <AddTaskForm acct={a} existing={form.item} team={team} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
+      <div className="flex gap-2" role="tablist">
+        {[["overview", "Overview"], ["Invoices", "Invoices"], ["Purchase orders", "Purchase orders"]].map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
+          className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(k)}>{label}</button>)}
+      </div>
+      {tab === "Invoices" && <Card title="Invoices"><AccountInvoices account={a} user={user} /></Card>}
+      {tab === "Purchase orders" && <Card title="Purchase orders"><AccountPurchaseOrders account={a} user={user} /></Card>}
+      {tab === "overview" && <>
       <div className="grid gap-4 lg:grid-cols-3">
         <Card title="Health trend">
           {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); return (
@@ -286,6 +295,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           ))}
         </Card>
       </div>
+      </>}
       {confirmContact && <ConfirmDialog
         title="Delete contact"
         body={`Delete ${confirmContact.name}${confirmContact.email ? ` (${confirmContact.email})` : ""}? This cannot be undone. Email touchpoints will stop matching this address.`}

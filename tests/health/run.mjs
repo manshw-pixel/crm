@@ -70,6 +70,7 @@ import "./accountno-backfill.test.mjs";
 import "./dark-mode.test.mjs";
 import "./account-limit.test.mjs";
 import "./licenses.test.mjs";
+import "./finance.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
