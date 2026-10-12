@@ -17,7 +17,8 @@
 //                         upload, download, createSignedUrl, remove, list, getPublicUrl
 //
 // It models the app's contract with Supabase, NOT Supabase: no RLS, and only the check
-// constraints the UI can trip. Fault injection: window.__sendInvoiceError.
+// constraints the UI can trip. Fault injection: window.__sendInvoiceError, and
+// window.__selectErrors = { <table>: "message" } makes that table's selects fail.
 export function financeExt() {
   const baseFactory = window.__sbFactory;
   window.__sbFactory = () => {
@@ -66,6 +67,7 @@ export function financeExt() {
           return { data: data == null ? null : clone(data), error: null };
         };
         if (f.op === "select") {
+          if (window.__selectErrors && window.__selectErrors[t]) return fin(null, window.__selectErrors[t]);
           let out = rows.filter(match);
           if (f.order) { const k = f.order[0], asc = f.order[1]; out = out.slice().sort((a, b) => (a[k] > b[k] ? 1 : a[k] < b[k] ? -1 : 0) * (asc ? 1 : -1)); }
           if (f.limit != null) out = out.slice(0, f.limit);

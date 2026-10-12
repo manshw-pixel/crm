@@ -82,10 +82,11 @@ function WaiveDialog({ inv, onDone, onClose }) {
   );
 }
 
-function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAccount }) {
+function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAccount, error }) {
   const fin = canFinance(user);
   const [paying, setPaying] = useState(null), [waiving, setWaiving] = useState(null), [reverting, setReverting] = useState(null);
   const today = invToday();
+  if (error) return <div className="p-4 text-sm text-rose-600" data-invoices-error>Could not load invoices: {error}</div>;
   if (!invoices.length) return <div className="p-4 text-sm text-slate-500" data-invoices-empty>No invoices yet.</div>;
   return <div className="overflow-x-auto"><table className="w-full text-sm">
     <thead><tr className="text-left text-xs text-slate-500">
@@ -118,6 +119,6 @@ function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAc
 }
 
 function AccountInvoices({ account, user }) {
-  const { invoices, entities, reload } = useInvoices({ accountId: account.id });
-  return <InvoiceTable invoices={invoices} entities={entities} user={user} onChanged={reload} />;
+  const { invoices, entities, reload, error } = useInvoices({ accountId: account.id });
+  return <InvoiceTable invoices={invoices} entities={entities} user={user} onChanged={reload} error={error} />;
 }

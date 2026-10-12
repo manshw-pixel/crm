@@ -36,6 +36,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
+  useEffect(() => setTab("overview"), [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);

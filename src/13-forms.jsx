@@ -249,6 +249,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
     : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
   const [limitErr, setLimitErr] = useState("");
   const [entities, setEntities] = useState([]);
+  const [billingOpen, setBillingOpen] = useState(false);
   useEffect(() => { let live = true; Promise.resolve(sb.from("billing_entities").select("*")).then(r => { if (live && r && r.data) setEntities(r.data); }).catch(() => {}); return () => { live = false; }; }, []);
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
@@ -296,7 +297,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
             {parentOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
       </F>
-      <details data-billing-fieldset className="col-span-2 md:col-span-4">
+      <details data-billing-fieldset open={billingOpen} onToggle={e => setBillingOpen(e.currentTarget.open)} className="col-span-2 md:col-span-4">
         <summary className="cursor-pointer text-xs font-bold text-slate-700">Billing</summary>
         <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
           <F label="Country"><Select name="country" value={v.country} onChange={e => set("country", e.target.value)} options={["", "IN", "US", "PH"]} className="w-full" /></F>
@@ -304,7 +305,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
             <option value="">Auto from country</option>
             {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
           </select></F>
-          <F label="Billing email"><Input name="billingEmail" type="email" value={v.billingEmail} onChange={e => set("billingEmail", e.target.value)} /></F>
+          <F label="Billing email"><Input name="billingEmail" type="email" onInvalid={() => setBillingOpen(true)} value={v.billingEmail} onChange={e => set("billingEmail", e.target.value)} /></F>
           <F label="Customer tax ID"><Input name="customerTaxId" value={v.customerTaxId} onChange={e => set("customerTaxId", e.target.value)} /></F>
           {v.country === "IN" && <F label="Customer state"><Input name="customerState" value={v.customerState} onChange={e => set("customerState", e.target.value)} /></F>}
           <F label="Billing address"><textarea name="billingAddress" rows={2} value={v.billingAddress} onChange={e => set("billingAddress", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none" /></F>

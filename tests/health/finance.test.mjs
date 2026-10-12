@@ -239,3 +239,39 @@ test("account form: billing fields save into the account", async () => {
   assert(a.customerTaxId === "" && a.billingEntityId === "", "blank values are stored as empty strings");
   await browser.close();
 });
+
+test("account invoices tab: a failed load shows the error, not the empty state", async () => {
+  const { page, browser } = await launchFinance({ user: { role: "user", finance: false },
+    seed: `window.__selectErrors = { invoices: "permission denied for table invoices" };`,
+    tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd")], invoices: [], billing_entities: [] } });
+  await openAccountTab(page, "a1", "Invoices");
+  await page.waitForSelector("[data-invoices-error]");
+  assert((await page.locator("[data-invoices-error]").innerText()).includes("permission denied"));
+  assert((await page.locator("[data-invoices-empty]").count()) === 0, "must not claim there are no invoices");
+  await browser.close();
+});
+
+test("account form: a malformed billing email opens the collapsed Billing section", async () => {
+  const { page, browser } = await openFinance({ role: "admin" }, []);
+  await page.click('button[title="Accounts"]', { timeout: 15000 });
+  await page.click('[data-account-row]:has-text("Acme Ltd")');
+  await page.getByRole("button", { name: /Edit account/ }).click();
+  await page.locator("[data-billing-fieldset] summary").click();
+  await page.locator('[name="billingEmail"]').fill("not-an-email");
+  await page.locator("[data-billing-fieldset] summary").click();
+  assert(!(await page.locator("[data-billing-fieldset]").evaluate(d => d.open)), "starts collapsed");
+  await page.getByRole("button", { name: "Save changes" }).click();
+  await page.waitForFunction(() => document.querySelector("[data-billing-fieldset]").open, null, { timeout: 3000 });
+  await browser.close();
+});
+
+test("account detail: the tab resets to overview when another account opens", async () => {
+  const { page, browser } = await openFinance({ role: "admin" }, []);
+  await openAccountTab(page, "a1", "Invoices");
+  await page.waitForSelector("[data-invoices-empty]");
+  await page.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => /Back/.test(x.textContent)); b && b.click(); });
+  await page.click('[data-account-row]:has-text("Other Co")');
+  await page.waitForSelector('[data-account-tab="Invoices"]');
+  assert((await page.locator('[data-account-tab="overview"]').getAttribute("aria-selected")) === "true");
+  await browser.close();
+});
