@@ -181,11 +181,14 @@ function BillingSettingsCard({ user }) {
   };
   const reset = () => { setEditingId(null); setTouched({}); setF(BLANK_ENTITY); };
   const saveEntity = async ev => {
-    ev.preventDefault(); setErr(""); setMsg(""); setBusy(true);
+    ev.preventDefault(); setErr(""); setMsg("");
+    const taxStr = String(f.default_tax_pct).trim();
+    if (taxStr === "" || !Number.isFinite(Number(taxStr))) return setErr("Default tax % must be a number (0 is allowed).");
+    setBusy(true);
     const row = {
       name: f.name.trim(), country: f.country, address: f.address.trim(), state: f.country === "IN" ? f.state.trim() : "",
       tax_id: f.tax_id.trim(), tax_id_label: f.tax_id_label.trim(), currency: f.currency, bank_details: f.bank_details.trim(),
-      invoice_prefix: f.invoice_prefix.trim(), default_tax_pct: Number(f.default_tax_pct) || 0,
+      invoice_prefix: f.invoice_prefix.trim(), default_tax_pct: Number(taxStr),
       lut_number: f.country === "IN" && f.lut_number.trim() ? f.lut_number.trim() : null,
     };
     const { error } = editingId
@@ -199,8 +202,10 @@ function BillingSettingsCard({ user }) {
   // billing_settings can have no row for an org created after the migration, so this upserts.
   const saveSender = async () => {
     setErr(""); setMsg("");
+    const email = senderEmail.trim();
+    if (!email || !email.includes("@")) return setErr("Enter a valid sender email address.");
     const { error } = await sb.from("billing_settings").upsert(
-      { org_id: user.org_id, sender_email: senderEmail.trim(), sender_name: sender ? sender.sender_name : BILLING_SENDER_DEFAULT.sender_name },
+      { org_id: user.org_id, sender_email: email, sender_name: sender ? sender.sender_name : BILLING_SENDER_DEFAULT.sender_name },
       { onConflict: "org_id" });
     if (error) setErr(error.message); else { setMsg("Sender saved."); load(); }
   };

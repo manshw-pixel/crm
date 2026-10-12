@@ -110,6 +110,40 @@ test("finance settings: sender shows the default when the org has no row, and th
   await browser.close();
 });
 
+test("finance settings: a blank or malformed sender email is refused and not saved", async () => {
+  const { page, browser } = await launchFinance();
+  await gotoSettings(page);
+  const s = page.locator("[data-billing-sender]");
+  await s.waitFor({ timeout: 10000 });
+  for (const bad of ["   ", "not-an-email"]) {
+    await s.locator("input").first().fill(bad);
+    await s.locator("button").click();
+    await page.waitForFunction(() => /valid sender email/i.test(document.querySelector("#set-billing")?.textContent || ""), null, { timeout: 5000 });
+    await page.evaluate(() => document.querySelector("[data-billing-sender] button").blur());
+  }
+  assert((await page.evaluate(() => window.__mockDb.billing_settings.length)) === 0, "nothing may be upserted");
+  await browser.close();
+});
+
+test("finance settings: a blank or non-numeric tax % is refused, a literal 0 is saved", async () => {
+  const { page, browser } = await launchFinance();
+  await gotoSettings(page);
+  const f = page.locator("[data-billing-entity-form]");
+  await f.waitFor({ timeout: 10000 });
+  await f.locator('[name="name"]').fill("Tax Co");
+  await f.locator('[name="invoice_prefix"]').fill("T-");
+  await f.locator('[name="default_tax_pct"]').fill("");
+  await f.locator('button[type="submit"]').click();
+  await page.waitForFunction(() => /tax % must be a number/i.test(document.querySelector("#set-billing")?.textContent || ""), null, { timeout: 5000 });
+  assert((await page.evaluate(() => window.__mockDb.billing_entities.length)) === 0, "blank tax must not save");
+  await f.locator('[name="default_tax_pct"]').fill("0");
+  await f.locator('button[type="submit"]').click();
+  await page.waitForSelector('[data-billing-entity-row]:has-text("Tax Co")', { timeout: 5000 });
+  const e = await page.evaluate(() => window.__mockDb.billing_entities.at(-1));
+  assert(Number(e.default_tax_pct) === 0, "0 stays allowed, got " + e.default_tax_pct);
+  await browser.close();
+});
+
 test("finance settings: a non-admin never reaches Settings, so never sees billing", async () => {
   const { page, browser } = await launchFinance({ user: { role: "user", finance: true } });
   await page.waitForSelector("#root", { timeout: 10000 });
