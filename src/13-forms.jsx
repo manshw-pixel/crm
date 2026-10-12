@@ -245,9 +245,11 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
-    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "" }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "" });
+    ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "", country: existing.country || "", billingEntityId: existing.billingEntityId || "", billingEmail: existing.billingEmail || "", billingAddress: existing.billingAddress || "", customerTaxId: existing.customerTaxId || "", customerState: existing.customerState || "", taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote || "" }
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
   const [limitErr, setLimitErr] = useState("");
+  const [entities, setEntities] = useState([]);
+  useEffect(() => { let live = true; Promise.resolve(sb.from("billing_entities").select("*")).then(r => { if (live && r && r.data) setEntities(r.data); }).catch(() => {}); return () => { live = false; }; }, []);
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form className="grid grid-cols-2 gap-3 md:grid-cols-4" onSubmit={e => {
@@ -256,7 +258,9 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         deployedLicenses: v.deployedLicenses === "" || v.deployedLicenses == null ? null : Math.max(0, Math.round(+v.deployedLicenses) || 0),
         billingCompleted: !!v.billingCompleted, billingCompletedDate: v.billingCompleted ? (v.billingCompletedDate || iso(Date.now())) : null,
         transitionDate: v.transitionDate || null,
-        parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate };
+        parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate,
+        billingEmail: v.billingEmail.trim(), billingAddress: v.billingAddress.trim(), customerTaxId: v.customerTaxId.trim(),
+        customerState: v.country === "IN" ? v.customerState.trim() : "", taxExemptNote: v.taxExempt ? v.taxExemptNote.trim() : "" };
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
       else {
         // `accounts` is every account in the org (churned included), which is what the server counts.
@@ -292,6 +296,22 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
             {parentOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
       </F>
+      <details data-billing-fieldset className="col-span-2 md:col-span-4">
+        <summary className="cursor-pointer text-xs font-bold text-slate-700">Billing</summary>
+        <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <F label="Country"><Select name="country" value={v.country} onChange={e => set("country", e.target.value)} options={["", "IN", "US", "PH"]} className="w-full" /></F>
+          <F label="Billing entity"><select name="billingEntityId" value={v.billingEntityId} onChange={e => set("billingEntityId", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+            <option value="">Auto from country</option>
+            {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
+          </select></F>
+          <F label="Billing email"><Input name="billingEmail" type="email" value={v.billingEmail} onChange={e => set("billingEmail", e.target.value)} /></F>
+          <F label="Customer tax ID"><Input name="customerTaxId" value={v.customerTaxId} onChange={e => set("customerTaxId", e.target.value)} /></F>
+          {v.country === "IN" && <F label="Customer state"><Input name="customerState" value={v.customerState} onChange={e => set("customerState", e.target.value)} /></F>}
+          <F label="Billing address"><textarea name="billingAddress" rows={2} value={v.billingAddress} onChange={e => set("billingAddress", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none" /></F>
+          <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" name="taxExempt" checked={v.taxExempt} onChange={e => set("taxExempt", e.target.checked)} />Tax exempt</label>
+          {v.taxExempt && <F label="Exemption note"><Input name="taxExemptNote" value={v.taxExemptNote} onChange={e => set("taxExemptNote", e.target.value)} /></F>}
+        </div>
+      </details>
       <div className="col-span-2 flex items-center gap-2 md:col-span-4">
         <Btn kind="primary" type="submit">{existing ? "Save changes" : "Create account"}</Btn><Btn onClick={onDone}>Cancel</Btn>
         {!existing && <span className="text-xs text-slate-500">Health inputs start at usage 70 · sentiment 70 · tickets 0 · NPS 0 — tune them from the account page.</span>}
