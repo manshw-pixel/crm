@@ -99,34 +99,43 @@ function WaiveDialog({ inv, onDone, onClose }) {
   );
 }
 
+// Small bordered action button, shared by the invoice and PO tables. tone "danger" for destructive actions.
+const MiniBtn = ({ tone, className = "", ...p }) => <button type="button" {...p}
+  className={`rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 ${tone === "danger" ? "text-rose-600" : "text-indigo-600"} ${className}`} />;
+const invDate = d => d ? fmtDate(d) : "—";
+const invMoney = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2 });
+// Below sm the table collapses to one card per row: number + status, account, amount + due, then actions.
+const IT_CELL = "block p-0 sm:table-cell sm:p-2";
+
 function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAccount, error, accountOf }) {
   const fin = canFinance(user);
   const [paying, setPaying] = useState(null), [waiving, setWaiving] = useState(null), [reverting, setReverting] = useState(null);
   const today = invToday();
   if (error) return <div className="p-4 text-sm text-rose-600" data-invoices-error>Could not load invoices: {error}</div>;
   if (!invoices.length) return <div className="p-4 text-sm text-slate-500" data-invoices-empty>No invoices yet.</div>;
-  return <div className="overflow-x-auto"><table className="w-full text-sm">
-    <thead><tr className="text-left text-xs text-slate-500">
-      {fin && <th className="p-2">Paid</th>}<th className="p-2">Number</th>{showAccount && <th className="p-2">Account</th>}
-      <th className="p-2">Issued</th><th className="p-2">Due</th><th className="p-2 text-right">Amount</th><th className="p-2">Status</th><th className="p-2"></th></tr></thead>
-    <tbody>{invoices.map(inv => {
+  return <div className="sm:overflow-x-auto"><table className="block w-full text-sm sm:table">
+    <thead className="hidden sm:table-header-group"><tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+      <th className="p-2 font-semibold">Number</th>{showAccount && <th className="p-2 font-semibold">Account</th>}
+      <th className="p-2 font-semibold">Issued</th><th className="p-2 font-semibold">Due</th><th className="p-2 text-right font-semibold">Amount</th>
+      <th className="p-2 font-semibold">Status</th>{fin && <th className="p-2 text-center font-semibold">Paid</th>}<th className="p-2 text-right font-semibold"><span className="sr-only">Actions</span></th></tr></thead>
+    <tbody className="block sm:table-row-group">{invoices.map(inv => {
       const st = invoiceStatus(inv, today), [label, cls] = STATUS_PILL[st];
-      return <tr key={inv.id} data-invoice-row={inv.number} className="border-t border-slate-100">
-        {fin && <td className="p-2"><input type="checkbox" data-paid-checkbox aria-label={`Paid ${inv.number}`}
+      return <tr key={inv.id} data-invoice-row={inv.number} className="grid grid-cols-2 items-center gap-x-3 gap-y-1.5 border-t border-slate-100 py-3 first:border-t-0 sm:table-row sm:py-0 sm:first:border-t-0">
+        <td className={`${IT_CELL} order-1 font-medium text-slate-800`}>{inv.number}</td>
+        {showAccount && <td className={`${IT_CELL} order-3 col-span-2 min-w-0 truncate`}><button className="text-indigo-600 hover:underline" onClick={() => openAccount(inv.account_id)}>{inv.account_name}</button></td>}
+        <td className={`${IT_CELL} hidden whitespace-nowrap tabular-nums text-slate-600`}>{invDate(inv.issue_date)}</td>
+        <td className={`${IT_CELL} order-5 whitespace-nowrap text-right text-xs tabular-nums text-slate-600 sm:text-left sm:text-sm`}><span className="sm:hidden">Due </span>{invDate(inv.due_date)}</td>
+        <td className={`${IT_CELL} order-4 whitespace-nowrap tabular-nums sm:text-right`}><span className="mr-1 text-xs text-slate-400">{inv.currency}</span>{invMoney(inv.total)}</td>
+        <td className={`${IT_CELL} order-2 text-right sm:text-left`}><span data-invoice-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${cls}`} title={inv.waive_reason || inv.payment_ref || ""}>{label}</span></td>
+        {fin && <td className={`${IT_CELL} order-6 sm:text-center`}><label className="inline-flex items-center gap-1.5 text-xs text-slate-500"><input type="checkbox" data-paid-checkbox aria-label={`Paid ${inv.number}`}
           checked={inv.status === "paid"} disabled={inv.status === "waived" || !inv.sent_at}
-          onChange={e => e.target.checked ? setPaying(inv) : setReverting(inv)} /></td>}
-        <td className="p-2 font-medium">{inv.number}</td>
-        {showAccount && <td className="p-2"><button className="text-indigo-600 hover:underline" onClick={() => openAccount(inv.account_id)}>{inv.account_name}</button></td>}
-        <td className="p-2 tabular-nums">{inv.issue_date}</td><td className="p-2 tabular-nums">{inv.due_date}</td>
-        <td className="p-2 text-right tabular-nums">{inv.currency} {Number(inv.total).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-        <td className="p-2"><span data-invoice-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${cls}`} title={inv.waive_reason || inv.payment_ref || ""}>{label}</span></td>
-        <td className="p-2 whitespace-nowrap text-xs">
-          {inv.pdf_path && <button data-download className="text-indigo-600 hover:underline" onClick={() => downloadInvoice(inv)}>PDF</button>}
-          {fin && inv.status === "pending" && <button data-resend className="ml-2 text-indigo-600 hover:underline"
-            onClick={async () => { try { if (inv.pdf_path) await resendInvoice(inv); else await rebuildAndSendInvoice(inv, entities, accountOf && accountOf(inv.account_id)); invToast(`${inv.number} sent`, "success"); onChanged(); } catch (e) { invToast(e.message, "error"); } }}>
-            {inv.sent_at ? "Re-send" : "Retry send"}</button>}
-          {fin && inv.status === "pending" && <button data-waive className="ml-2 text-rose-500 hover:underline" onClick={() => setWaiving(inv)}>{inv.sent_at ? "Waive" : "Discard"}</button>}
-        </td></tr>; })}</tbody></table>
+          onChange={e => e.target.checked ? setPaying(inv) : setReverting(inv)} /><span className="sm:hidden">Paid</span></label></td>}
+        <td className={`${IT_CELL} order-7 ${fin ? "" : "col-span-2"}`}><div className="flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
+          {inv.pdf_path && <MiniBtn data-download onClick={() => downloadInvoice(inv)}>PDF</MiniBtn>}
+          {fin && inv.status === "pending" && <MiniBtn data-resend
+            onClick={async () => { try { if (inv.pdf_path) await resendInvoice(inv); else await rebuildAndSendInvoice(inv, entities, accountOf && accountOf(inv.account_id)); invToast(`${inv.number} sent`, "success"); onChanged(); } catch (e) { invToast(e.message, "error"); } }}>{inv.sent_at ? "Re-send" : "Retry send"}</MiniBtn>}
+          {fin && inv.status === "pending" && <MiniBtn data-waive tone="danger" onClick={() => setWaiving(inv)}>{inv.sent_at ? "Waive" : "Discard"}</MiniBtn>}
+        </div></td></tr>; })}</tbody></table>
     {paying && <MarkPaidDialog inv={paying} onClose={() => setPaying(null)} onDone={() => { setPaying(null); onChanged(); }} />}
     {waiving && <WaiveDialog inv={waiving} onClose={() => setWaiving(null)} onDone={() => { setWaiving(null); onChanged(); }} />}
     {reverting && <ConfirmDialog title={`Mark ${reverting.number} as not paid?`} body="It goes back to Pending and the payment date and reference are cleared."

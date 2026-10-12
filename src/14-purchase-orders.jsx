@@ -159,32 +159,48 @@ function POReview({ po, user, schedule, onClose, onDone }) {
   );
 }
 
-function PORow({ po, schedule, user, account, showAccount, openAccount, onEdit, onReview }) {
+// Below sm each row is a card (PO + status, account, value + term, then actions), as InvoiceTable does.
+// compact (the Finance queue): account over PO number, value, term and actions only; status stays as a hidden hook.
+function PORow({ po, schedule, user, account, showAccount, openAccount, onEdit, onReview, compact }) {
   const fin = canFinance(user);
   const mine = schedule.filter(s => s.po_id === po.id), raised = mine.filter(s => s.invoice_id).length;
   const canEdit = po.submitted_by === user.id && (po.status === "submitted" || po.status === "rejected");
-  return <tr data-po-row={po.po_number} className="border-t border-slate-100">
-    <td className="p-2 font-medium">{po.po_number}</td>
-    {showAccount && <td className="p-2"><button className="text-indigo-600 hover:underline" onClick={() => openAccount(po.account_id)}>{po.account_name}</button></td>}
-    <td className="p-2 tabular-nums">{po.po_date}</td>
-    <td className="p-2 text-right tabular-nums">{poMoney(po.currency, po.po_value)}</td>
-    <td className="p-2 text-xs">{po.years} yr · {PO_CYCLE_LABEL[po.billing_cycle]}</td>
-    <td className="p-2"><span data-po-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${PO_PILL[po.status]}`}>{poStatusLabel(po)}</span></td>
-    <td className="p-2 text-xs" data-po-invoiced>{po.status === "approved" ? `${raised} of ${mine.length} raised` : ""}</td>
-    <td className="p-2 whitespace-nowrap text-xs">
-      <button data-po-file-link className="text-indigo-600 hover:underline" onClick={() => viewPOFile(po)}>File</button>
-      {canEdit && onEdit && <button data-po-edit className="ml-2 text-indigo-600 hover:underline" onClick={() => onEdit(po)}>Edit</button>}
-      {fin && (po.status === "submitted" || po.status === "approved") && <button data-po-review className="ml-2 text-indigo-600 hover:underline" onClick={() => onReview(po)}>{po.status === "submitted" ? "Review" : "Manage"}</button>}
-    </td></tr>;
+  const acct = <button className="text-left text-indigo-600 hover:underline" onClick={() => openAccount(po.account_id)}>{po.account_name}</button>;
+  const value = <><span className="mr-1 text-xs text-slate-400">{po.currency}</span>{Number(po.po_value).toLocaleString(undefined, { minimumFractionDigits: 2 })}</>;
+  const actions = <div className="flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
+    <MiniBtn data-po-file-link onClick={() => viewPOFile(po)}>File</MiniBtn>
+    {canEdit && onEdit && <MiniBtn data-po-edit onClick={() => onEdit(po)}>Edit</MiniBtn>}
+    {fin && (po.status === "submitted" || po.status === "approved") && <MiniBtn data-po-review onClick={() => onReview(po)}>{po.status === "submitted" ? "Review" : "Manage"}</MiniBtn>}
+  </div>;
+  const status = <span data-po-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${PO_PILL[po.status]}`}>{poStatusLabel(po)}</span>;
+  const invoiced = po.status === "approved" ? `${raised} of ${mine.length} raised` : "";
+  if (compact) return <tr data-po-row={po.po_number} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 border-t border-slate-100 py-2.5 first:border-t-0 sm:table-row sm:py-0">
+    <td className={`${IT_CELL} col-span-2 min-w-0`}><div className="truncate font-medium">{showAccount ? acct : po.po_number}</div>
+      <div className="text-xs text-slate-500">PO {po.po_number}</div><span className="sr-only">{status}<span data-po-invoiced>{invoiced}</span></span></td>
+    <td className={`${IT_CELL} whitespace-nowrap tabular-nums sm:text-right`}>{value}</td>
+    <td className={`${IT_CELL} whitespace-nowrap text-right text-xs text-slate-500 sm:text-left`}>{po.years} yr · {PO_CYCLE_LABEL[po.billing_cycle]}</td>
+    <td className={`${IT_CELL} col-span-2`}>{actions}</td></tr>;
+  return <tr data-po-row={po.po_number} className="grid grid-cols-2 items-center gap-x-3 gap-y-1.5 border-t border-slate-100 py-3 first:border-t-0 sm:table-row sm:py-0">
+    <td className={`${IT_CELL} order-1 font-medium text-slate-800`}>{po.po_number}</td>
+    {showAccount && <td className={`${IT_CELL} order-3 col-span-2 min-w-0 truncate`}>{acct}</td>}
+    <td className={`${IT_CELL} hidden whitespace-nowrap tabular-nums text-slate-600`}>{invDate(po.po_date)}</td>
+    <td className={`${IT_CELL} order-4 whitespace-nowrap tabular-nums sm:text-right`}>{value}</td>
+    <td className={`${IT_CELL} order-5 whitespace-nowrap text-right text-xs text-slate-500 sm:text-left`}>{po.years} yr · {PO_CYCLE_LABEL[po.billing_cycle]}</td>
+    <td className={`${IT_CELL} order-2 min-w-0 text-right sm:text-left`}>{status}</td>
+    <td className={`${IT_CELL} order-6 text-xs text-slate-500`} data-po-invoiced>{invoiced}</td>
+    <td className={`${IT_CELL} order-7`}>{actions}</td></tr>;
 }
 
-function POTable({ pos, schedule, user, error, showAccount, openAccount, onEdit, onReview, emptyText }) {
+function POTable({ pos, schedule, user, error, showAccount, openAccount, onEdit, onReview, emptyText, compact }) {
   if (error) return <div className="p-4 text-sm text-rose-600" data-po-load-error>Could not load purchase orders: {error}</div>;
   if (!pos.length) return <div className="p-4 text-sm text-slate-500" data-po-empty>{emptyText}</div>;
-  return <div className="overflow-x-auto"><table className="w-full text-sm">
-    <thead><tr className="text-left text-xs text-slate-500"><th className="p-2">PO</th>{showAccount && <th className="p-2">Account</th>}<th className="p-2">Date</th>
-      <th className="p-2 text-right">Value</th><th className="p-2">Term</th><th className="p-2">Status</th><th className="p-2">Invoicing</th><th className="p-2"></th></tr></thead>
-    <tbody>{pos.map(po => <PORow key={po.id} po={po} schedule={schedule} user={user} showAccount={showAccount} openAccount={openAccount} onEdit={onEdit} onReview={onReview} />)}</tbody></table></div>;
+  const th = "p-2 font-semibold";
+  return <div className="sm:overflow-x-auto"><table className="block w-full text-sm sm:table">
+    <thead className="hidden sm:table-header-group"><tr className="border-b border-slate-200 text-left text-xs text-slate-500">{compact
+      ? <><th className={th}>{showAccount ? "Account / PO" : "PO"}</th><th className={`${th} text-right`}>Value</th><th className={th}>Term</th><th className={th}><span className="sr-only">Actions</span></th></>
+      : <><th className={th}>PO</th>{showAccount && <th className={th}>Account</th>}<th className={th}>Date</th>
+        <th className={`${th} text-right`}>Value</th><th className={th}>Term</th><th className={th}>Status</th><th className={th}>Invoicing</th><th className={th}><span className="sr-only">Actions</span></th></>}</tr></thead>
+    <tbody className="block sm:table-row-group">{pos.map(po => <PORow key={po.id} po={po} schedule={schedule} user={user} showAccount={showAccount} openAccount={openAccount} onEdit={onEdit} onReview={onReview} compact={compact} />)}</tbody></table></div>;
 }
 
 function AccountPurchaseOrders({ account, user }) {
@@ -199,11 +215,12 @@ function AccountPurchaseOrders({ account, user }) {
 }
 
 // Submitted POs awaiting a decision, for the Finance page.
-function POQueue({ user, openAccount }) {
+function POQueue({ user, openAccount, onCount }) {
   const { pos, schedule, reload, error } = usePurchaseOrders({ status: "submitted" });
+  useEffect(() => { onCount && onCount(pos.length); }, [pos.length]);
   const [review, setReview] = useState(null);
   return <div data-po-queue>
-    <POTable pos={pos} schedule={schedule} user={user} error={error} showAccount openAccount={openAccount} onReview={setReview} emptyText="No purchase orders awaiting approval." />
+    <POTable pos={pos} schedule={schedule} user={user} error={error} showAccount openAccount={openAccount} onReview={setReview} emptyText="No purchase orders awaiting approval." compact />
     {review && <POReview po={review} user={user} schedule={schedule} onClose={() => setReview(null)} onDone={reload} />}
   </div>;
 }
