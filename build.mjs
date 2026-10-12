@@ -142,7 +142,12 @@ const fontCss = [
 const vendorJs = [
   "vendor/react.production.min.js",
   "vendor/react-dom.production.min.js",
-].map(read).join("\n;\n");
+  "vendor/jspdf.umd.min.js",
+].map(read).join("\n;\n")
+  // jsPDF carries '<body>' inside string literals (its PDF-viewer HTML templates). Inlined into <head>
+  // they become the first "<body" in the file, and the health harness injects its mock right after
+  // the first match -- i.e. into the middle of this script. b is the same string at runtime.
+  .replace(/<body/g, "<\\u0062ody");
 
 // supabase-js is a webpack bundle whose "automatic publicPath" probe reads
 // document.currentScript.src and THROWS when it is empty -- which is exactly what an

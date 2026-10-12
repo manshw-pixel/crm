@@ -449,3 +449,89 @@ test("po: years above 10 block submit", async () => {
   assert((await page.locator("[data-po-preview]").innerText()).includes("1 to 10"));
   await browser.close();
 });
+
+// ---- Task 6: invoice form, PDF and send flow ----
+const isoDay = d => d.toISOString().slice(0, 10);
+const START = isoDay(new Date(Date.now() - 864e5));   // yesterday: only period 1 has started
+const periodAt = (k, step = 3) => { const d = new Date(START + "T00:00:00Z"); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + k * step); return isoDay(d); };
+const APPROVED_PO = { id: "po1", org_id: "org-a", account_id: "a1", account_name: "Acme Ltd", po_number: "4500123", po_date: START, po_value: 480000, currency: "INR",
+  years: 1, billing_cycle: "quarterly", billing_start: START, file_path: "org-a/a1/x.pdf", status: "approved", submitted_by: "u1", reviewed_by: "u1", reviewed_at: "2026-10-01T00:00:00Z", reject_reason: null, created_at: "2026-10-01T00:00:00Z" };
+const ITEMS = [0, 1, 2, 3].map(i => ({ id: `s${i + 1}`, org_id: "org-a", po_id: "po1", seq: i + 1, invoice_id: null, amount: 120000,
+  period_start: i === 0 ? START : periodAt(i), period_end: isoDay(new Date(Date.parse((i === 3 ? periodAt(4) : periodAt(i + 1)) + "T00:00:00Z") - 864e5)) }));
+const IN_ENTITY = { id: "e1", org_id: "org-a", name: "OneVio India", country: "IN", currency: "INR", invoice_prefix: "IN-", next_number: 1, default_tax_pct: 18,
+  state: "Maharashtra", address: "1 MG Road", tax_id: "27ABCDE1234F1Z5", tax_id_label: "GSTIN", bank_details: "HDFC 0001", lut_number: null, created_at: "2026-01-01T00:00:00Z" };
+const openRaise = async (patch, user = { role: "user", finance: true }, seed = "") => {
+  const r = await launchFinance({ user, seed, tables: { ...EMPTY, accounts: [ACCT("a1", "Acme Ltd", patch)], invoices: [], billing_entities: [IN_ENTITY], purchase_orders: [APPROVED_PO], po_schedule: ITEMS } });
+  await r.page.click('button[title="Finance"]', { timeout: 15000 });
+  return r;
+};
+const invoiceRpcs = page => page.evaluate(() => window.__rpcCalls.map(c => c.fn).filter(n => /invoice/.test(n)));
+
+test("raise invoice: Apply tax defaults off for a tax-exempt account and can be toggled", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test", taxExempt: true, taxExemptNote: "SEZ unit" });
+  await page.click('[data-due-item="s1"] [data-raise]');
+  assert((await page.isChecked("[data-apply-tax]")) === false, "starts unchecked for an exempt account");
+  assert(/120,000\.00/.test(await page.innerText("[data-inv-total]")), "untaxed total");
+  assert(/SEZ unit/.test(await page.innerText("[data-invoice-form]")), "exemption note shown");
+  await page.check("[data-apply-tax]");
+  assert(/141,600\.00/.test(await page.innerText("[data-inv-total]")), "taxed total");
+  await page.uncheck("[data-apply-tax]");
+  await page.click("[data-inv-send]");
+  await page.waitForFunction(() => window.__rpcCalls.some(c => c.fn === "create_invoice" && c.args.p.tax_exempt === true && c.args.p.tax_lines.length === 0), null, { timeout: 5000 });
+  await browser.close();
+});
+
+test("raise invoice: blocks without billing email", async () => {
+  const { page, browser } = await openRaise({ country: "IN", billingEmail: "" });
+  await page.click('[data-due-item="s1"] [data-raise]');
+  await page.waitForSelector("[data-inv-block]:has-text('billing email')", { timeout: 5000 });
+  assert(await page.locator("[data-inv-send]").isDisabled(), "send disabled");
+  await browser.close();
+});
+
+test("raise invoice: only started periods are due; prefills from the PO item, computes GST, sends", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test", currency: "INR" });
+  await page.waitForSelector("[data-due-item]", { timeout: 5000 });
+  assert((await page.locator("[data-due-item]").count()) === 1, "only period 1 is due");
+  await page.click('[data-due-item="s1"] [data-raise]');
+  const desc = await page.inputValue("[data-line-desc]");
+  assert(desc.includes("Year 1 Q1") && desc.includes(`(${START} – ${ITEMS[0].period_end})`) && desc.includes("PO 4500123"), desc);
+  assert((await page.inputValue("[data-line-rate]")) === "120000", "rate prefilled");
+  assert(/IGST 18%/.test(await page.innerText("[data-invoice-form]")), "IGST for an out-of-state customer");
+  assert(/141,600\.00/.test(await page.innerText("[data-inv-total]")), "120000 + 18%");
+  await page.click("[data-inv-send]");
+  await page.waitForSelector('[data-invoice-row="IN-0001"]', { timeout: 8000 });
+  const order = await invoiceRpcs(page);
+  assert(JSON.stringify(order.slice(-3)) === JSON.stringify(["create_invoice", "attach_invoice_pdf", "send_invoice"]), JSON.stringify(order));
+  const calls = await page.evaluate(() => window.__rpcCalls);
+  assert(calls.find(c => c.fn === "create_invoice").args.p.schedule_id === "s1", "keyed on the schedule item");
+  const send = calls.find(c => c.fn === "send_invoice").args;
+  assert(Buffer.from(send.p_pdf_base64, "base64").toString("latin1").startsWith("%PDF"), "a real PDF was attached");
+  assert((await page.locator("[data-due-item]").count()) === 0, "due list is empty after sending");
+  assert((await page.locator("[data-invoice-form]").count()) === 0, "form closed");
+  await browser.close();
+});
+
+test("raise invoice: a send failure leaves an Unsent invoice with Retry and keeps the form open", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test" }, undefined, `window.__sendInvoiceError = "Brevo down";`);
+  await page.click('[data-due-item="s1"] [data-raise]');
+  await page.click("[data-inv-send]");
+  await page.waitForSelector('[data-invoice-form] :text("Brevo down")', { timeout: 8000 });
+  await page.waitForSelector('[data-invoice-row="IN-0001"] [data-invoice-status]:has-text("Unsent")', { timeout: 5000 });
+  assert((await page.locator('[data-invoice-row="IN-0001"] [data-resend]').innerText()) === "Retry send", "Retry send offered");
+  assert(await page.locator("[data-inv-send]").isDisabled(), "a second click cannot create a duplicate invoice");
+  await browser.close();
+});
+
+test("raise invoice: renderInvoicePdf produces a multi-line PDF and tolerates hostile text", async () => {
+  const { page, browser } = await openRaise({ country: "IN" });
+  const head = await page.evaluate(async () => {
+    const blob = renderInvoicePdf({ inv: { number: "IN-0001", currency: "INR", issue_date: "2026-10-12", due_date: "2026-11-11", account_name: "<img src=x onerror=alert(1)> ₹ Ltd",
+      line_items: Array.from({ length: 60 }, (_, i) => ({ description: "Line " + i + " ".repeat(2) + "x".repeat(200), qty: 1, rate: 10, amount: 10 })), subtotal: 600,
+      tax_lines: [{ label: "IGST", pct: 18, amount: 108 }], tax_note: null, total: 708 },
+      entity: { name: "OneVio", address: "A\nB", tax_id: "T", tax_id_label: "GSTIN", bank_details: "bank" }, account: { billingAddress: "x" }, po: { po_number: "P1" } });
+    return { type: blob.type, text: String.fromCharCode(...new Uint8Array(await blob.arrayBuffer()).slice(0, 5)) };
+  });
+  assert(head.type === "application/pdf" && head.text === "%PDF-", JSON.stringify(head));
+  await browser.close();
+});
