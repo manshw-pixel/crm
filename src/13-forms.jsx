@@ -273,11 +273,12 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       const changed = cfs.filter(d => cv[d.id] !== initialCv.current[d.id]);
       if (changed.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(changed.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
       if (csmChanged) clean.csmSince = csmSince || iso(Date.now());
+      else if (admin && existing && existing.csm && !v.csm) clean.csmSince = null;
       const summary = admin && existing ? csmChangeSummary(existing.csm, clean.csm, user.name) : null;
       const safe = stripOwnerKeys(clean, user);
       if (existing) {
         dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: safe, by: user?.name, source: "edit form" });
-        if (summary) dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: existing.id, type: "note", date: iso(Date.now()), summary } });
+        if (summary) dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: existing.id, type: "note", date: iso(Date.now()), summary, system: true } });
       }
       else {
         // `accounts` is every account in the org (churned included), which is what the server counts.

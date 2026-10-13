@@ -38,7 +38,7 @@ export const clampInputs = raw => {
 };
 
 export function lastActivityDate(accountId, activities) {
-  const a = activities.filter(x => x.accountId === accountId).sort((x, y) => y.date.localeCompare(x.date));
+  const a = activities.filter(x => x.accountId === accountId && !x.system).sort((x, y) => y.date.localeCompare(x.date));
   return a.length ? a[0].date : null;
 }
 // Score 0-100 from days since the last activity: 100 within the full window, falling
@@ -54,7 +54,7 @@ export function recencyBreakdown(acct, activities, recencyMix) {
   const mix = recencyMix || DEFAULT_RECENCY_MIX;
   return ACTIVITY_TYPES.map(type => {
     const c = { ...DEFAULT_RECENCY_MIX.types[type], ...((mix.types || {})[type] || {}) };
-    const last = activities.filter(x => x.accountId === acct.id && x.type === type).map(x => x.date).sort().pop() || null;
+    const last = activities.filter(x => x.accountId === acct.id && x.type === type && !x.system).map(x => x.date).sort().pop() || null;
     return { type, weight: +c.weight || 0, score: windowScore(last ? daysSince(last) : null, +c.fullDays || 0, +c.zeroDays || 0), lastDate: last };
   });
 }

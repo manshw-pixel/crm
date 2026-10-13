@@ -95,3 +95,50 @@ test("CSV import by a CSM ignores the csm column and owns new rows", async () =>
     assert(fresh.csm === "Test User", "new row: " + JSON.stringify(fresh));
   } finally { await browser.close(); }
 });
+
+const today = () => new Date().toISOString().slice(0, 10);
+
+test("admin bulk Reassign CSM stamps csmSince and logs only for changed accounts", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "a1", name: "Acme", csm: "Test User" }), seedAccount({ id: "a2", name: "Beta", csm: "Ravi" })], "admin"));
+  try {
+    await page.click('button[title="Accounts"]');
+    await page.locator("[data-account-row] input[type=checkbox]").evaluateAll(els => els.forEach(e => e.click()));
+    await page.getByRole("button", { name: "Reassign CSM" }).click();
+    await page.locator("[data-bulkdialog] select").selectOption("Ravi");
+    await page.click("[data-bulk-confirm]");
+    const a1 = await acct(page, "a1"), a2 = await acct(page, "a2");
+    assert(a1.csm === "Ravi" && a1.csmSince === today(), "a1: " + JSON.stringify({ csm: a1.csm, csmSince: a1.csmSince }));
+    assert(!a2.csmSince, "unchanged a2 got csmSince " + a2.csmSince);
+    assert((await acts(page, "a1")).includes("CSM changed from Test User to Ravi by Test User"), "a1 timeline " + JSON.stringify(await acts(page, "a1")));
+    assert((await acts(page, "a2")).length === 0, "unchanged a2 got an activity");
+    const sys = await page.evaluate(() => window.__store.getState().activities.every(x => x.system === true));
+    assert(sys, "activity not flagged system");
+  } finally { await browser.close(); }
+});
+
+test("admin CSV import changing csm on an existing row stamps csmSince and logs", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "a1", name: "Acme", csm: "Test User" }), seedAccount({ id: "a2", name: "Beta", csm: "Ravi" })], "admin"));
+  try {
+    await page.click('button[title="Accounts"]');
+    const csv = "name,csm\nAcme,Ravi\nBeta,Ravi\n";
+    await page.setInputFiles('input[type=file][accept*="csv"]', { name: "a.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await page.waitForFunction(() => window.__store.getState().accounts.find(a => a.id === "a1")?.csm === "Ravi");
+    const a1 = await acct(page, "a1"), a2 = await acct(page, "a2");
+    assert(a1.csmSince === today(), "a1 csmSince " + a1.csmSince);
+    assert(!a2.csmSince, "unchanged a2 csmSince " + a2.csmSince);
+    assert((await acts(page, "a1")).includes("CSM changed from Test User to Ravi by Test User"), "a1 timeline " + JSON.stringify(await acts(page, "a1")));
+    assert((await acts(page, "a2")).length === 0, "unchanged a2 got an activity");
+  } finally { await browser.close(); }
+});
+
+test("admin clearing the CSM clears csmSince and hides the since label", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "a1", name: "Acme", csm: "Test User", csmSince: "2026-01-01" })], "admin"));
+  try {
+    await openEdit(page, "Acme");
+    await page.selectOption("[data-csm-select]", "");
+    await page.click("text=Save changes");
+    const a = await acct(page, "a1");
+    assert(!a.csm && a.csmSince === null, "stored: " + JSON.stringify({ csm: a.csm, csmSince: a.csmSince }));
+    assert(await page.locator("[data-csm-since-label]").count() === 0, "since label still shown");
+  } finally { await browser.close(); }
+});

@@ -990,9 +990,9 @@ begin
     end if;
     return new;
   end if;
-  if (new.data->'csm') is distinct from (old.data->'csm')
-     or (new.data->'csmSince') is distinct from (old.data->'csmSince')
-     or (new.data->'leadId') is distinct from (old.data->'leadId') then
+  if coalesce(new.data->>'csm', '') <> coalesce(old.data->>'csm', '')
+     or coalesce(new.data->>'csmSince', '') <> coalesce(old.data->>'csmSince', '')
+     or coalesce(new.data->>'leadId', '') <> coalesce(old.data->>'leadId', '') then
     raise exception 'Only an admin can change an account''s CSM or Lead';
   end if;
   return new;
