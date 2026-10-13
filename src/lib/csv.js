@@ -1,4 +1,5 @@
 import { daysUntil } from "./dates.js";
+import { activeCustomFields, formatCustomValue } from "./custom-fields.js";
 
 /* sub-account display numbers: parentNo.1, parentNo.2, … ordered by the subs' own account # */
 export function subNumbers(accounts) {
@@ -21,11 +22,15 @@ export const csvCell = v => {
   if (FORMULA_LEAD.test(s) && !NUMERIC.test(s)) s = "'" + s;
   return `"${s.replace(/"/g, '""')}"`;
 };
-export function accountsCSVText(rows) {
+export function accountsCSVText(rows, customFields = []) {
   const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "deployedLicenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
   const esc = csvCell;
   const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
-  return [cols.join(","), ...rows.map(a => cols.map(c => esc(cell(a, c))).join(","))].join("\n");
+  const cfs = activeCustomFields(customFields);
+  // custom cells are quoted only when needed (plain values read bare); the formula guard still applies
+  const cfCell = v => { const t = FORMULA_LEAD.test(v) && !NUMERIC.test(v) ? "'" + v : v; return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+  const head = [cols.join(","), ...cfs.map(d => esc(d.label))].join(",");
+  return [head, ...rows.map(a => [...cols.map(c => esc(cell(a, c))), ...cfs.map(d => cfCell(formatCustomValue(d.type, a.custom && a.custom[d.id])))].join(","))].join("\n");
 }
 /* ---- CSV dates ----
  * The app exports YYYY-MM-DD, but a CSV re-saved in Excel on an Indian-locale machine comes

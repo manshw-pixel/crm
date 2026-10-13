@@ -193,7 +193,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2">
       <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>
       <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>
-      <Btn onClick={() => exportCSV(rows)}>Export CSV</Btn>
+      <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
     </div>}>
