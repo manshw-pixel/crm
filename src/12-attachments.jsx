@@ -15,10 +15,26 @@ async function uploadFiles(fileList, accountId) {
   }
   return out;
 }
+// The attachments bucket is private: an upload's stored URL no longer opens on its own, so
+// every click asks for a short-lived signed URL. The tab is opened synchronously (inside the
+// click) and pointed at the signed URL afterwards, so popup blockers don't eat it.
+async function openAttachment(at) {
+  const path = attachmentPath(at);
+  if (!path || !sb) { const u = safeUrl(at && at.url); if (u) window.open(u, "_blank", "noopener"); return; }
+  const w = window.open("", "_blank");
+  const { data, error } = await sb.storage.from("attachments").createSignedUrl(path, 60);
+  if (error || !data?.signedUrl) {
+    if (w) w.close();
+    window.__toast?.({ text: `Could not open ${at.name || "file"}: ${error?.message || "no link returned"}`, tone: "error" });
+    return;
+  }
+  if (w) { w.opener = null; w.location.href = data.signedUrl; } else window.open(data.signedUrl, "_blank", "noopener");
+}
+const attachmentClick = at => e => { e.preventDefault(); e.stopPropagation(); openAttachment(at); };
 const AttachmentLinks = ({ items }) => !items || !items.length ? null : (
   <span className="flex flex-wrap gap-1.5">
     {items.map(at => (
-      <a key={at.path || at.url} href={safeUrl(at.url)} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+      <a key={at.path || at.url} data-attachment href={safeUrl(at.url)} target="_blank" rel="noreferrer" onClick={attachmentClick(at)}
         className="nm-inset inline-flex items-center gap-1 !rounded-full px-2 py-0.5 text-[11px] font-bold text-indigo-600 hover:text-indigo-800">📎 {at.name}</a>
     ))}
   </span>

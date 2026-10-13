@@ -1396,13 +1396,13 @@ grant execute on function public.submit_demo_request(text, text, text, text, tex
 grant execute on function public.list_demo_requests() to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
--- Public bucket: anyone with a file's URL can view it (links are long
--- and unguessable, but treat uploads as shareable). 10 MB client cap. Gating
--- attachments_read below stops API listing/reading by a disabled user, but NOT fetching a
--- URL they already hold -- the bucket is public, so a bare GET on the object URL never
--- touches this policy.
-insert into storage.buckets (id, name, public) values ('attachments', 'attachments', true)
-on conflict (id) do nothing;
+-- Private bucket: every read goes through attachments_read below, so a disabled user, another
+-- org, or a Lead outside the account gets nothing. The app opens files through short-lived
+-- signed URLs (createSignedUrl, 60s), which are minted only after that policy passes. Stored
+-- public URLs stop working on their own; the app derives the path from them, so no row is
+-- rewritten. It was public until 2026-10-13: the do-update below flips existing installs.
+insert into storage.buckets (id, name, public) values ('attachments', 'attachments', false)
+on conflict (id) do update set public = false;
 
 -- Gated the same way as the entity tables: a disabled user must not read or upload files
 -- just because the storage policies live apart from the do-block loops above.
