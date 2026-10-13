@@ -78,8 +78,8 @@ test("secondary account actions live in a More menu that Escape closes", async (
     for (const v of ["Contact", "Opportunity", "Adjust ARR", "Mark churned", "Delete account"]) assert(txt.includes(v), v + " missing from menu");
     await page.keyboard.press("Escape");
     await page.waitForFunction(() => !document.querySelector("[data-more-menu]"), null, { timeout: 3000 });
-    const flagNearTitle = await page.$eval("h2", h => !!h.parentElement.querySelector("[data-flag]"));
-    assert(flagNearTitle, "flags not in the title row");
+    // Flags sit with the status pills in the header card, keeping the title row clean.
+    assert(await page.locator("[data-header-card] [data-flag]").count() > 0, "flags not in the header card");
   } finally { await browser.close(); }
 });
 

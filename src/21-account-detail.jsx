@@ -56,110 +56,117 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const comps = scoreComponents(a, st.activities, st.settings);
   return (
     <div className="space-y-4">
-      {/* Title row: identity + health + playbook progress */}
-      <div className="flex flex-wrap items-center gap-3">
-        <Btn onClick={back}>← Back</Btn>
+      {/* Title row: back, identity, health, main actions. Everything else lives in the header card. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <button onClick={back} className="text-sm font-semibold text-slate-500 hover:text-slate-800">← Back</button>
         <h2 className="text-xl font-bold text-slate-900">{a.name}</h2>
+        <span className="text-xs font-semibold text-slate-400">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
-          className={`inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
-        {a.flags.map(f => <span key={f} data-flag className="rounded bg-rose-50 border border-rose-200 px-2 py-1 text-xs text-rose-600">{f}</span>)}
-        <span className="ml-auto text-xs font-semibold text-slate-500">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
+        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+          <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
+          <Btn onClick={() => setForm("task")}>+ Add task</Btn>
+          <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
+          {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
+          <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
+          {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
+            onClick={() => {
+              // Reversible in one dispatch, so no dialog: act, then offer Undo.
+              const prev = a.churn;
+              dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
+              dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
+              toast({ text: `Reactivated ${a.name}.`, tone: "success",
+                undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
+            }}>↻ Reactivate</button>}
+          <MoreMenu items={[
+            { label: "+ Contact", onClick: () => setForm("contact") },
+            { label: "+ Opportunity", onClick: () => setForm("opp") },
+            !a.churn && { label: "⇄ Adjust ARR", onClick: () => setForm("adjust") },
+            !a.churn && !a.billingCompleted && { label: "$ Mark billing completed", onClick: () => setForm("billing") },
+            !a.churn && { label: "✖ Mark churned", onClick: () => setForm("churn"), danger: true },
+            user.role === "admin" && { label: "Delete account", danger: true, separate: true, onClick: () => {
+              // No dialog: the Undo toast below is the guard, and it is a better one --
+              // a confirm people click through protects nothing.
+              // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
+              // already handles a single id, including sub-account parentIds
+              const snapshot = snapshotFor(st, [a.id]);
+              dispatch({ type: "DELETE_ACCOUNT", id: a.id });
+              toast({ text: `Deleted ${a.name}.`, tone: "success",
+                undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+              back();
+            } },
+          ]} />
+        </div>
       </div>
-      {/* Header card: key facts, retention since the prior-year close, status pills */}
-      <div data-header-card className="nm-sm space-y-3 p-3">
-      <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5">
-        <Meta label="Tier" value={a.tier} />
-        <Meta label="Industry" value={a.industry} />
-        <Meta label="ARR" value={`${fmtMoney(a.arr, a.currency)}${a.currency !== "USD" ? ` (≈${fmtMoney(a.arrUSD)} USD)` : ""}`} />
-        <Meta label="CSM" value={a.csm} />
-        {(() => { const f = licenseFigures(a); return f.total > 0
-          ? <Meta label="Licenses" value={f.deployed == null ? f.total : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
-          : null; })()}
-        {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
-        {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
-        {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
-      </div>
-      {/* Retention: how this account has moved since the prior-year close. The arithmetic
-          lives in accountRetention so this and the list column cannot disagree. */}
-      {(() => {
-        const r = accountRetention(a, (st.settings && st.settings.rates) || {});
-        return (
-          <div data-retention-block className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-slate-100 pt-2 text-sm">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Retention since {r.baselineKey}</span>
-            {r.isNew ? (
-              <p className="text-slate-500">
-                This account started after the {r.baselineKey} close, so there is no prior-year
-                figure to compare against. New accounts are excluded from NRR and GRR.
-              </p>
-            ) : (
-              <span className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                <span><span className="text-slate-500">{r.baselineKey} close </span><span data-baseline-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.baselineARR)}</span></span>
-                <span><span className="text-slate-500">Today </span><span data-current-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.currentARR)}</span></span>
-                <span><span className="text-slate-500">Change </span><span data-change className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
-                  {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
-                </span></span>
-                <span><span className="text-slate-500">Retained </span><span data-ratio className="font-semibold tabular-nums text-slate-700">
-                  {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
-                </span></span>
-              </span>
-            )}
-          </div>
-        );
-      })()}
-      {/* Status row: renewal / stage / billing / QBR badges */}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${d < 60 ? "text-amber-600" : "text-slate-700"}`}>Renewal {fmtDate(a.renewalDate)} · {d}d · {a.contractStatus}</span>
-        {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
-          onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
-          className={`cursor-pointer rounded-full border-0 px-3 py-1 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
-          {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-        </select>}
-        <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
-          {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
-        {/* Handoff from sales to account management. Unset is the normal state for accounts
-            predating the field, so it reads as absent data, not as a risk flag. */}
-        <span data-transition-pill className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-500"}`}>
-          {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Handoff date not set"}</span>
-        {(() => { const s = qbrStatus(a); return s && (
-          <span className={`nm-sm !rounded-full px-3 py-1 text-sm font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
-            {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
-          </span>); })()}
-      </div>
-      </div>
-      <div className="flex flex-wrap gap-2">
-        <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
-        <Btn kind="primary" onClick={() => setForm("task")}>+ Add task</Btn>
-        <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
-        {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
-        <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
-        {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-          onClick={() => {
-            // Reversible in one dispatch, so no dialog: act, then offer Undo.
-            const prev = a.churn;
-            dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
-            dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
-            toast({ text: `Reactivated ${a.name}.`, tone: "success",
-              undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
-          }}>↻ Reactivate</button>}
-        <MoreMenu items={[
-          { label: "+ Contact", onClick: () => setForm("contact") },
-          { label: "+ Opportunity", onClick: () => setForm("opp") },
-          !a.churn && { label: "⇄ Adjust ARR", onClick: () => setForm("adjust") },
-          !a.churn && !a.billingCompleted && { label: "$ Mark billing completed", onClick: () => setForm("billing") },
-          !a.churn && { label: "✖ Mark churned", onClick: () => setForm("churn"), danger: true },
-          user.role === "admin" && { label: "Delete account", danger: true, separate: true, onClick: () => {
-            // No dialog: the Undo toast below is the guard, and it is a better one --
-            // a confirm people click through protects nothing.
-            // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
-            // already handles a single id, including sub-account parentIds
-            const snapshot = snapshotFor(st, [a.id]);
-            dispatch({ type: "DELETE_ACCOUNT", id: a.id });
-            toast({ text: `Deleted ${a.name}.`, tone: "success",
-              undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
-            back();
-          } },
-        ]} />
+      {/* Header card, in reading order: the numbers that matter, quiet profile facts,
+          retention since the prior-year close, then small status pills. */}
+      <div data-header-card className="nm-sm p-4">
+        {(() => { const f = licenseFigures(a); const r = accountRetention(a, (st.settings && st.settings.rates) || {});
+          const Stat = ({ label, value, sub, tone = "text-slate-900" }) => (
+            <div className="min-w-0">
+              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
+              <div className={`truncate text-lg font-bold tabular-nums ${tone}`}>{value}</div>
+              {sub && <div className="truncate text-xs text-slate-500">{sub}</div>}
+            </div>);
+          return <>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <Stat label="ARR" value={fmtMoney(a.arr, a.currency)} sub={a.currency !== "USD" ? `≈ ${fmtMoney(a.arrUSD)} USD` : null} />
+              <Stat label="Renewal" value={fmtDate(a.renewalDate)} tone={d < 60 ? "text-amber-600" : "text-slate-900"} sub={`${d < 0 ? `${-d}d ago` : `in ${d}d`} · ${a.contractStatus}`} />
+              {f.total > 0
+                ? <Stat label="Licenses" value={f.deployed == null ? f.total : `${f.pct}%`} sub={f.deployed == null ? "total" : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
+                : null}
+              <Stat label="CSM" value={a.csm || "—"} />
+            </div>
+            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3">
+              <Meta label="Tier" value={a.tier} />
+              <Meta label="Industry" value={a.industry} />
+              {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
+              {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
+              {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
+            </div>
+            {/* Retention: the arithmetic lives in accountRetention so this and the list column cannot disagree. */}
+            <div data-retention-block className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Retention since {r.baselineKey}</span>
+              {r.isNew ? (
+                <p className="text-slate-500">
+                  This account started after the {r.baselineKey} close, so there is no prior-year
+                  figure to compare against. New accounts are excluded from NRR and GRR.
+                </p>
+              ) : (
+                <span className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                  <span><span className="text-slate-500">{r.baselineKey} close </span><span data-baseline-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.baselineARR)}</span></span>
+                  <span><span className="text-slate-500">Today </span><span data-current-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.currentARR)}</span></span>
+                  <span><span className="text-slate-500">Change </span><span data-change className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
+                    {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
+                  </span></span>
+                  <span><span className="text-slate-500">Retained </span><span data-ratio className="font-semibold tabular-nums text-slate-700">
+                    {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
+                  </span></span>
+                </span>
+              )}
+            </div>
+          </>; })()}
+        {/* Status pills: small and flat so they read as state, not as buttons. */}
+        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
+          {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
+            onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
+            className={`cursor-pointer rounded-full border-0 px-2.5 py-0.5 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
+            {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+          </select>}
+          <span className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
+            {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
+          {/* Handoff from sales to account management. Unset is the normal state for accounts
+              predating the field, so it reads as absent data, not as a risk flag. */}
+          <span data-transition-pill className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-500"}`}>
+            {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Handoff date not set"}</span>
+          {(() => { const s = qbrStatus(a); return s && (
+            <span className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
+              {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
+            </span>); })()}
+          {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
+            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
+          {/* "Renewal in Nd" is already the Renewal stat above. */}
+          {a.flags.filter(f => !f.startsWith("Renewal in")).map(f => <span key={f} data-flag className="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-600">{f}</span>)}
+        </div>
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
