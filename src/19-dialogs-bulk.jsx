@@ -117,7 +117,14 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
         return { id: uid(), accountId: id, type: "churn", date,
           summary: `Account churned (${reason}${note.trim() ? " — " + note.trim() : ""}) · ${fmtMoney(a.arr, a.currency)} ARR lost · by ${user.name}` };
       });
-      if (kind === "csm") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { csm: csmVal }, by: user.name });
+      // admin reassign: only accounts whose CSM really changes get the new csmSince and a timeline entry
+      const csmMoved = kind !== "csm" ? [] : liveIds.map(id => state.accounts.find(x => x.id === id)).filter(a => (a.csm || "") !== csmVal);
+      const csmActs = csmMoved.map(a => ({ id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
+        summary: csmChangeSummary(a.csm, csmVal, user.name), system: true }));
+      if (kind === "csm") {
+        if (csmMoved.length) dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: csmMoved.map(a => a.id), patch: { csm: csmVal, csmSince: iso(Date.now()) }, by: user.name });
+        csmActs.forEach(item => dispatch({ type: "ADD_ACTIVITY", item }));
+      }
       else if (kind === "tier") dispatch({ type: "BULK_PATCH_ACCOUNTS", ids: liveIds, patch: { tier: tierVal }, by: user.name });
       else if (kind === "churn") dispatch({ type: "BULK_CHURN", ids: liveIds, reason, note, date, by: user.name, activities: churnActs });
       else if (kind === "delete") dispatch({ type: "BULK_DELETE", ids: liveIds });
@@ -125,7 +132,8 @@ function BulkDialog({ kind, ids, accounts, team, user, dispatch, onClose }) {
       toast({ text: `${verb} ${n} account${n === 1 ? "" : "s"}.`, tone: "success",
         undo: () => {
           dispatch({ type: "RESTORE_SNAPSHOT", snapshot });
-          if (churnActs.length) dispatch({ type: "BULK_DELETE_ACTIVITIES", ids: churnActs.map(v => v.id) });
+          const added = [...churnActs, ...csmActs];
+          if (added.length) dispatch({ type: "BULK_DELETE_ACTIVITIES", ids: added.map(v => v.id) });
         } });
     }
     onClose();

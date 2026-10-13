@@ -240,17 +240,20 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
 function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user, customFields = [] }) {
-  const csmOptions = [...new Set(["", ...team.filter(u => !u.disabled).map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
+  const admin = isAdminUser(user);
+  const csmOptions = [...new Set(["", ...team.filter(u => !u.disabled).map(u => u.name), ...(existing && existing.csm ? [existing.csm] : []), ...(!admin && !existing && user && user.name ? [user.name] : [])])];
   const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
   const [v, setV] = useState(existing
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "", country: existing.country || "", billingEntityId: existing.billingEntityId || "", billingEmail: existing.billingEmail || "", billingAddress: existing.billingAddress || "", customerTaxId: existing.customerTaxId || "", customerState: existing.customerState || "", taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote || "" }
-    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
+    : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: admin ? "" : (user ? user.name : ""), startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
   const cfs = activeCustomFields(customFields);
   const initialCv = useRef(null);
   if (!initialCv.current) initialCv.current = Object.fromEntries(cfs.map(d => [d.id, editorValue(d.type, existing && existing.custom ? existing.custom[d.id] : null)]));
   const [cv, setCv] = useState(() => ({ ...initialCv.current }));
+  const [csmSince, setCsmSince] = useState(iso(Date.now()));
+  const csmChanged = admin && v.csm && v.csm !== (existing ? existing.csm || "" : "");
   const [limitErr, setLimitErr] = useState("");
   const [entities, setEntities] = useState([]);
   const [billingOpen, setBillingOpen] = useState(false);
@@ -269,11 +272,18 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       // Only fields the user actually changed: a stored value that does not fit the field's type must survive a save.
       const changed = cfs.filter(d => cv[d.id] !== initialCv.current[d.id]);
       if (changed.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(changed.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
-      if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
+      if (csmChanged) clean.csmSince = csmSince || iso(Date.now());
+      else if (admin && existing && existing.csm && !v.csm) clean.csmSince = null;
+      const summary = admin && existing ? csmChangeSummary(existing.csm, clean.csm, user.name) : null;
+      const safe = stripOwnerKeys(clean, user);
+      if (existing) {
+        dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: safe, by: user?.name, source: "edit form" });
+        if (summary) dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: existing.id, type: "note", date: iso(Date.now()), summary, system: true } });
+      }
       else {
         // `accounts` is every account in the org (churned included), which is what the server counts.
         if (roomLeft(ORG_LIMITS.maxAccounts, accounts.length) < 1) return setLimitErr(limitMessage("accounts", ORG_LIMITS.maxAccounts));
-        dispatch({ type: "ADD_ACCOUNT", item: { ...clean, id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
+        dispatch({ type: "ADD_ACCOUNT", item: { ...safe, ...(admin ? {} : { csm: user ? user.name : "" }), id: uid(), inputs: { ...DEFAULT_INPUTS }, history: [], inputsUpdatedAt: iso(Date.now()) } });
       }
       onDone();
     }}>
@@ -282,7 +292,13 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       <F label="ARR"><Input type="number" min="0" value={v.arr} onChange={e => set("arr", e.target.value)} /></F>
       <F label="Billing currency"><Select value={v.currency} onChange={e => set("currency", e.target.value)} options={CURRENCIES} className="w-full" /></F>
       <F label="Industry"><Input value={v.industry} onChange={e => set("industry", e.target.value)} /></F>
-      <F label="CSM owner"><Select value={v.csm} onChange={e => set("csm", e.target.value)} options={csmOptions} className="w-full" /></F>
+      <F label="CSM owner"><select data-csm-select value={v.csm} disabled={!admin} onChange={e => set("csm", e.target.value)}
+          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
+          {csmOptions.map(o => <option key={o} value={o}>{o}</option>)}
+        </select>
+        {!admin && <div data-csm-lock className="mt-0.5 text-[11px] text-slate-500">🔒 Only admins can change this</div>}
+      </F>
+      {csmChanged && <F label="CSM since"><Input type="date" data-csm-since value={csmSince} onChange={e => setCsmSince(e.target.value)} /></F>}
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>
       <F label="Transition date (sales → AM)"><Input type="date" data-field="transitionDate" value={v.transitionDate} onChange={e => set("transitionDate", e.target.value)} /></F>
       <F label="Renewal date"><Input type="date" value={v.renewalDate} onChange={e => set("renewalDate", e.target.value)} /></F>

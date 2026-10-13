@@ -971,6 +971,37 @@ create trigger guard_account_limit
   before insert on public.accounts
   for each row execute function public.guard_account_limit();
 
+-- ---------- admin-only account owners (spec 2026-10-13 PR 2) ----------
+-- csm / csmSince / leadId change only by an admin. BEFORE INSERT also fires for merge_row's
+-- `insert ... on conflict do update`, i.e. for every edit: an existing id is an edit and is
+-- judged by the UPDATE branch, so a CSM saving ARR with the unchanged csm is never refused.
+create or replace function public.guard_account_owner()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare me text;
+begin
+  if auth.uid() is null or public.is_admin() then return new; end if;
+  if tg_op = 'INSERT' then
+    if exists (select 1 from accounts where org_id = new.org_id and id = new.id) then return new; end if;
+    select name into me from profiles where id = auth.uid();
+    if coalesce(new.data->>'leadId', '') <> ''
+       or (coalesce(new.data->>'csm', '') <> '' and new.data->>'csm' is distinct from me)
+       or (coalesce(new.data->>'csmSince', '') <> '' and new.data->>'csm' is distinct from me) then
+      raise exception 'Only an admin can change an account''s CSM or Lead';
+    end if;
+    return new;
+  end if;
+  if coalesce(new.data->>'csm', '') <> coalesce(old.data->>'csm', '')
+     or coalesce(new.data->>'csmSince', '') <> coalesce(old.data->>'csmSince', '')
+     or coalesce(new.data->>'leadId', '') <> coalesce(old.data->>'leadId', '') then
+    raise exception 'Only an admin can change an account''s CSM or Lead';
+  end if;
+  return new;
+end $$;
+drop trigger if exists guard_account_owner on public.accounts;
+create trigger guard_account_owner
+  before insert or update on public.accounts
+  for each row execute function public.guard_account_owner();
+
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.

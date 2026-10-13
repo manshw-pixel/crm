@@ -16,6 +16,7 @@ import "./touchpoints.test.mjs";
 import "./limits.test.mjs";
 import "./demo-requests.test.mjs";
 import "./finance.test.mjs";
+import "./ownership.test.mjs";
 import "./migration.test.mjs";   // LAST: rebuilds the stack from the old schema
 
 try {

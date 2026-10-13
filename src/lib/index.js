@@ -18,3 +18,4 @@ export * from "./limits.js";
 export * from "./licenses.js";
 export * from "./invoice.js";
 export * from "./custom-fields.js";
+export * from "./ownership.js";
