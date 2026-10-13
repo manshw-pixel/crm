@@ -248,7 +248,9 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "", country: existing.country || "", billingEntityId: existing.billingEntityId || "", billingEmail: existing.billingEmail || "", billingAddress: existing.billingAddress || "", customerTaxId: existing.customerTaxId || "", customerState: existing.customerState || "", taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote || "" }
     : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
   const cfs = activeCustomFields(customFields);
-  const [cv, setCv] = useState(() => Object.fromEntries(cfs.map(d => [d.id, editorValue(d.type, existing && existing.custom ? existing.custom[d.id] : null)])));
+  const initialCv = useRef(null);
+  if (!initialCv.current) initialCv.current = Object.fromEntries(cfs.map(d => [d.id, editorValue(d.type, existing && existing.custom ? existing.custom[d.id] : null)]));
+  const [cv, setCv] = useState(() => ({ ...initialCv.current }));
   const [limitErr, setLimitErr] = useState("");
   const [entities, setEntities] = useState([]);
   const [billingOpen, setBillingOpen] = useState(false);
@@ -264,7 +266,9 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate,
         billingEmail: v.billingEmail.trim(), billingAddress: v.billingAddress.trim(), customerTaxId: v.customerTaxId.trim(),
         customerState: v.country === "IN" ? v.customerState.trim() : "", taxExemptNote: v.taxExempt ? v.taxExemptNote.trim() : "" };
-      if (cfs.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(cfs.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
+      // Only fields the user actually changed: a stored value that does not fit the field's type must survive a save.
+      const changed = cfs.filter(d => cv[d.id] !== initialCv.current[d.id]);
+      if (changed.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(changed.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
       else {
         // `accounts` is every account in the org (churned included), which is what the server counts.

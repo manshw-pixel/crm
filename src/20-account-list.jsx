@@ -222,7 +222,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           </span>}</>}
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)} aria-label="Dismiss import message">✕</button>
       </div>}
-      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} /></div>}
+      {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} customFields={settings && settings.customFields} /></div>}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <Select data-segment-select value={activeSeg} className="w-40" aria-label="Saved segment"
           onChange={e => {

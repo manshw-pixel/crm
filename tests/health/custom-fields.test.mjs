@@ -104,3 +104,41 @@ test("no custom fields: no section in the form, no details row", async () => {
     assert(await page.locator("[data-custom-details]").count() === 0, "details row rendered with no fields");
   } finally { await browser.close(); }
 });
+
+test("saving the form leaves values that do not fit the field type, and untouched Yes/No fields, alone", async () => {
+  const acct = seedAccount({ id: "a1", name: "Acme", custom: { cf_n: "abc" } });
+  const { page, browser } = await launch(seedCF([acct, seedAccount({ id: "a2", name: "Beta" })], FIELDS));
+  try {
+    await openEdit(page, "Acme");
+    await page.locator("form input[type=number]").first().fill("12345");
+    await page.click("text=Save changes");
+    const c = await custom(page, "a1");
+    assert(c.cf_n === "abc", "mismatched value overwritten: " + JSON.stringify(c));
+    assert(!("cf_b" in c), "untouched Yes/No written: " + JSON.stringify(c));
+  } finally { await browser.close(); }
+});
+
+test("saving an account with no custom values and an untouched Yes/No field writes no custom keys", async () => {
+  const { page, browser } = await launch(seedCF([seedAccount({ id: "a1", name: "Acme" })], FIELDS));
+  try {
+    await openEdit(page, "Acme");
+    await page.locator("form input[type=number]").first().fill("777");
+    await page.click("text=Save changes");
+    const c = await custom(page, "a1");
+    assert(!("cf_b" in c) && Object.keys(c).length === 0, "custom written: " + JSON.stringify(c));
+  } finally { await browser.close(); }
+});
+
+test("+ New account form offers the custom fields and saves their values", async () => {
+  const { page, browser } = await launch(seedCF([seedAccount({ id: "a1", name: "Acme" })], FIELDS));
+  try {
+    await page.click('button[title="Accounts"]');
+    await page.click("text=+ New account");
+    await page.waitForSelector('[data-custom-field="cf_t"]');
+    await page.locator("form input").first().fill("Newco");
+    await page.fill('[data-custom-field="cf_t"]', "LATAM");
+    await page.click("text=Create account");
+    const v = await page.evaluate(() => (window.__store.getState().accounts.find(a => a.name === "Newco") || {}).custom);
+    assert(v && v.cf_t === "LATAM", "new account custom: " + JSON.stringify(v));
+  } finally { await browser.close(); }
+});

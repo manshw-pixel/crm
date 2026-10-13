@@ -276,11 +276,11 @@ function CustomFieldsCard({ st, dispatch }) {
       </div>
       {active.map((d, i) => (
         <div key={d.id} data-cf-row={d.id} className="mb-2 flex flex-wrap items-center gap-2 text-sm">
-          <Input defaultValue={d.label} aria-label="Field label" className="w-40"
+          <Input key={d.id + "|" + d.label} defaultValue={d.label} aria-label="Field label" className="w-40"
             onBlur={e => { const v = e.target.value.trim(); if (v && v !== d.label) patch(d.id, { label: v }); else e.target.value = d.label; }} />
           <Select value={d.type} aria-label="Field type" onChange={e => patch(d.id, { type: e.target.value })}
             options={CUSTOM_FIELD_TYPES} labels={CUSTOM_FIELD_TYPE_LABELS} />
-          {d.type === "select" && <Input data-cf-options={d.id} defaultValue={(d.options || []).join(", ")} placeholder="Options, comma-separated" className="w-56"
+          {d.type === "select" && <Input key={d.id + "|" + (d.options || []).join(",")} data-cf-options={d.id} defaultValue={(d.options || []).join(", ")} placeholder="Options, comma-separated" className="w-56"
             onBlur={e => patch(d.id, { options: e.target.value.split(",") })} />}
           <button title="Move up" aria-label="Move up" disabled={i === 0} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(d.id, -1)}>▲</button>
           <button title="Move down" aria-label="Move down" disabled={i === active.length - 1} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(d.id, 1)}>▼</button>

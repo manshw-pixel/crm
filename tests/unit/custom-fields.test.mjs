@@ -68,3 +68,15 @@ test("newFieldId is prefixed and unique", () => {
   assert.equal(ids.size, 200);
   for (const id of ids) assert.match(id, /^cf_[a-z0-9]+$/);
 });
+
+test("hardening: null def, blank number, impossible dates, undefined edits", () => {
+  assert.doesNotThrow(() => normalizeFieldDef(null));
+  assert.doesNotThrow(() => normalizeFieldDef(undefined));
+  assert.equal(coerceCustomValue("number", "   "), null);
+  assert.equal(coerceCustomValue("date", "2026-13-45"), null);
+  assert.equal(coerceCustomValue("date", "2026-02-30"), null);
+  assert.equal(coerceCustomValue("date", "2026-02-28"), "2026-02-28");
+  assert.equal(coerceCustomValue("date", "2024-02-29"), "2024-02-29");
+  const p = buildCustomPatch({ a: "x" }, { a: undefined });
+  assert.ok("a" in p && p.a === null);
+});
