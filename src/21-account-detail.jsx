@@ -114,7 +114,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               {f.total > 0
                 ? <Stat label="Licenses" value={f.deployed == null ? f.total : `${f.pct}%`} sub={f.deployed == null ? "total" : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
                 : null}
-              <Stat label="CSM" value={a.csm || "—"} />
+              <Stat label="CSM" value={a.csm || "—"} sub={a.csmSince ? <span data-csm-since-label>since {fmtDate(a.csmSince)}</span> : null} />
             </div>
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3">
               <Meta label="Tier" value={a.tier} />
