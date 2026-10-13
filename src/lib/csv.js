@@ -27,10 +27,8 @@ export function accountsCSVText(rows, customFields = []) {
   const esc = csvCell;
   const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   const cfs = activeCustomFields(customFields);
-  // custom cells are quoted only when needed (plain values read bare); the formula guard still applies
-  const cfCell = v => { const t = FORMULA_LEAD.test(v) && !NUMERIC.test(v) ? "'" + v : v; return /[",\r\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
   const head = [cols.join(","), ...cfs.map(d => esc(d.label))].join(",");
-  return [head, ...rows.map(a => [...cols.map(c => esc(cell(a, c))), ...cfs.map(d => cfCell(formatCustomValue(d.type, a.custom && a.custom[d.id])))].join(","))].join("\n");
+  return [head, ...rows.map(a => [...cols.map(c => esc(cell(a, c))), ...cfs.map(d => esc(formatCustomValue(d.type, a.custom && a.custom[d.id])))].join(","))].join("\n");
 }
 /* ---- CSV dates ----
  * The app exports YYYY-MM-DD, but a CSV re-saved in Excel on an Indian-locale machine comes
