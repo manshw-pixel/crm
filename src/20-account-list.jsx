@@ -287,7 +287,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           </tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={colCount} className="px-2 py-8 text-center text-sm text-slate-500">
-              {scored.length === 0 ? <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</> : "No accounts match the current filters."}
+              {scored.length === 0 ? (user.role === "lead" ? "No accounts are assigned to you yet." : <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</>) : "No accounts match the current filters."}
             </td></tr>}
             {/* Spacers stand in for the rows that are not rendered, so the scrollbar and
                 every row's position match the FULL list. aria-hidden: they carry no

@@ -222,6 +222,16 @@ begin
   return public.lead_owns(p_org, d->>'accountId')
       or (coalesce(d->>'accountId', '') = '' and d->>'owner' = public.my_name());
 end $$;
+-- Policies call these as the querying role, so authenticated MUST keep execute; nobody
+-- else needs them (anon has no rows to see, and PUBLIC carries Postgres's default grant).
+revoke execute on function public.lead_restricted() from public, anon;
+revoke execute on function public.lead_owns(uuid, text) from public, anon;
+revoke execute on function public.my_name() from public, anon;
+revoke execute on function public.lead_child_ok(text, uuid, text, jsonb) from public, anon;
+grant execute on function public.lead_restricted() to authenticated;
+grant execute on function public.lead_owns(uuid, text) to authenticated;
+grant execute on function public.my_name() to authenticated;
+grant execute on function public.lead_child_ok(text, uuid, text, jsonb) to authenticated;
 
 -- ---------- signup trigger: attach through a pending invite ----------
 -- The old rule "first sign-up ever becomes admin" is gone: with several orgs there is no
@@ -830,6 +840,8 @@ begin
     -- ...and the account must be in the CALLER's org: definer bypasses RLS, so without
     -- the org_id match a user could stamp a snapshot for another tenant's account id.
     and exists (select 1 from accounts a where a.id = e->>'accountId' and a.org_id = public.current_org())
+    -- ...and a restricted lead may only snapshot accounts they lead (definer bypasses RLS).
+    and (not public.lead_restricted() or public.lead_owns(public.current_org(), e->>'accountId'))
   on conflict (org_id, account_id, day) do update set score = excluded.score;
 
   get diagnostics n = row_count;

@@ -169,6 +169,7 @@ declare
   v_date    date;
   v_names   text;
   v_reason  text;
+  v_lead    boolean;
 begin
   select * into cfg from touchpoint_config where id = 1;
   if cfg is null or cfg.secret = 'CHANGE-ME' or p_secret is distinct from cfg.secret then
@@ -194,7 +195,7 @@ begin
 
   -- Only an active CSM in an active org may file. Everyone else is dropped WITHOUT a reply:
   -- bouncing to strangers would turn this inbox into a spam relay.
-  select p.id, p.name, p.org_id into v_sender
+  select p.id, p.name, p.org_id, p.role, p.finance into v_sender
   from auth.users u
   join profiles p on p.id = u.id
   join orgs o on o.id = p.org_id
@@ -218,10 +219,23 @@ begin
   if v_subject = '' and btrim(v_body) = '' then
     v_verdict := 'malformed';
   else
+    -- A restricted lead (role lead, no finance) may only file on accounts they LEAD: definer
+    -- bypasses RLS, so narrow the candidates here, before the verdict, so a foreign account
+    -- is neither logged on nor named in the ambiguous bounce. No auth.uid() here, so the
+    -- sender's own profile row is checked rather than lead_restricted().
+    v_lead := v_sender.role = 'lead' and not v_sender.finance;
     v_ids := public.tp_match(v_sender.org_id, v_addrs, v_excl);
+    if v_lead then
+      v_ids := array(select x from unnest(v_ids) x where exists (select 1 from accounts a
+        where a.org_id = v_sender.org_id and a.id = x and a.data->>'leadId' = v_sender.id::text));
+    end if;
     if cardinality(v_ids) = 0 then
       -- Fallback on the ORIGINAL text: stripped quote history can still name the customer.
       v_ids := public.tp_match(v_sender.org_id, public.tp_body_addrs(p_message->>'text'), v_excl);
+      if v_lead then
+        v_ids := array(select x from unnest(v_ids) x where exists (select 1 from accounts a
+          where a.org_id = v_sender.org_id and a.id = x and a.data->>'leadId' = v_sender.id::text));
+      end if;
     end if;
     v_verdict := case cardinality(v_ids) when 0 then 'no_match' when 1 then 'logged' else 'ambiguous' end;
   end if;

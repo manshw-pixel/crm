@@ -188,3 +188,103 @@ test("finance RPCs refuse a restricted lead (no finance flag)", async () => {
     assert(!ok.error, "control: admin set_invoice_status failed: " + ok.error?.message);
   } finally { await cleanFin(); await clean(); }
 });
+
+// ---- definer paths (final review): record_health, alert digests, touchpoint ingest ----
+// Each bypasses RLS, so each must apply the lead scope itself.
+test("record_health: a restricted lead writes only their own accounts' snapshots", async () => {
+  const l = await mkLead();
+  try {
+    await seedRow("accounts", "ld-mine", { name: "Mine", leadId: l.id });
+    await seedRow("accounts", "ld-other", { name: "Other" });
+    const { data: n, error } = await l.client.rpc("record_health", {
+      p_scores: [{ accountId: "ld-other", score: 11 }, { accountId: "ld-mine", score: 77 }] });
+    assert(!error, "record_health errored: " + error?.message);
+    const rows = await sql(`select account_id from health_snapshots where org_id = $1 and account_id like 'ld-%'`, [ORG_A]);
+    const got = rows.map(r => r.account_id).sort();
+    assert(JSON.stringify(got) === '["ld-mine"]', "lead snapshots written: " + JSON.stringify(got));
+    assert(n === 1, `record_health returned ${n}, expected 1`);
+  } finally { await cleanFin(); await clean(); }
+});
+
+const stubPost = () => sql(`
+  create table if not exists public.test_sent (
+    id bigserial primary key, url text, body jsonb, at timestamptz default now());
+  create or replace function public.alert_post(p_url text, p_headers jsonb, p_body jsonb)
+  returns bigint language plpgsql as $$
+  declare n bigint;
+  begin
+    insert into test_sent (url, body) values (p_url, p_body) returning id into n;
+    return n;
+  end $$;`);
+const bodyTo = async email => (await sql(`select body from test_sent`))
+  .map(r => typeof r.body === "string" ? JSON.parse(r.body) : r.body)
+  .filter(b => (b.to || []).some(t => t.email === email)).map(b => JSON.stringify(b));
+
+test("renewal digest: a restricted lead named CSM on two accounts hears only about the one they lead", async () => {
+  const l = await mkLead();
+  const soon = new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10);
+  try {
+    await stubPost();
+    await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+    await sql(`update org_alert_prefs set enabled_kinds = array['renewals','overdue_tasks','qbr_nudge'] where org_id = $1`, [ORG_A]);
+    await sql(`delete from email_log`); await sql(`delete from test_sent`);
+    const base = { contractStatus: "Active", renewalDate: soon };
+    await seedRow("accounts", "ld-mine", { ...base, name: "LdLedCo", csm: "Lead One", leadId: l.id });
+    await seedRow("accounts", "ld-other", { ...base, name: "LdForeignCo", csm: "Lead One" });
+    await seedRow("accounts", "ld-p1", { ...base, name: "LdPlainOne", csm: "Plain User", leadId: l.id });
+    await seedRow("accounts", "ld-p2", { ...base, name: "LdPlainTwo", csm: "Plain User" });
+    await sql(`select send_alerts('renewals')`);
+    const toLead = await bodyTo("lead1@test.local");
+    assert(toLead.length === 1, `expected 1 digest to the lead, got ${toLead.length}`);
+    assert(toLead[0].includes("LdLedCo"), "the led account was missing from the lead's digest");
+    assert(!toLead[0].includes("LdForeignCo"), "a restricted lead was mailed about an account they do not lead");
+    const toUser = await bodyTo("user@test.local");
+    assert(toUser.length === 1 && toUser[0].includes("LdPlainOne") && toUser[0].includes("LdPlainTwo"),
+      "control: a plain CSM must still get both of their accounts: " + JSON.stringify(toUser));
+    // Builder-level, for the other two kinds' shared filter shape.
+    const q = await sql(`select account_id from alert_renewals($1, 'Lead One', false)`, [ORG_A]);
+    assert(JSON.stringify(q.map(r => r.account_id).filter(i => i.startsWith("ld-"))) === '["ld-mine"]',
+      "alert_renewals for the lead: " + JSON.stringify(q));
+  } finally { await sql(`delete from email_log`); await sql(`delete from test_sent`); await clean(); }
+});
+
+test("touchpoint ingest: a restricted lead cannot log on (or learn of) an account they do not lead", async () => {
+  const l = await mkLead();
+  await stubPost();
+  await sql(`delete from test_sent`);
+  await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
+  await sql(`update touchpoint_config set secret = 'ld-secret', inbox_address = 'touchpoints@onevio.test' where id = 1`);
+  let n = 0;
+  const m = cc => ({ message_id: `<ld-tp-${Date.now()}-${++n}@test>`, from: "lead1@test.local", auth_ok: true,
+    to: ["touchpoints@onevio.test"], cc, date: "2026-10-01T09:00:00Z", subject: "Lead chat", text: "Hello" });
+  const ingest = async msg => {
+    const { data, error } = await sessions.anon.rpc("ingest_touchpoint", { p_secret: "ld-secret", p_message: msg });
+    if (error) throw new Error("ingest_touchpoint errored: " + error.message);
+    return data;
+  };
+  const act = async msg => (await sql(`select data from activities where org_id = $1 and id = 'em-' || md5($2)`, [ORG_A, msg.message_id]))[0]?.data ?? null;
+  const ids = [];
+  try {
+    await seedRow("accounts", "ld-mine", { name: "LdTpMine", contractStatus: "Active", leadId: l.id });
+    await seedRow("accounts", "ld-other", { name: "LdTpForeign", contractStatus: "Active" });
+    await seedRow("contacts", "ld-c-mine", { accountId: "ld-mine", name: "A", email: "a@ld-mine.example" });
+    await seedRow("contacts", "ld-c-other", { accountId: "ld-other", name: "B", email: "b@ld-other.example" });
+    const foreign = m(["b@ld-other.example"]); ids.push(foreign.message_id);
+    const out = await ingest(foreign);
+    assert(out.verdict === "no_match", "foreign account verdict: " + JSON.stringify(out));
+    assert(await act(foreign) === null, "an activity was logged on an account the lead does not lead");
+    // Both matched: the ambiguity must collapse to the led account, never name the foreign one.
+    const both = m(["a@ld-mine.example", "b@ld-other.example"]); ids.push(both.message_id);
+    const out2 = await ingest(both);
+    assert(out2.verdict === "logged" && out2.account_id === "ld-mine", "mixed thread: " + JSON.stringify(out2));
+    const bounces = (await sql(`select body from test_sent`)).map(r => JSON.stringify(r.body));
+    assert(!bounces.some(b => b.includes("LdTpForeign")), "a bounce named an account the lead does not lead");
+    const own = m(["a@ld-mine.example"]); ids.push(own.message_id);
+    const out3 = await ingest(own);
+    assert(out3.verdict === "logged" && out3.account_id === "ld-mine", "control: own account: " + JSON.stringify(out3));
+    assert((await act(own))?.accountId === "ld-mine", "control: no activity on the lead's own account");
+  } finally {
+    for (const id of ids) await sql(`delete from activities where org_id = $1 and id = 'em-' || md5($2)`, [ORG_A, id]);
+    await sql(`delete from test_sent`); await clean();
+  }
+});
