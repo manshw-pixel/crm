@@ -84,7 +84,7 @@ const MoreMenu = ({ items }) => {
   return (
     <div ref={ref} className="relative">
       <Btn data-more-actions aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(o => !o)}>More ▾</Btn>
-      {open && <div data-more-menu role="menu" className="nm absolute left-0 z-20 mt-1 w-56 p-1">
+      {open && <div data-more-menu role="menu" className="nm absolute right-0 z-20 mt-1 w-56 p-1">
         {list.map(it => <button key={it.label} role="menuitem"
           className={`block w-full rounded px-3 py-1.5 text-left text-xs font-semibold hover:bg-slate-50 ${it.separate ? "mt-1 border-t border-slate-100 pt-2" : ""} ${it.danger ? "text-rose-600" : "text-slate-700"}`}
           onClick={() => { setOpen(false); it.onClick(); }}>{it.label}</button>)}
