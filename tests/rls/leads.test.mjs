@@ -19,6 +19,8 @@ async function world(l) {
   await seedRow("accounts", "ld-other", { name: "Other" });
   await seedRow("contacts", "ld-c-mine", { accountId: "ld-mine", name: "A" });
   await seedRow("contacts", "ld-c-other", { accountId: "ld-other", name: "B" });
+  await seedRow("activities", "ld-a-mine", { accountId: "ld-mine", type: "call" });
+  await seedRow("opportunities", "ld-o-mine", { accountId: "ld-mine", name: "Opp" });
   await seedRow("tasks", "ld-t-own", { title: "no account, mine", owner: "Lead One" });
   await seedRow("tasks", "ld-t-else", { title: "no account, theirs", owner: "Admin User" });
 }
@@ -52,6 +54,10 @@ test("lead edits own account; cannot edit, create or re-point others", async () 
     assert(child.error && /only add records to your own accounts/.test(child.error.message), "lead attached a contact to an invisible account: " + JSON.stringify(child));
     const repoint = await merge(l.client, "contacts", "ld-c-mine", { accountId: "ld-other" });
     assert(repoint.error, "lead re-pointed own contact to an invisible account");
+    for (const [tbl, id] of [["contacts", "ld-c-mine"], ["activities", "ld-a-mine"], ["opportunities", "ld-o-mine"], ["tasks", "ld-t-own"]]) {
+      const e = await merge(l.client, tbl, id, { name: "x" });   // patch lacks accountId/owner
+      assert(!e.error, `lead edit of own ${tbl} ${id} failed: ` + e.error?.message);
+    }
     const childOk = await merge(l.client, "contacts", "ld-c-new2", { accountId: "ld-mine", name: "Y" });
     assert(!childOk.error, "control: lead adding a contact to own account failed: " + childOk.error?.message);
   } finally { await clean(); }

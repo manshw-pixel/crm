@@ -208,6 +208,20 @@ $$ select exists (select 1 from accounts where org_id = p_org and id = p_account
 create or replace function public.my_name()
 returns text language sql stable security definer set search_path = public as
 $$ select name from profiles where id = auth.uid() $$;
+-- Child-row ownership judged on the STORED row (falls back to p_data for a brand-new id).
+-- Needed because INSERT ... ON CONFLICT DO UPDATE also checks SELECT USING against the
+-- PROPOSED insert row, which in merge_row is only the patch and usually lacks accountId.
+create or replace function public.lead_child_ok(p_tbl text, p_org uuid, p_id text, p_data jsonb)
+returns boolean language plpgsql stable security definer set search_path = public as $$
+declare d jsonb;
+begin
+  if p_tbl not in ('contacts','activities','tasks','opportunities') then return false; end if;
+  execute format('select data from public.%I where org_id = $1 and id = $2', p_tbl)
+    into d using p_org, p_id;
+  if d is null then d := p_data; end if;
+  return public.lead_owns(p_org, d->>'accountId')
+      or (coalesce(d->>'accountId', '') = '' and d->>'owner' = public.my_name());
+end $$;
 
 -- ---------- signup trigger: attach through a pending invite ----------
 -- The old rule "first sign-up ever becomes admin" is gone: with several orgs there is no
@@ -399,23 +413,31 @@ end $$;
 -- clause there would refuse ordinary lead EDITS before ON CONFLICT is reached. New rows are
 -- policed by triggers instead: guard_account_owner (leads cannot create accounts) and
 -- guard_child_account (children only under the lead's own accounts).
+-- ON CONFLICT DO UPDATE ALSO checks SELECT USING against the PROPOSED insert row (the bare
+-- patch), so SELECT/UPDATE USING/DELETE judge ownership on the STORED row (lead_owns by id,
+-- lead_child_ok); only UPDATE WITH CHECK reads the merged new row, which blocks re-pointing.
 do $$
 declare
   t text;
-  own text;
+  own text;      -- judged on the STORED row: SELECT, UPDATE USING, DELETE
+  own_new text;  -- judged on the merged NEW row: UPDATE WITH CHECK (blocks re-pointing)
   scoped text;
+  scoped_new text;
 begin
   foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
     if t = 'accounts' then
-      own := $o$data->>'leadId' = auth.uid()::text$o$;
+      own := $o$public.lead_owns(org_id, id)$o$;
+      own_new := $o$data->>'leadId' = auth.uid()::text$o$;
     else
-      own := $o$(public.lead_owns(org_id, data->>'accountId') or (coalesce(data->>'accountId','') = '' and data->>'owner' = (select public.my_name())))$o$;
+      own := format('public.lead_child_ok(%L, org_id, id, data)', t);
+      own_new := $o$(public.lead_owns(org_id, data->>'accountId') or (coalesce(data->>'accountId','') = '' and data->>'owner' = (select public.my_name())))$o$;
     end if;
     scoped := format('(select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or %s)', own);
+    scoped_new := format('(select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or %s)', own_new);
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
     execute format('create policy %1$s_select on public.%1$I for select to authenticated using (%2$s)', t, scoped);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (%2$s) with check (%2$s)', t, scoped);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (%2$s) with check (%3$s)', t, scoped, scoped_new);
     if t <> 'accounts' then
       execute format('drop policy if exists %1$s_delete on public.%1$I', t);
       execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (%2$s)', t, scoped);
