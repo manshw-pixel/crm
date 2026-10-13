@@ -239,7 +239,7 @@ function UpdateHealthForm({ acct, dispatch, onDone }) {
 }
 
 const F = ({ label, children }) => <label className="text-xs text-slate-700">{label}<div>{children}</div></label>;
-function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user }) {
+function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user, customFields = [] }) {
   const csmOptions = [...new Set(["", ...team.filter(u => !u.disabled).map(u => u.name), ...(existing && existing.csm ? [existing.csm] : [])])];
   const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
   // eligible parents: top-level accounts only (one level deep), never itself
@@ -247,6 +247,8 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
   const [v, setV] = useState(existing
     ? { name: existing.name, tier: existing.tier, arr: existing.arr, currency: existing.currency || "USD", industry: existing.industry, csm: existing.csm, startDate: existing.startDate, transitionDate: existing.transitionDate || "", renewalDate: existing.renewalDate, contractStatus: existing.contractStatus, modules: existing.modules || "", licenses: existing.licenses || 0, deployedLicenses: existing.deployedLicenses ?? "", dedicatedSupport: !!existing.dedicatedSupport, billingCompleted: !!existing.billingCompleted, billingCompletedDate: existing.billingCompletedDate || "", parentId: existing.parentId || "", qbrFrequency: existing.qbrFrequency || "None", nextQbrDate: existing.nextQbrDate || "", country: existing.country || "", billingEntityId: existing.billingEntityId || "", billingEmail: existing.billingEmail || "", billingAddress: existing.billingAddress || "", customerTaxId: existing.customerTaxId || "", customerState: existing.customerState || "", taxExempt: !!existing.taxExempt, taxExemptNote: existing.taxExemptNote || "" }
     : { name: "", tier: "Enterprise", arr: 0, currency: "USD", industry: "", csm: "", startDate: iso(Date.now()), transitionDate: "", renewalDate: addDays(365), contractStatus: "Active", modules: "", licenses: 0, deployedLicenses: "", dedicatedSupport: false, billingCompleted: false, billingCompletedDate: "", parentId: "", qbrFrequency: "None", nextQbrDate: "", country: "", billingEntityId: "", billingEmail: "", billingAddress: "", customerTaxId: "", customerState: "", taxExempt: false, taxExemptNote: "" });
+  const cfs = activeCustomFields(customFields);
+  const [cv, setCv] = useState(() => Object.fromEntries(cfs.map(d => [d.id, editorValue(d.type, existing && existing.custom ? existing.custom[d.id] : null)])));
   const [limitErr, setLimitErr] = useState("");
   const [entities, setEntities] = useState([]);
   const [billingOpen, setBillingOpen] = useState(false);
@@ -262,6 +264,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         parentId: hasSubs ? null : (v.parentId || null), nextQbrDate: v.qbrFrequency === "None" ? "" : v.nextQbrDate,
         billingEmail: v.billingEmail.trim(), billingAddress: v.billingAddress.trim(), customerTaxId: v.customerTaxId.trim(),
         customerState: v.country === "IN" ? v.customerState.trim() : "", taxExemptNote: v.taxExempt ? v.taxExemptNote.trim() : "" };
+      if (cfs.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(cfs.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
       if (existing) dispatch({ type: "EDIT_ACCOUNT", id: existing.id, patch: clean, by: user?.name, source: "edit form" });
       else {
         // `accounts` is every account in the org (churned included), which is what the server counts.
@@ -297,6 +300,23 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
             {parentOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
       </F>
+      {cfs.length > 0 && <div className="col-span-2 mt-1 text-xs font-bold text-slate-700 md:col-span-4">Custom fields</div>}
+      {cfs.map(d => {
+        const setC = val => setCv(s => ({ ...s, [d.id]: val }));
+        const cls = "nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none";
+        if (d.type === "bool") return <label key={d.id} className="flex items-center gap-1 text-xs text-slate-700">
+          <input type="checkbox" data-custom-field={d.id} checked={!!cv[d.id]} onChange={e => setC(e.target.checked)} />{d.label}</label>;
+        if (d.type === "select") {
+          const opts = d.options || [], cur = cv[d.id];
+          return <F key={d.id} label={d.label}><select data-custom-field={d.id} value={cur} onChange={e => setC(e.target.value)} className={cls}>
+            <option value="">—</option>
+            {cur && !opts.includes(cur) && <option value={cur}>{cur}</option>}
+            {opts.map(o => <option key={o} value={o}>{o}</option>)}
+          </select></F>;
+        }
+        return <F key={d.id} label={d.label}><Input data-custom-field={d.id} type={d.type === "number" ? "number" : d.type === "date" ? "date" : "text"}
+          value={cv[d.id]} onChange={e => setC(e.target.value)} /></F>;
+      })}
       <details data-billing-fieldset open={billingOpen} onToggle={e => setBillingOpen(e.currentTarget.open)} className="col-span-2 md:col-span-4">
         <summary className="cursor-pointer text-xs font-bold text-slate-700">Billing</summary>
         <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">

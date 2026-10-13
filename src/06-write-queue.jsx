@@ -45,6 +45,6 @@ async function fetchAll() {
     team: res[6].data || [],
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
-      segments: saved.segments || [] },
+      segments: saved.segments || [], customFields: saved.customFields || [] },
   };
 }
