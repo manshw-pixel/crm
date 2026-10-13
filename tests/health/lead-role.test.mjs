@@ -79,3 +79,18 @@ test("signed-in lead: no New account, no Import CSV, no My book toggle", async (
     assert(await page.locator("[data-scope-toggle]").count() === 0, "scope toggle shown to a lead");
   } finally { await browser.close(); }
 });
+
+test("signed-in lead: an account reassigned away disappears on tab focus", async () => {
+  const { page, browser } = await launch(seedLead([seedAccount({ id: "a1", name: "Acme", csm: "Ravi" }), seedAccount({ id: "a2", name: "Globex", csm: "Ravi" })], "lead"));
+  try {
+    await page.click('button[title="Accounts"]');
+    await page.getByText("Globex").first().waitFor({ timeout: 10000 });
+    // RLS now hides a2 from this lead; realtime sends nothing, so only the focus resync can notice.
+    await page.evaluate(() => {
+      window.__seedRows.accounts = window.__seedRows.accounts.filter(r => r.id !== "a2");
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await page.waitForFunction(() => !window.__store.getState().accounts.some(a => a.id === "a2"), null, { timeout: 5000 });
+    assert(await page.evaluate(() => window.__store.getState().accounts.some(a => a.id === "a1")), "kept account vanished");
+  } finally { await browser.close(); }
+});
