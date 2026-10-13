@@ -170,6 +170,29 @@ test("restricted lead storage: attachments and invoice PDFs scoped to own accoun
   }
 });
 
+test("attachments bucket is private: public URL fails, signed URL follows the read policy", async () => {
+  const l = await mkLead();
+  const att = [`${ORG_A}/ld-mine/p.txt`, `${ORG_A}/ld-other/q.txt`];
+  try {
+    await finWorld(l);
+    const rows = await sql("select public from storage.buckets where id = 'attachments'");
+    assert(rows[0] && rows[0].public === false, "attachments bucket still public: " + JSON.stringify(rows));
+    for (const p of att) { const r = await sessions.admin.storage.from("attachments").upload(p, new Blob(["x"], { type: "text/plain" }), { upsert: true }); assert(!r.error, "seed upload: " + r.error?.message); }
+    const pub = sessions.admin.storage.from("attachments").getPublicUrl(att[0]).data.publicUrl;
+    const res = await fetch(pub);
+    assert(!res.ok, "public URL still served the file: " + res.status);
+    const mine = await l.client.storage.from("attachments").createSignedUrl(att[0], 60);
+    assert(!mine.error && mine.data?.signedUrl, "control: lead could not sign own attachment: " + mine.error?.message);
+    const got = await fetch(mine.data.signedUrl);
+    assert(got.ok && (await got.text()) === "x", "control: signed URL did not serve the file: " + got.status);
+    const other = await l.client.storage.from("attachments").createSignedUrl(att[1], 60);
+    assert(other.error || !other.data?.signedUrl, "lead signed another account's attachment");
+  } finally {
+    await sessions.admin.storage.from("attachments").remove(att);
+    await cleanFin(); await clean();
+  }
+});
+
 test("finance RPCs refuse a restricted lead (no finance flag)", async () => {
   const l = await mkLead();
   try {

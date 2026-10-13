@@ -117,7 +117,9 @@ const MOCK = `window.__sbFactory = () => {
       async signOut() { window.__signOutCalls = (window.__signOutCalls || 0) + 1; return window.__signOutResult || { error: null }; },
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
-    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
+    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }),
+      createSignedUrl: async (path, secs) => { (window.__signedCalls = window.__signedCalls || []).push(path);
+        return window.__signedError ? { data: null, error: { message: window.__signedError } } : { data: { signedUrl: "https://signed.test/" + path + "?exp=" + secs }, error: null }; } }) },
   };
 };`;
 
@@ -262,7 +264,9 @@ const STATEFUL_MOCK = `window.__sbFactory = () => {
       async signOut() { window.__signOutCalls = (window.__signOutCalls || 0) + 1; return window.__signOutResult || { error: null }; },
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe() {} } } }),
     },
-    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }) }) },
+    storage: { from: () => ({ upload: async () => ({ error: null }), remove: async () => ({ error: null }), getPublicUrl: () => ({ data: { publicUrl: "" } }),
+      createSignedUrl: async (path, secs) => { (window.__signedCalls = window.__signedCalls || []).push(path);
+        return window.__signedError ? { data: null, error: { message: window.__signedError } } : { data: { signedUrl: "https://signed.test/" + path + "?exp=" + secs }, error: null }; } }) },
   };
 };`;
 
