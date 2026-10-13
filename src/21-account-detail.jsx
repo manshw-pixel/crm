@@ -118,6 +118,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             </div>
             <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3">
               <Meta label="Tier" value={a.tier} />
+              {(() => { const ld = a.leadId && (team || []).find(u => u.id === a.leadId); return ld ? <span data-lead-meta><Meta label="Lead" value={ld.name} /></span> : null; })()}
               <Meta label="Industry" value={a.industry} />
               {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
               {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}

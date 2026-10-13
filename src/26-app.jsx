@@ -326,7 +326,7 @@ function App({ user, onBackToClients }) {
   // below lg the sidebar is an overlay drawer; at lg+ it is the fixed rail it always was
   const [mobileNav, setMobileNav] = useState(false);
   const myCount = scored.filter(a => a.csm === user.name).length;
-  const scope = scopeSel ?? (user.role === "admin" ? "all" : myCount > 0 ? "mine" : "all"); // admins default to the whole book
+  const scope = user.role === "lead" ? "all" : scopeSel ?? (user.role === "admin" ? "all" : myCount > 0 ? "mine" : "all"); // admins default to the whole book
   const visible = scope === "mine" ? scored.filter(a => a.csm === user.name) : scored; // includes churned
   const active = visible.filter(a => !a.churn);
   const openAccount = (id, form) => { setView("Accounts"); setAcctId(id); if (form) setPendingForm(form); };
@@ -426,7 +426,7 @@ function App({ user, onBackToClients }) {
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
           : view}</h1>
-        {view !== "Tasks" && view !== "Settings" && <div data-scope-toggle className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
+        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && <div data-scope-toggle className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
