@@ -4,7 +4,7 @@ function exportCSV(rows, customFields) {
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
 }
-function importAccountsCSV(file, accounts, dispatch, done, user) {
+function importAccountsCSV(file, accounts, dispatch, done, user, customFields = []) {
   const reader = new FileReader();
   reader.onload = () => {
     const rows = parseCSV(String(reader.result));
@@ -18,11 +18,14 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
-    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0, badNumber = 0, badCurrency = 0;
+    let ok = 0, updated = 0, skipped = 0, badTier = 0, badStatus = 0, badDate = 0, badValue = 0, badNumber = 0, badCurrency = 0, badCustom = 0;
+    // custom field columns, found by label (export writes them that way); blank cells leave values alone
+    const cfCols = customImportColumns(rows[0], customFields);
+    const badCustomRows = [];
     const ops = [];
     const badDateRows = [], churnSkipped = [], badNumberRows = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
-    const allDates = rows.slice(1).flatMap(r => DATE_COLS.map(k => col(r, k)));
+    const allDates = rows.slice(1).flatMap(r => [...DATE_COLS.map(k => col(r, k)), ...cfCols.filter(c => c.def.type === "date").map(c => r[c.index] || "")]);
     const order = csvDateOrder(allDates);
     if (!order) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported. Use one format (YYYY-MM-DD is safest) and save again." });
     // "dmy-assumed": numeric d-m-y dates present but none proved the order -- say so in the message
@@ -86,6 +89,13 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         else badValue++;
       });
       const hasVal = Object.keys(valPatch).length > 0;
+      const customEdits = {};
+      cfCols.forEach(({ index, def }) => {
+        const p = parseCustomCell(def, r[index], order);
+        if (!p) return;
+        if (p.bad) { badCustom++; if (badCustomRows.length < 5 && !badCustomRows.includes(name)) badCustomRows.push(name); }
+        else customEdits[def.id] = p.value;
+      });
       const no = +col(r, "accountno") || 0;
       const existing = (no && byNo.get(String(no))) || byName.get(name.toLowerCase());
       if (vals.churnedInFile) {
@@ -95,6 +105,9 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       }
       if (existing) {
         const patch = stripOwnerKeys(vals, user);
+        // only values that differ, so re-importing our own export changes nothing; custom travels whole
+        const cfChanged = Object.fromEntries(Object.entries(customEdits).filter(([k, v]) => (existing.custom || {})[k] !== v));
+        if (Object.keys(cfChanged).length) patch.custom = buildCustomPatch(existing.custom, cfChanged);
         const moved = isAdminUser(user) && has("csm") && vals.csm && vals.csm !== (existing.csm || "");
         if (moved) patch.csmSince = iso(Date.now());
         ops.push({ type: "EDIT_ACCOUNT", id: existing.id, patch, by: user?.name, source: "csv import" });
@@ -112,7 +125,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
           startDate: iso(Date.now()), renewalDate: addDays(365), contractStatus: "Active",
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
           inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
-          history: [], inputsUpdatedAt: iso(Date.now()) };
+          history: [], inputsUpdatedAt: iso(Date.now()), ...(Object.keys(customEdits).length ? { custom: customEdits } : {}) };
         if (!isAdminUser(user)) { item.csm = user ? user.name : ""; delete item.csmSince; delete item.leadId; }
         ops.push({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
@@ -127,7 +140,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
       return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0,
         err: `${limitMessage("accounts", ORG_LIMITS.maxAccounts)} This file adds ${adds} new accounts; there is room for ${room}. Nothing was imported.` });
     ops.forEach(dispatch);
-    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder, badCustom, badCustomRows });
   };
   reader.readAsText(file);
 }

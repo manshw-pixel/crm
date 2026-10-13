@@ -100,7 +100,7 @@ function IntegrationsCard({ st, dispatch, user }) {
           if (processed[sig]) continue;
           try {
             if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
-              { note(key, f.name, importSummary(r), !!r.err); res(); }, user));
+              { note(key, f.name, importSummary(r), !!r.err); res(); }, user, st.settings && st.settings.customFields));
             else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
               note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, !!r.err); }
             processed[sig] = iso(Date.now());

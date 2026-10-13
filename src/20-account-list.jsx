@@ -195,7 +195,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       {user.role !== "lead" && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
       <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
-        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user); }} />
+        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />
     </div>}>
       {/* The filtered count lives in the Card's title prop, so there is no element there to
           annotate. A visually-hidden live region announces it instead. */}
@@ -207,15 +207,16 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       <span data-live="import" aria-live="polite" className="sr-only">
         {importMsg ? (importMsg.err || `Imported ${importMsg.ok} new, updated ${importMsg.updated} existing`) : ""}
       </span>
-      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badNumber || importMsg.badCurrency || importMsg.badDate || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
-        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps, caseStudy, approvedSavings, approvedRoi.
+      {importMsg && <div className={`nm-sm mb-3 flex items-center gap-2 p-3 text-sm ${importMsg.err ? "text-rose-600" : (importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badNumber || importMsg.badCurrency || importMsg.badDate || importMsg.badCustom || importMsg.churnSkipped?.length) ? "text-amber-700" : "text-emerald-700"}`}>
+        {importMsg.err ? importMsg.err : <>Imported {importMsg.ok} new · updated {importMsg.updated} existing (matched by account # or name){importMsg.skipped ? ` · skipped ${importMsg.skipped} row(s) without a name` : ""}. Columns: accountNo, name (required), tier, arr, currency, industry, csm, startDate, transitionDate, renewalDate, contractStatus, modules, licenses, dedicatedSupport, billingCompleted, billingCompletedDate, usage, sentiment, tickets, nps, caseStudy, approvedSavings, approvedRoi, plus a column per custom field (headed by its label).
           {/* coercions last and bold: buried mid-sentence ahead of the column list, a silently
               rewritten row looked identical to a clean import */}
-          {(importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badNumber || importMsg.badCurrency || importMsg.badDate || importMsg.churnSkipped?.length) && <span className="font-bold">
+          {(importMsg.badTier || importMsg.badStatus || importMsg.badValue || importMsg.badNumber || importMsg.badCurrency || importMsg.badDate || importMsg.badCustom || importMsg.churnSkipped?.length) && <span className="font-bold">
             {importMsg.badValue ? ` ⚠ ${importMsg.badValue} unreadable Value answer(s) left unchanged (use yes/no).` : ""}
             {importMsg.badNumber ? ` ⚠ ${importMsg.badNumber} unreadable number(s) in arr/licenses/deployedLicenses left unchanged (${importMsg.badNumberRows.join(", ")}).` : ""}
             {importMsg.badCurrency ? ` ⚠ ${importMsg.badCurrency} unrecognized currency value(s) left unchanged (use USD, INR or PHP).` : ""}
             {importMsg.badDate ? ` ⚠ ${importMsg.badDate} unreadable date(s) left unchanged (${importMsg.badDateRows.join(", ")}).` : ""}
+            {importMsg.badCustom ? ` ⚠ ${importMsg.badCustom} custom field value(s) didn't fit the field type and were left unchanged (${importMsg.badCustomRows.join(", ")}).` : ""}
             {importMsg.churnSkipped?.length ? ` ⚠ Not imported, marked Churned in the file: ${importMsg.churnSkipped.join(", ")} — churn them from the account page.` : ""}
             {importMsg.badTier ? ` ⚠ ${importMsg.badTier} row(s) had an unrecognized tier (set to Mid).` : ""}
             {importMsg.badStatus ? ` ⚠ ${importMsg.badStatus} row(s) had an unrecognized status (set to Active).` : ""}

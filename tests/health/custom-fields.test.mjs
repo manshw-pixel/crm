@@ -142,3 +142,19 @@ test("+ New account form offers the custom fields and saves their values", async
     assert(v && v.cf_t === "LATAM", "new account custom: " + JSON.stringify(v));
   } finally { await browser.close(); }
 });
+
+test("CSV import fills custom fields by label, keeps other values, and reports bad cells", async () => {
+  const defs = [{ id: "cf_r", label: "Region", type: "select", options: ["North", "South"] }, { id: "cf_n", label: "Seats", type: "number" }, { id: "cf_k", label: "Kept", type: "text" }];
+  const { page, browser } = await launch(seedCF([seedAccount({ id: "a1", name: "Acme", custom: { cf_k: "keep me", cf_n: 5 } })], defs));
+  try {
+    await page.click('button[title="Accounts"]');
+    const csv = "name,Region,Seats\nAcme,south,\nFresh Co,East,12\n";
+    await page.setInputFiles('input[type=file][accept*="csv"]', { name: "a.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await page.waitForFunction(() => window.__store.getState().accounts.some(a => a.name === "Fresh Co"));
+    const s = await page.evaluate(() => window.__store.getState().accounts.map(a => ({ name: a.name, custom: a.custom })));
+    const acme = s.find(a => a.name === "Acme"), fresh = s.find(a => a.name === "Fresh Co");
+    assert(JSON.stringify(acme.custom) === JSON.stringify({ cf_k: "keep me", cf_n: 5, cf_r: "South" }), "existing: " + JSON.stringify(acme.custom));
+    assert(JSON.stringify(fresh.custom) === JSON.stringify({ cf_n: 12 }), "new: " + JSON.stringify(fresh.custom));
+    await page.getByText(/1 custom field value\(s\) didn't fit the field type/).waitFor({ timeout: 5000 });
+  } finally { await browser.close(); }
+});
