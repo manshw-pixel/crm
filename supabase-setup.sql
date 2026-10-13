@@ -780,7 +780,8 @@ alter table public.health_snapshots enable row level security;
 -- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
 drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
-  for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()));
+  for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org())
+    and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
@@ -1411,16 +1412,21 @@ create policy attachments_read on storage.objects
   using (bucket_id = 'attachments' and (select public.is_active())
          and ((storage.foldername(name))[1] = (select public.current_org())::text
               or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
-                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])
+              or public.lead_owns((select public.current_org()), (storage.foldername(name))[1])));
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
   for insert to authenticated
   with check (bucket_id = 'attachments' and (select public.is_active())
-              and (storage.foldername(name))[1] = (select public.current_org())::text);
+              and (storage.foldername(name))[1] = (select public.current_org())::text
+              and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])));
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
   for delete to authenticated
   using (bucket_id = 'attachments' and (select public.is_active())
          and ((storage.foldername(name))[1] = (select public.current_org())::text
               or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
-                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])
+              or public.lead_owns((select public.current_org()), (storage.foldername(name))[1])));
