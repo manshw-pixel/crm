@@ -78,6 +78,41 @@ export function parseCsvNumber(v) {
   const s = t.replace(/^(USD|INR|PHP)\s*/i, "").replace(/^[$₹₱]\s*/, "").replace(/,/g, "");
   return /^-?\d+(\.\d+)?$/.test(s) ? Number(s) : null;
 }
+/* ---- custom fields on import ----
+ * Export writes one column per active custom field, headed by its label, so import finds
+ * them the same way: by label (case, spaces and punctuation ignored). A built-in column
+ * always wins, so a field labelled "Industry" can never hijack the real industry column.
+ * Built-in headers are matched letters-only (see importAccountsCSV), hence the same norm here. */
+const BUILTIN_IMPORT_KEYS = new Set(["accountno", "name", "tier", "arr", "currency", "arrusd", "industry", "csm", "startdate",
+  "transitiondate", "renewaldate", "daystorenewal", "score", "risk", "contractstatus", "modules", "licenses", "totallicenses",
+  "deployedlicenses", "dedicatedsupport", "billingcompleted", "billingcompleteddate", "casestudy", "approvedsavings",
+  "approvedroi", "usage", "sentiment", "tickets", "nps"]);
+const letters = s => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+const labelKey = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+// header row -> [{ index, def }] for every active custom field that has a column (first match wins)
+export function customImportColumns(headerRow, defs) {
+  const keys = (headerRow || []).map(labelKey);
+  const used = new Set();
+  return activeCustomFields(defs).flatMap(def => {
+    const k = labelKey(def.label);
+    if (!k || BUILTIN_IMPORT_KEYS.has(letters(def.label))) return [];
+    const index = keys.findIndex((h, i) => h === k && !used.has(i));
+    if (index < 0) return [];
+    used.add(index);
+    return [{ index, def }];
+  });
+}
+const CSV_YES = ["yes", "true", "y", "1"], CSV_NO = ["no", "false", "n", "0"];
+// one custom-field cell -> null (blank: leave the stored value alone), { value }, or { bad: true }
+export function parseCustomCell(def, raw, order = "dmy") {
+  const s = String(raw ?? "").trim();
+  if (s === "") return null;
+  if (def.type === "number") { const n = parseCsvNumber(s); return typeof n === "number" ? { value: n } : { bad: true }; }
+  if (def.type === "date") { const d = parseCsvDate(s, order); return d ? { value: d } : { bad: true }; }
+  if (def.type === "bool") { const l = s.toLowerCase(); return CSV_YES.includes(l) ? { value: true } : CSV_NO.includes(l) ? { value: false } : { bad: true }; }
+  if (def.type === "select") { const m = (def.options || []).find(o => o.toLowerCase() === s.toLowerCase()); return m !== undefined ? { value: m } : { bad: true }; }
+  return { value: s };
+}
 // one-line summary of an accounts import, for the folder sync log
 export function importSummary(r) {
   if (r.err) return r.err;
@@ -85,6 +120,7 @@ export function importSummary(r) {
   if (r.badDate) bits.push(`⚠ ${r.badDate} unreadable date(s) left unchanged${r.badDateRows?.length ? ` (${r.badDateRows.join(", ")})` : ""}`);
   if (r.badValue) bits.push(`⚠ ${r.badValue} unreadable Value answer(s) left unchanged (use yes/no)`);
   if (r.badNumber) bits.push(`⚠ ${r.badNumber} unreadable number(s) (arr/licenses/deployedLicenses) left unchanged${r.badNumberRows?.length ? ` (${r.badNumberRows.join(", ")})` : ""}`);
+  if (r.badCustom) bits.push(`⚠ ${r.badCustom} custom field value(s) didn't fit the field type and were left unchanged${r.badCustomRows?.length ? ` (${r.badCustomRows.join(", ")})` : ""}`);
   if (r.badCurrency) bits.push(`⚠ ${r.badCurrency} unrecognized currenc${r.badCurrency === 1 ? "y" : "ies"} left unchanged (use USD, INR or PHP)`);
   if (r.churnSkipped?.length) bits.push(`⚠ not imported, marked Churned in the file: ${r.churnSkipped.join(", ")} — churn them from the account page`);
   if (r.badTier) bits.push(`⚠ ${r.badTier} unrecognized tier(s) set to Mid`);
