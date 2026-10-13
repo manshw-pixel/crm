@@ -242,6 +242,9 @@ const F = ({ label, children }) => <label className="text-xs text-slate-700">{la
 function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], user, customFields = [] }) {
   const admin = isAdminUser(user);
   const csmOptions = [...new Set(["", ...team.filter(u => !u.disabled).map(u => u.name), ...(existing && existing.csm ? [existing.csm] : []), ...(!admin && !existing && user && user.name ? [user.name] : [])])];
+  const leadOptions = team.filter(u => u.role === "lead" && (!u.disabled || (existing && existing.leadId === u.id)));
+  const [leadId, setLeadId] = useState(existing && existing.leadId || "");
+  const leadChanged = admin && leadId !== (existing && existing.leadId || "");
   const hasSubs = existing && accounts.some(x => x.parentId === existing.id);
   // eligible parents: top-level accounts only (one level deep), never itself
   const parentOptions = accounts.filter(x => !x.parentId && (!existing || x.id !== existing.id));
@@ -274,6 +277,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       if (changed.length) clean.custom = buildCustomPatch(existing && existing.custom, Object.fromEntries(changed.map(d => [d.id, coerceCustomValue(d.type, cv[d.id])])));
       if (csmChanged) clean.csmSince = csmSince || iso(Date.now());
       else if (admin && existing && existing.csm && !v.csm) clean.csmSince = null;
+      if (leadChanged) clean.leadId = leadId || null;
       const summary = admin && existing ? csmChangeSummary(existing.csm, clean.csm, user.name) : null;
       const safe = stripOwnerKeys(clean, user);
       if (existing) {
@@ -297,6 +301,13 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
           {csmOptions.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
         {!admin && <div data-csm-lock className="mt-0.5 text-[11px] text-slate-500">🔒 Only admins can change this</div>}
+      </F>
+      <F label="Lead"><select data-lead-select value={leadId} disabled={!admin} onChange={e => setLeadId(e.target.value)}
+          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
+          <option value=""></option>
+          {leadOptions.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+        </select>
+        {!admin && <div data-lead-lock className="mt-0.5 text-[11px] text-slate-500">🔒 Only admins can change this</div>}
       </F>
       {csmChanged && <F label="CSM since"><Input type="date" data-csm-since value={csmSince} onChange={e => setCsmSince(e.target.value)} /></F>}
       <F label="Start date"><Input type="date" value={v.startDate} onChange={e => set("startDate", e.target.value)} /></F>

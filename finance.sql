@@ -90,19 +90,23 @@ create unique index if not exists purchase_orders_live_number
 alter table public.purchase_orders enable row level security;
 drop policy if exists purchase_orders_select on public.purchase_orders;
 create policy purchase_orders_select on public.purchase_orders for select to authenticated
-  using ((select public.is_active()) and org_id = (select public.current_org()));
+  using ((select public.is_active()) and org_id = (select public.current_org())
+         and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 drop policy if exists purchase_orders_insert on public.purchase_orders;
 create policy purchase_orders_insert on public.purchase_orders for insert to authenticated
   with check ((select public.is_active()) and org_id = (select public.current_org()) and status = 'submitted'
-              and submitted_by = auth.uid() and reviewed_by is null);
+              and submitted_by = auth.uid() and reviewed_by is null
+              and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 -- Edit / resubmit: only while submitted or rejected, and the row must come out as 'submitted'
 -- with the review fields cleared. Approve/reject/cancel are the definer RPCs below.
 drop policy if exists purchase_orders_update on public.purchase_orders;
 create policy purchase_orders_update on public.purchase_orders for update to authenticated
   using ((select public.is_active()) and org_id = (select public.current_org()) and submitted_by = auth.uid()
-         and status in ('submitted','rejected'))
+         and status in ('submitted','rejected')
+         and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)))
   with check ((select public.is_active()) and org_id = (select public.current_org()) and submitted_by = auth.uid()
-              and status = 'submitted' and reviewed_by is null and reject_reason is null);
+              and status = 'submitted' and reviewed_by is null and reject_reason is null
+              and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 
 create table if not exists public.po_schedule (
   id uuid primary key default gen_random_uuid(),
@@ -118,7 +122,9 @@ create table if not exists public.po_schedule (
 alter table public.po_schedule enable row level security;
 drop policy if exists po_schedule_select on public.po_schedule;
 create policy po_schedule_select on public.po_schedule for select to authenticated
-  using ((select public.is_active()) and org_id = (select public.current_org()));
+  using ((select public.is_active()) and org_id = (select public.current_org())
+         and (not (select public.lead_restricted()) or exists (select 1 from purchase_orders po
+              where po.id = po_schedule.po_id and public.lead_owns(po.org_id, po.account_id))));
 -- no write policy: approve_po / cancel_po / create_invoice are the only writers.
 
 -- SQL mirror of src/lib/invoice.js buildSchedule (anchor day kept, remainder on last).
@@ -270,7 +276,8 @@ alter table public.invoices enable row level security;
 -- update or delete policy: amounts can never be edited after creation.
 drop policy if exists invoices_select on public.invoices;
 create policy invoices_select on public.invoices for select to authenticated
-  using ((select public.is_active()) and org_id = (select public.current_org()));
+  using ((select public.is_active()) and org_id = (select public.current_org())
+         and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 
 create or replace function public.create_invoice(p jsonb)
 returns public.invoices language plpgsql security definer set search_path = public as $$
@@ -386,7 +393,9 @@ insert into storage.buckets (id, name, public) values ('invoices', 'invoices', f
 drop policy if exists invoices_read on storage.objects;
 create policy invoices_read on storage.objects for select to authenticated
   using (bucket_id = 'invoices' and (select public.is_active())
-         and (storage.foldername(name))[1] = (select public.current_org())::text);
+         and (storage.foldername(name))[1] = (select public.current_org())::text
+         and (not (select public.lead_restricted()) or exists (select 1 from invoices i
+              where i.org_id = (select public.current_org()) and i.pdf_path = name and public.lead_owns(i.org_id, i.account_id))));
 drop policy if exists invoices_insert on storage.objects;
 create policy invoices_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'invoices' and (select public.is_finance())
@@ -396,8 +405,10 @@ insert into storage.buckets (id, name, public) values ('purchase-orders', 'purch
 drop policy if exists po_files_read on storage.objects;
 create policy po_files_read on storage.objects for select to authenticated
   using (bucket_id = 'purchase-orders' and (select public.is_active())
-         and (storage.foldername(name))[1] = (select public.current_org())::text);
+         and (storage.foldername(name))[1] = (select public.current_org())::text
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])));
 drop policy if exists po_files_insert on storage.objects;
 create policy po_files_insert on storage.objects for insert to authenticated
   with check (bucket_id = 'purchase-orders' and (select public.is_active())
-         and (storage.foldername(name))[1] = (select public.current_org())::text);
+         and (storage.foldername(name))[1] = (select public.current_org())::text
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])));

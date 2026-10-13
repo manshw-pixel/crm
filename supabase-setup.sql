@@ -41,7 +41,7 @@ on conflict (id) do nothing;
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null default 'CSM',
-  role text not null default 'user' check (role in ('admin','user')),
+  role text not null default 'user' check (role in ('admin','user','lead')),
   created_at timestamptz not null default now()
 );
 
@@ -53,6 +53,11 @@ alter table public.profiles
 -- Finance access (invoicing): granted per user by an admin; guarded by guard_profile_finance in finance.sql.
 alter table public.profiles
   add column if not exists finance boolean not null default false;
+
+-- Lead role (spec 2026-10-13 PR 3). create table if not exists never touches an existing
+-- constraint, so swap it idempotently for databases created before 'lead' existed.
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('admin','user','lead'));
 
 -- org_id is NULL for a sign-up that matched no invite: such a user has a valid session and
 -- reads nothing (is_active() requires an org). platform_admin can only be set by SQL or by
@@ -85,13 +90,15 @@ update public.profiles set platform_admin = true,
 create table if not exists public.invites (
   email text not null,
   org_id uuid not null references public.orgs(id) on delete cascade,
-  role text not null check (role in ('admin','user')),
+  role text not null check (role in ('admin','user','lead')),
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   accepted_at timestamptz,
   primary key (email, org_id)
 );
 alter table public.invites enable row level security;
+alter table public.invites drop constraint if exists invites_role_check;
+alter table public.invites add constraint invites_role_check check (role in ('admin','user','lead'));
 -- At most ONE open invite per address across all orgs. Without this, handle_new_user had to
 -- pick among several orgs' invites, and any org admin could re-invite someone else's pending
 -- owner to capture their sign-up. Blocks invite_user, create_org and the invites_insert
@@ -189,6 +196,42 @@ create or replace function public.is_active()
 returns boolean language sql stable security definer set search_path = public as
 $$ select exists (select 1 from profiles where id = auth.uid() and not disabled and org_id is not null)
           and public.org_enabled() $$;
+
+-- Lead visibility (spec 2026-10-13 PR 3). Restricted = an active lead WITHOUT finance access.
+-- (profiles.finance is added near the top of this file, matching finance.sql's definition.)
+create or replace function public.lead_restricted()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and role = 'lead' and not finance and not disabled) $$;
+create or replace function public.lead_owns(p_org uuid, p_account text)
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from accounts where org_id = p_org and id = p_account and data->>'leadId' = auth.uid()::text) $$;
+create or replace function public.my_name()
+returns text language sql stable security definer set search_path = public as
+$$ select name from profiles where id = auth.uid() $$;
+-- Child-row ownership judged on the STORED row (falls back to p_data for a brand-new id).
+-- Needed because INSERT ... ON CONFLICT DO UPDATE also checks SELECT USING against the
+-- PROPOSED insert row, which in merge_row is only the patch and usually lacks accountId.
+create or replace function public.lead_child_ok(p_tbl text, p_org uuid, p_id text, p_data jsonb)
+returns boolean language plpgsql stable security definer set search_path = public as $$
+declare d jsonb;
+begin
+  if p_tbl not in ('contacts','activities','tasks','opportunities') then return false; end if;
+  execute format('select data from public.%I where org_id = $1 and id = $2', p_tbl)
+    into d using p_org, p_id;
+  if d is null then d := p_data; end if;
+  return public.lead_owns(p_org, d->>'accountId')
+      or (coalesce(d->>'accountId', '') = '' and d->>'owner' = public.my_name());
+end $$;
+-- Policies call these as the querying role, so authenticated MUST keep execute; nobody
+-- else needs them (anon has no rows to see, and PUBLIC carries Postgres's default grant).
+revoke execute on function public.lead_restricted() from public, anon;
+revoke execute on function public.lead_owns(uuid, text) from public, anon;
+revoke execute on function public.my_name() from public, anon;
+revoke execute on function public.lead_child_ok(text, uuid, text, jsonb) from public, anon;
+grant execute on function public.lead_restricted() to authenticated;
+grant execute on function public.lead_owns(uuid, text) to authenticated;
+grant execute on function public.my_name() to authenticated;
+grant execute on function public.lead_child_ok(text, uuid, text, jsonb) to authenticated;
 
 -- ---------- signup trigger: attach through a pending invite ----------
 -- The old rule "first sign-up ever becomes admin" is gone: with several orgs there is no
@@ -368,6 +411,47 @@ begin
   foreach t in array array['contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_delete on public.%1$I', t);
     execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using ((select public.is_active()) and org_id = (select public.current_org()))', t);
+  end loop;
+end $$;
+
+-- Lead scoping (spec 2026-10-13 PR 3): a restricted lead (lead_restricted(): role lead, no
+-- finance) sees and edits only accounts whose data.leadId is them, those accounts' child
+-- rows, and account-less child rows they own by name. SELECT, UPDATE (USING and WITH CHECK)
+-- and child DELETE are recreated with that clause; accounts_delete stays admin-only.
+-- INSERT POLICIES ARE DELIBERATELY UNCHANGED: merge_row's proposed INSERT row is only the
+-- patch (merge_patch('{}', patch)), which usually lacks leadId/accountId, so an ownership
+-- clause there would refuse ordinary lead EDITS before ON CONFLICT is reached. New rows are
+-- policed by triggers instead: guard_account_owner (leads cannot create accounts) and
+-- guard_child_account (children only under the lead's own accounts).
+-- ON CONFLICT DO UPDATE ALSO checks SELECT USING against the PROPOSED insert row (the bare
+-- patch), so SELECT/UPDATE USING/DELETE judge ownership on the STORED row (lead_owns by id,
+-- lead_child_ok); only UPDATE WITH CHECK reads the merged new row, which blocks re-pointing.
+do $$
+declare
+  t text;
+  own text;      -- judged on the STORED row: SELECT, UPDATE USING, DELETE
+  own_new text;  -- judged on the merged NEW row: UPDATE WITH CHECK (blocks re-pointing)
+  scoped text;
+  scoped_new text;
+begin
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities'] loop
+    if t = 'accounts' then
+      own := $o$public.lead_owns(org_id, id)$o$;
+      own_new := $o$data->>'leadId' = auth.uid()::text$o$;
+    else
+      own := format('public.lead_child_ok(%L, org_id, id, data)', t);
+      own_new := $o$(public.lead_owns(org_id, data->>'accountId') or (coalesce(data->>'accountId','') = '' and data->>'owner' = (select public.my_name())))$o$;
+    end if;
+    scoped := format('(select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or %s)', own);
+    scoped_new := format('(select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or %s)', own_new);
+    execute format('drop policy if exists %1$s_select on public.%1$I', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using (%2$s)', t, scoped);
+    execute format('drop policy if exists %1$s_update on public.%1$I', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (%2$s) with check (%3$s)', t, scoped, scoped_new);
+    if t <> 'accounts' then
+      execute format('drop policy if exists %1$s_delete on public.%1$I', t);
+      execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (%2$s)', t, scoped);
+    end if;
   end loop;
 end $$;
 
@@ -706,7 +790,8 @@ alter table public.health_snapshots enable row level security;
 -- who is signed in and not disabled -- gated like the entity tables, not like profiles_select.
 drop policy if exists health_snapshots_select on public.health_snapshots;
 create policy health_snapshots_select on public.health_snapshots
-  for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()));
+  for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org())
+    and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 
 -- NO insert/update/delete policy, deliberately: every mutation funnels through
 -- record_health(), which validates the shape of `score` and checks that `accountId` names a
@@ -755,6 +840,8 @@ begin
     -- ...and the account must be in the CALLER's org: definer bypasses RLS, so without
     -- the org_id match a user could stamp a snapshot for another tenant's account id.
     and exists (select 1 from accounts a where a.id = e->>'accountId' and a.org_id = public.current_org())
+    -- ...and a restricted lead may only snapshot accounts they lead (definer bypasses RLS).
+    and (not public.lead_restricted() or public.lead_owns(public.current_org(), e->>'accountId'))
   on conflict (org_id, account_id, day) do update set score = excluded.score;
 
   get diagnostics n = row_count;
@@ -982,6 +1069,10 @@ begin
   if auth.uid() is null or public.is_admin() then return new; end if;
   if tg_op = 'INSERT' then
     if exists (select 1 from accounts where org_id = new.org_id and id = new.id) then return new; end if;
+    -- Lead role (spec 2026-10-13 PR 3): leads, with or without finance, never create accounts.
+    if exists (select 1 from profiles where id = auth.uid() and role = 'lead') then
+      raise exception 'Leads cannot create accounts';
+    end if;
     select name into me from profiles where id = auth.uid();
     if coalesce(new.data->>'leadId', '') <> ''
        or (coalesce(new.data->>'csm', '') <> '' and new.data->>'csm' is distinct from me)
@@ -1002,6 +1093,33 @@ create trigger guard_account_owner
   before insert or update on public.accounts
   for each row execute function public.guard_account_owner();
 
+-- Lead role (spec 2026-10-13 PR 3): a restricted lead may only CREATE child rows under one of
+-- their own accounts, or account-less rows owned by them. The INSERT policies cannot say this
+-- (see the lead-scoping comment by the entity policies). An existing id is an edit through
+-- merge_row's upsert; the UPDATE policies judge it.
+create or replace function public.guard_child_account()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare found_row boolean;
+begin
+  if auth.uid() is null or not public.lead_restricted() then return new; end if;
+  execute format('select exists (select 1 from public.%I where org_id = $1 and id = $2)', tg_table_name)
+    into found_row using new.org_id, new.id;
+  if found_row then return new; end if;
+  if public.lead_owns(new.org_id, new.data->>'accountId')
+     or (coalesce(new.data->>'accountId', '') = '' and new.data->>'owner' = public.my_name()) then
+    return new;
+  end if;
+  raise exception 'You can only add records to your own accounts';
+end $$;
+do $$
+declare t text;
+begin
+  foreach t in array array['contacts','activities','tasks','opportunities'] loop
+    execute format('drop trigger if exists guard_child_account on public.%I', t);
+    execute format('create trigger guard_child_account before insert on public.%I for each row execute function public.guard_child_account()', t);
+  end loop;
+end $$;
+
 -- Both writers of `invites`. handle_new_user() trusts an invite row absolutely, so who may
 -- create one IS the tenancy boundary at sign-up time. All four are definer, so RLS does not
 -- apply inside them: each one checks its own gate on entry.
@@ -1021,8 +1139,8 @@ begin
   if public.current_org() is null then
     raise exception 'invite_user: you are not in an org';
   end if;
-  if p_role is null or p_role not in ('admin','user') then
-    raise exception 'invite_user: role must be admin or user';
+  if p_role is null or p_role not in ('admin','user','lead') then
+    raise exception 'invite_user: role must be admin, user or lead';
   end if;
   if not public.valid_email(addr) then
     raise exception 'invite_user: % is not a valid email address', p_email;
@@ -1306,16 +1424,21 @@ create policy attachments_read on storage.objects
   using (bucket_id = 'attachments' and (select public.is_active())
          and ((storage.foldername(name))[1] = (select public.current_org())::text
               or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
-                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])
+              or public.lead_owns((select public.current_org()), (storage.foldername(name))[1])));
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
   for insert to authenticated
   with check (bucket_id = 'attachments' and (select public.is_active())
-              and (storage.foldername(name))[1] = (select public.current_org())::text);
+              and (storage.foldername(name))[1] = (select public.current_org())::text
+              and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])));
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
   for delete to authenticated
   using (bucket_id = 'attachments' and (select public.is_active())
          and ((storage.foldername(name))[1] = (select public.current_org())::text
               or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
-                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')));
+                  and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
+         and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])
+              or public.lead_owns((select public.current_org()), (storage.foldername(name))[1])));

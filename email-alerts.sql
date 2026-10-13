@@ -227,7 +227,12 @@ language sql security definer set search_path = public as $$
     and nullif(a.data->>'renewalDate', '') is not null
     and a.data->>'renewalDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
     and safe_date(a.data->>'renewalDate') between current_date and current_date + 30
-    and ( trim(a.data->>'csm') = p_csm
+    and ( (trim(a.data->>'csm') = p_csm
+           -- A restricted lead (role lead, no finance) gets only accounts they LEAD,
+           -- even where named CSM. Fails closed if any restricted lead shares p_csm.
+           and not exists (select 1 from profiles lp where lp.org_id = p_org and lp.name = p_csm
+                 and lp.role = 'lead' and not lp.finance and not lp.disabled
+                 and coalesce(a.data->>'leadId', '') <> lp.id::text))
           or (p_include_unowned and not exists (
                 select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
@@ -257,7 +262,12 @@ language sql security definer set search_path = public as $$
     and t.data->>'due' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
     and safe_date(t.data->>'due') < current_date
     and coalesce(a.data->>'contractStatus', '') <> 'Churned'
-    and ( trim(a.data->>'csm') = p_csm
+    and ( (trim(a.data->>'csm') = p_csm
+           -- A restricted lead (role lead, no finance) gets only accounts they LEAD,
+           -- even where named CSM. Fails closed if any restricted lead shares p_csm.
+           and not exists (select 1 from profiles lp where lp.org_id = p_org and lp.name = p_csm
+                 and lp.role = 'lead' and not lp.finance and not lp.disabled
+                 and coalesce(a.data->>'leadId', '') <> lp.id::text))
           or (p_include_unowned and not exists (
                 select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   order by 3 asc;
@@ -284,7 +294,12 @@ language sql security definer set search_path = public as $$
       and nullif(a.data->>'nextQbrDate', '') is not null
       and a.data->>'nextQbrDate' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'
       and safe_date(a.data->>'nextQbrDate') is not null
-      and ( trim(a.data->>'csm') = p_csm
+      and ( (trim(a.data->>'csm') = p_csm
+           -- A restricted lead (role lead, no finance) gets only accounts they LEAD,
+           -- even where named CSM. Fails closed if any restricted lead shares p_csm.
+           and not exists (select 1 from profiles lp where lp.org_id = p_org and lp.name = p_csm
+                 and lp.role = 'lead' and not lp.finance and not lp.disabled
+                 and coalesce(a.data->>'leadId', '') <> lp.id::text))
             or (p_include_unowned and not exists (
                   select 1 from profiles p where p.name = trim(a.data->>'csm') and p.org_id = p_org)) )
   )
