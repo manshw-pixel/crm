@@ -204,6 +204,20 @@ function App({ user, onBackToClients }) {
       () => { clearTimeout(timer); timer = setTimeout(fire, 800); }).subscribe();
     return () => { clearTimeout(timer); sb.removeChannel(ch); };
   }, [refetch]);
+  // A Lead never hears about an account reassigned away from them: RLS hides the UPDATE
+  // that removes it from their view, so realtime stays silent. Resync on tab focus and on
+  // a slow interval instead (skipped while hidden or while our own writes are in flight).
+  const isLead = user?.role === "lead";
+  useEffect(() => {
+    if (!isLead) return;
+    const sync = () => {
+      if (document.visibilityState !== "visible" || writeQueue.queueState().pending > 0) return;
+      refetch();
+    };
+    const iv = setInterval(sync, 60000);
+    document.addEventListener("visibilitychange", sync);
+    return () => { clearInterval(iv); document.removeEventListener("visibilitychange", sync); };
+  }, [isLead, refetch]);
   useEffect(() => {
     const h = e => {
       if (paletteOpen) return; // palette modal owns the keyboard while open
