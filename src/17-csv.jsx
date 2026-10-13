@@ -94,7 +94,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
         if (!existing?.churn) { churnSkipped.push(name); return; }
       }
       if (existing) {
-        ops.push({ type: "EDIT_ACCOUNT", id: existing.id, patch: vals, by: user?.name, source: "csv import" });
+        ops.push({ type: "EDIT_ACCOUNT", id: existing.id, patch: stripOwnerKeys(vals, user), by: user?.name, source: "csv import" });
         // health columns update the score too (recomputes and logs history, like ✎ Update health)
         // keep only answers that differ from the stored one, so re-importing our own export logs nothing
         const stored = existing.inputs?.value || {};
@@ -108,6 +108,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user) {
           modules: "", licenses: 0, dedicatedSupport: false, ...vals, ...(no ? { accountNo: no } : {}),
           inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()) };
+        if (!isAdminUser(user)) { item.csm = user ? user.name : ""; delete item.csmSince; delete item.leadId; }
         ops.push({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
         if (no) byNo.set(String(no), item);

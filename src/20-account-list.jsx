@@ -263,7 +263,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       {selected.size > 0 && (
         <div data-bulkbar className="nm-sm mb-3 flex flex-wrap items-center gap-2 p-3">
           <span data-live="selection" aria-live="polite" className="text-sm font-bold text-slate-800">{selected.size} selected</span>
-          <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>
+          {isAdminUser(user) && <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>}
           <Btn onClick={() => setBulkAction("tier")}>Change tier</Btn>
           <Btn onClick={() => setBulkAction("task")}>Add task</Btn>
           <Btn onClick={() => setBulkAction("churn")}>Churn</Btn>

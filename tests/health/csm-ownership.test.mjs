@@ -66,3 +66,32 @@ test("a CSM's new account is owned by them", async () => {
     assert(made && made.csm === "Test User", "new account csm: " + (made && made.csm));
   } finally { await browser.close(); }
 });
+
+test("bulk Reassign CSM is admin-only", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "a1", name: "Acme" })], "user"));
+  try {
+    await page.click('button[title="Accounts"]');
+    await page.locator("[data-account-row] input[type=checkbox]").first().check();
+    assert(await page.getByRole("button", { name: "Reassign CSM" }).count() === 0, "CSM sees Reassign CSM");
+  } finally { await browser.close(); }
+  const adm = await launch(seed([seedAccount({ id: "a1", name: "Acme" })], "admin"));
+  try {
+    await adm.page.click('button[title="Accounts"]');
+    await adm.page.locator("[data-account-row] input[type=checkbox]").first().check();
+    assert(await adm.page.getByRole("button", { name: "Reassign CSM" }).count() === 1, "control: admin lost Reassign CSM");
+  } finally { await adm.browser.close(); }
+});
+
+test("CSV import by a CSM ignores the csm column and owns new rows", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "a1", name: "Acme", csm: "Ravi" })], "user"));
+  try {
+    await page.click('button[title="Accounts"]');
+    const csv = "name,csm,industry\nAcme,Test User,Retail\nFresh Co,Ravi,Tech\n";
+    await page.setInputFiles('input[type=file][accept*="csv"]', { name: "a.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await page.waitForFunction(() => window.__store.getState().accounts.some(a => a.name === "Fresh Co"));
+    const s = await page.evaluate(() => window.__store.getState().accounts.map(a => ({ name: a.name, csm: a.csm, industry: a.industry })));
+    const acme = s.find(a => a.name === "Acme"), fresh = s.find(a => a.name === "Fresh Co");
+    assert(acme.csm === "Ravi" && acme.industry === "Retail", "existing row: " + JSON.stringify(acme));
+    assert(fresh.csm === "Test User", "new row: " + JSON.stringify(fresh));
+  } finally { await browser.close(); }
+});
