@@ -10,6 +10,7 @@ import "./helpers.test.mjs";
 import "./reducer.test.mjs";
 import "./crossing.test.mjs";
 import "./settings.test.mjs";
+import "./custom-fields.test.mjs";
 import "./bell.test.mjs";
 import "./dashboard.test.mjs";
 import "./pill.test.mjs";

@@ -252,6 +252,55 @@ function BillingSettingsCard({ user }) {
     </Card>
   );
 }
+// Admin-defined account fields (spec 2026-10-13). Built-ins are listed read-only so admins see the
+// whole picture; custom fields can be added, renamed, retyped, reordered and archived (never deleted).
+const BUILTIN_ACCOUNT_FIELDS = ["Name", "Tier", "ARR", "Billing currency", "Industry", "CSM owner", "Start date", "Transition date",
+  "Renewal date", "Contract status", "QBR cadence", "Modules", "Total licenses", "Deployed licenses", "Dedicated support", "Billing completed", "Parent account"];
+function CustomFieldsCard({ st, dispatch }) {
+  const all = (st.settings && st.settings.customFields) || [];
+  const active = activeCustomFields(all), archived = archivedCustomFields(all);
+  const [label, setLabel] = useState(""), [type, setType] = useState("text"), [showArch, setShowArch] = useState(false);
+  const save = list => dispatch({ type: "SET_CUSTOM_FIELDS", fields: list.map(normalizeFieldDef) });
+  const patch = (id, p) => save(all.map(d => d.id === id ? { ...d, ...p } : d));
+  const move = (id, dir) => {
+    const ids = active.map(d => d.id), i = ids.indexOf(id), j = i + dir;
+    if (j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    save([...ids.map(x => all.find(d => d.id === x)), ...archived]);
+  };
+  return (
+    <Card title="Account fields">
+      <p className="mb-2 text-xs text-slate-500">Built-in fields are fixed. Custom fields appear on every account's Edit form and page, and in CSV export.</p>
+      <div className="mb-3 flex flex-wrap gap-1.5">
+        {BUILTIN_ACCOUNT_FIELDS.map(n => <span key={n} data-cf-builtin className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-600">🔒 {n}</span>)}
+      </div>
+      {active.map((d, i) => (
+        <div key={d.id} data-cf-row={d.id} className="mb-2 flex flex-wrap items-center gap-2 text-sm">
+          <Input key={d.id + "|" + d.label} defaultValue={d.label} aria-label="Field label" className="w-40"
+            onBlur={e => { const v = e.target.value.trim(); if (v && v !== d.label) patch(d.id, { label: v }); else e.target.value = d.label; }} />
+          <Select value={d.type} aria-label="Field type" onChange={e => patch(d.id, { type: e.target.value })}
+            options={CUSTOM_FIELD_TYPES} labels={CUSTOM_FIELD_TYPE_LABELS} />
+          {d.type === "select" && <Input key={d.id + "|" + (d.options || []).join(",")} data-cf-options={d.id} defaultValue={(d.options || []).join(", ")} placeholder="Options, comma-separated" className="w-56"
+            onBlur={e => patch(d.id, { options: e.target.value.split(",") })} />}
+          <button title="Move up" aria-label="Move up" disabled={i === 0} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(d.id, -1)}>▲</button>
+          <button title="Move down" aria-label="Move down" disabled={i === active.length - 1} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(d.id, 1)}>▼</button>
+          <button data-cf-archive={d.id} className="ml-auto text-xs font-semibold text-rose-600" onClick={() => patch(d.id, { archived: true })}>Delete</button>
+        </div>))}
+      <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-3">
+        <Input data-cf-new-label value={label} onChange={e => setLabel(e.target.value)} placeholder="New field label" className="w-40" />
+        <Select data-cf-new-type value={type} aria-label="New field type" onChange={e => setType(e.target.value)} options={CUSTOM_FIELD_TYPES} labels={CUSTOM_FIELD_TYPE_LABELS} />
+        <Btn data-cf-add kind="primary" disabled={!label.trim()} onClick={() => { save([...all, { id: newFieldId(), label, type }]); setLabel(""); setType("text"); }}>+ Add field</Btn>
+      </div>
+      {archived.length > 0 && <div className="mt-3 text-xs">
+        <button className="font-semibold text-slate-500 hover:text-slate-800" onClick={() => setShowArch(s => !s)}>Archived ({archived.length})</button>
+        {showArch && archived.map(d => <div key={d.id} className="mt-1 flex items-center gap-2 text-slate-600">
+          <span>{d.label}</span><span className="text-slate-400">{CUSTOM_FIELD_TYPE_LABELS[d.type]}</span>
+          <button data-cf-restore={d.id} className="font-semibold text-indigo-600" onClick={() => patch(d.id, { archived: false })}>Restore</button></div>)}
+      </div>}
+    </Card>
+  );
+}
+
 function Settings({ st, dispatch, user, scored, theme }) {
   const toast = useToast();
   const w = st.settings.weights;
@@ -292,7 +341,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
       <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
-        {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Users", "set-users"],
+        {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users"],
           ...(user.role === "admin" ? [["Billing", "set-billing"], ["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
           <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
       </nav>
@@ -365,6 +414,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
       <div id="set-integrations" className="scroll-mt-4"><IntegrationsCard st={st} dispatch={dispatch} user={user} /></div>
       <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
       <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
+      <div id="set-custom-fields" className="scroll-mt-4"><CustomFieldsCard st={st} dispatch={dispatch} /></div>
       <div id="set-users" className="scroll-mt-4"><UsersCard me={user} /></div>
       {user.role === "admin" && <div id="set-billing" className="scroll-mt-4"><BillingSettingsCard user={user} /></div>}
       {user.role === "admin" && <div id="set-errors" className="scroll-mt-4"><ErrorLogCard /></div>}

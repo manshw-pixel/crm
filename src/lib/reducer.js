@@ -108,7 +108,7 @@ export function persistOps(action, next, prev) {
     }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); if (o) up("opportunities", o); break; }
     case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
-    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": {
+    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS": {
       // settings always writes (even an empty diff), exactly as before the move
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
       ops.push({ kind: "merge", table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
@@ -299,6 +299,7 @@ export function reducer(state, action) {
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
     case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };
+    case "SET_CUSTOM_FIELDS": return { ...state, settings: { ...state.settings, customFields: action.fields } };
     case "SEED_PLAYBOOK": return { ...state,
       tasks: [...state.tasks, ...action.items],
       accounts: state.accounts.map(a => a.id === action.id ? { ...a, playbookSeededFor: action.seededFor } : a) };

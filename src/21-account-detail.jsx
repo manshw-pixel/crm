@@ -123,6 +123,12 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
               {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
             </div>
+            {(() => { const shown = activeCustomFields(st.settings && st.settings.customFields)
+                .map(d => ({ d, text: formatCustomValue(d.type, a.custom && a.custom[d.id]) })).filter(x => x.text);
+              return shown.length > 0 && <div data-custom-details className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
+                {shown.map(({ d, text }) => <Meta key={d.id} label={d.label}
+                  value={<span data-custom-value={d.id}>{d.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(text) ? fmtDate(text) : text}</span>} />)}
+              </div>; })()}
             {/* Retention: the arithmetic lives in accountRetention so this and the list column cannot disagree. */}
             <div data-retention-block className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
               <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Retention since {r.baselineKey}</span>
@@ -186,7 +192,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editContact" ? <AddContactForm key={form.item.id} acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "opp" ? <AddOppForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
-        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} user={user} />
+        : form === "edit" ? <AccountForm existing={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} accounts={st.accounts} user={user} customFields={st.settings && st.settings.customFields} />
         : form === "renewal" ? <CompleteRenewalForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "billing" ? <BillingForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "churn" ? <ChurnForm acct={a} user={user} dispatch={dispatch} onDone={() => setForm(null)} />

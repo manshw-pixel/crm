@@ -1,6 +1,6 @@
 /* ------------------------------ Account list ------------------------------ */
-function exportCSV(rows) {
-  const url = URL.createObjectURL(new Blob([accountsCSVText(rows)], { type: "text/csv" }));
+function exportCSV(rows, customFields) {
+  const url = URL.createObjectURL(new Blob([accountsCSVText(rows, customFields)], { type: "text/csv" }));
   const el = Object.assign(document.createElement("a"), { href: url, download: "accounts.csv" });
   el.click(); URL.revokeObjectURL(url);
 }

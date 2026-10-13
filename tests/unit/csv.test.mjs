@@ -13,3 +13,32 @@ test("accountsCSVText exports deployedLicenses right after licenses; unrecorded 
   assert.equal(r1.split(",")[i], '"150"');
   assert.equal(r2.split(",")[i], '""');
 });
+
+test("accountsCSVText appends active custom fields, escaped, archived excluded", () => {
+  const fields = [
+    { id: "cf_a", label: "Region, area", type: "text" },
+    { id: "cf_b", label: "=Danger", type: "bool" },
+    { id: "cf_z", label: "Gone", type: "text", archived: true },
+  ];
+  const rows = [{ id: "1", name: "Acme", arr: 0, arrUSD: 0, renewalDate: "2027-01-01", custom: { cf_a: "EMEA", cf_b: true, cf_z: "x" } }];
+  const [head, line] = lib.accountsCSVText(rows, fields).split("\n");
+  const plain = lib.accountsCSVText(rows).split("\n")[0];
+  assert.ok(head.startsWith(plain + ","), "custom columns must come after the existing ones");
+  assert.ok(head.includes('"Region, area"'), "label with a comma must be quoted: " + head);
+  assert.ok(head.includes("'=Danger"), "formula-looking label must be neutralised: " + head);
+  assert.ok(!head.includes("Gone"), "archived field exported");
+  assert.ok(line.endsWith(',"EMEA","Yes"'), "values: " + line);
+});
+
+test("custom values are csvCell-escaped: formula guard, quoting, numerics", () => {
+  const fields = [
+    { id: "cf_f", label: "F", type: "text" },
+    { id: "cf_c", label: "C", type: "text" },
+    { id: "cf_n", label: "N", type: "number" },
+  ];
+  const rows = [{ id: "1", name: "Acme", arr: 0, arrUSD: 0, renewalDate: "2027-01-01",
+    custom: { cf_f: '=HYPERLINK("x")', cf_c: "a,b", cf_n: -5 } }];
+  const [, line] = lib.accountsCSVText(rows, fields).split("\n");
+  const tail = ',"\'=HYPERLINK(""x"")","a,b","-5"';
+  assert.ok(line.endsWith(tail), "custom cells must be csvCell-escaped (guard, quoting, numeric): " + line);
+});
