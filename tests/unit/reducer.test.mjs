@@ -66,6 +66,7 @@ const ACTIONS = {
   SET_SNAPSHOTS: { type: "SET_SNAPSHOTS", snapshots: [{ month: "2026-06" }] },
   SET_PLAYBOOK: { type: "SET_PLAYBOOK", playbook: [] },
   SET_SEGMENTS: { type: "SET_SEGMENTS", segments: [{ id: "g", name: "Big" }] },
+  SET_CUSTOM_FIELDS: { type: "SET_CUSTOM_FIELDS", fields: [{ id: "cf_1", label: "Region", type: "text", archived: false }] },
   SEED_PLAYBOOK: { type: "SEED_PLAYBOOK", id: "a1", seededFor: "2027-01-01", items: [{ id: "t6", accountId: "a1", title: "Kickoff" }] },
   SET_HEALTH_PLAYBOOK: { type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { Yellow: [], Red: [] } },
   SEED_HEALTH_PLAYBOOK: { type: "SEED_HEALTH_PLAYBOOK", id: "a1", healthBand: "Red", healthPlaybookBand: "Red", items: [], event: { date: TODAY, from: "Green", to: "Red" } },
@@ -272,7 +273,7 @@ test("RESTORE_SNAPSHOT replaces rows by id and re-adds missing ones", () => {
 
 test("settings actions update their key and always write the settings row", () => {
   for (const [type, key, val] of [["SET_WEIGHTS", "weights", ACTIONS.SET_WEIGHTS.weights], ["SET_RATES", "rates", ACTIONS.SET_RATES.rates],
-    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix]]) {
+    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_CUSTOM_FIELDS", "customFields", ACTIONS.SET_CUSTOM_FIELDS.fields], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix]]) {
     const { next, ops } = run(ACTIONS[type]);
     assert.deepEqual(next.settings[key], val, type);
     assert.deepEqual(ops.map(o => [o.table, o.rowId]), [["settings", "1"]], type);
