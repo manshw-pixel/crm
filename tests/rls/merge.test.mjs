@@ -10,12 +10,13 @@ const merge = (who, tbl, row_id, patch = {}, appends = {}) =>
 test("two clients patching DIFFERENT fields of one account both survive", async () => {
   await seedRow("accounts", "m-1", { id: "m-1", name: "Acme", arr: 100, csm: "Priya" });
   const a = await merge("admin", "accounts", "m-1", { arr: 500 });
-  const b = await merge("user", "accounts", "m-1", { csm: "Dana" });
+  const b = await merge("user", "accounts", "m-1", { industry: "Dana Industries" });
   assert(!a.error, `admin merge failed: ${a.error && a.error.message}`);
   assert(!b.error, `user merge failed: ${b.error && b.error.message}`);
   const v = await valueOf("accounts", "m-1");
   assert(v.arr === 500, `the ARR edit was reverted: arr=${v.arr}`);
-  assert(v.csm === "Dana", `the CSM edit was reverted: csm=${v.csm}`);
+  assert(v.csm === "Priya", `csm changed unexpectedly: csm=${v.csm}`);
+  assert(v.industry === "Dana Industries", `the industry edit was reverted: industry=${v.industry}`);
   assert(v.name === "Acme", "an untouched field was lost");
 });
 
