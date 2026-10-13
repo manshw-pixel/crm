@@ -2,19 +2,10 @@
 // jsPDF's built-in Helvetica only has WinAnsi glyphs; anything else would print as mojibake.
 const pdfText = s => String(s == null ? "" : s).replace(/\u20B9/g, "Rs.").replace(/[^\t\n\x20-\x7E\xA0-\xFF\u2013\u2014\u2018\u2019\u201C\u201D\u2022\u20AC]/g, "?");
 
-// OneVio brand: navy #0f172a, indigo #4f46e5 (same as onevio.in). The mark is drawn as vectors, so no image asset.
+// OneVio brand: navy #0f172a, indigo #4f46e5 (same as onevio.in).
 const PDF_NAVY = [15, 23, 42], PDF_INDIGO = [79, 70, 229], PDF_SLATE = [100, 116, 139], PDF_LINE = [226, 232, 240], PDF_TINT = [245, 246, 250];
 const pdfDate = iso => { const d = new Date(String(iso) + "T00:00:00Z");
   return isNaN(d) ? pdfText(iso) : d.toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric", timeZone: "UTC" }); };
-
-function drawOneVioMark(doc, x, y, s) {
-  // 64-unit favicon geometry scaled to s points: an "O" ring and a "V" chevron.
-  const k = s / 64;
-  doc.setLineWidth(7 * k).setDrawColor(...PDF_NAVY).circle(x + 19 * k, y + 32 * k, 11 * k, "S");
-  doc.setDrawColor(...PDF_INDIGO).setLineCap("round").setLineJoin("round")
-    .lines([[9 * k, 23.5 * k], [9 * k, -23.5 * k]], x + 38 * k, y + 20.5 * k, [1, 1], "S", false);
-  doc.setLineCap("butt").setLineJoin("miter").setLineWidth(1);
-}
 
 function renderInvoicePdf({ inv, entity, account, po }) {
   const doc = new window.jspdf.jsPDF({ unit: "pt", format: "a4" });
@@ -25,10 +16,8 @@ function renderInvoicePdf({ inv, entity, account, po }) {
   const india = entity.country === "IN";
   const title = india && inv.tax_lines && inv.tax_lines.length ? "TAX INVOICE" : "INVOICE";
 
-  // Header: mark + wordmark left, title and number right, indigo rule under.
-  drawOneVioMark(doc, L, 34, 34);
-  font("bold", 20).text("One", L + 42, 58);
-  font("bold", 20, PDF_INDIGO).text("Vio", L + 42 + doc.getTextWidth("One"), 58);
+  // Header: billing entity left, title and number right, indigo rule under.
+  font("bold", 16).text(wrap(entity.name, CW / 2), L, 56);
   font("bold", 18).text(title, R, 52, { align: "right" });
   font("normal", 10, PDF_SLATE).text(pdfText(`# ${inv.number}`), R, 68, { align: "right" });
   doc.setFillColor(...PDF_INDIGO).rect(L, 84, CW, 2.5, "F");
@@ -104,6 +93,7 @@ function renderInvoicePdf({ inv, entity, account, po }) {
     doc.setDrawColor(...PDF_LINE).line(L, 800, R, 800);
     font("normal", 8, PDF_SLATE).text(pdfText(`Thank you for your business · ${entity.name}`), L, 814)
       .text(`Page ${p} of ${pages}`, R, 814, { align: "right" });
+    font("normal", 8, PDF_SLATE).text("Powered by OneVio", W / 2, 828, { align: "center" });
   }
   return doc.output("blob");
 }
