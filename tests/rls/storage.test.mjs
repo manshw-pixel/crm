@@ -48,13 +48,16 @@ test("an anonymous client cannot delete", async () => {
   assert((await names(sessions.admin, A)).includes("keepme.txt"), "an anonymous client deleted a file");
 });
 
-// DOCUMENTS CURRENT BEHAVIOUR — see finding F5. The bucket is PUBLIC: uploaded customer
-// documents are readable by anyone holding the URL, with no session.
-test("anyone with the URL can read an attachment (documents finding F5)", async () => {
+// Finding F5, closed 2026-10-13: the bucket is private. A bare public URL returns nothing;
+// the same file is readable through a signed URL minted by a member (positive control).
+test("a public attachment URL no longer serves the file; a member's signed URL does (finding F5)", async () => {
   await sessions.user.storage.from("attachments").upload(`${A}/public.txt`, body(), { upsert: true });
   const res = await fetch(`${API_URL}/storage/v1/object/public/attachments/${A}/public.txt`);
-  assert(res.status === 200, `the bucket is public, so an unauthenticated fetch should succeed, got ${res.status}`);
-  assert((await res.text()) === "hello", "the public URL should return the file contents");
+  assert(!res.ok, `the bucket is private, so an unauthenticated fetch must fail, got ${res.status}`);
+  const { data, error } = await sessions.user.storage.from("attachments").createSignedUrl(`${A}/public.txt`, 60);
+  assert(!error && data?.signedUrl, "control: member could not sign the file: " + (error && error.message));
+  const ok = await fetch(data.signedUrl);
+  assert(ok.ok && (await ok.text()) === "hello", "control: the signed URL should return the file contents, got " + ok.status);
 });
 
 test("a user cannot upload under another org's prefix", async () => {
