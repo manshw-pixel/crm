@@ -48,7 +48,7 @@ export const scenarios = [
   // The fixture accounts have no activities and default inputs, so they start Yellow (58 under
   // the default weights) with recency 0.
   { id: `${F}/touchpoint-moves-score`, feature: F, title: "Logging a call raises an at-risk account's health score", role: "admin",
-    run: async ({ page, runId, thisRunId = runId }) => {
+    run: async ({ page, runId, thisRunId }) => {
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
       const pick = await page.evaluate(p => {

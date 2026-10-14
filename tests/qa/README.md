@@ -33,7 +33,7 @@ Output goes to `tests/qa/out/<runId>/` (results.json, shots/, report.html) and `
 | 0 | all scenarios pass / flaky / skipped |
 | 1 | at least one scenario failed |
 | 2 | org guard abort: signed in to an org other than `QA_ORG_NAME`; nothing was reset or run |
-| 3 | pre-flight: bad args, live != master, site unreachable, same-minute rerun, no seeded run for `--skip-reset` |
+| 3 | pre-flight: missing or incomplete .env.qa, bad args, live != master, site unreachable, same-minute rerun, no seeded run for `--skip-reset` |
 | 4 | infrastructure abort after pre-flight (results.json still written with an "aborted:" note) |
 
 ## By design

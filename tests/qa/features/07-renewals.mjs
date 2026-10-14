@@ -103,6 +103,7 @@ export const scenarios = [
 
       const shownBefore = await dashTotal(page);
       assert.equal(shownBefore, await fmtMoneyIn(page, before, "USD"), "dashboard Total ARR before");
+      let primaryFailed = true;
       try {
         await openAccount(page, name);
         await page.locator("[data-more-actions]").click();
@@ -114,9 +115,15 @@ export const scenarios = [
         const shownAfter = await dashTotal(page);
         assert.equal(shownAfter, await fmtMoneyIn(page, before - fx.arr, "USD"), "dashboard Total ARR after churn");
         assert.notEqual(shownAfter, shownBefore, "dashboard Total ARR did not change");
+        primaryFailed = false;
       } finally {
-        // Reactivate only if it is actually churned; cleanup errors never mask the original.
-        await reactivateIfChurned(page, name).catch(() => {});
+        // Reactivate only if it is actually churned. Never silent: a cleanup failure fails a
+        // passing scenario, and is warned (not thrown, so it can't mask the original) otherwise.
+        await reactivateIfChurned(page, name).catch(e => {
+          const msg = `cleanup failed: ${name} left churned (${e?.message || e})`;
+          if (!primaryFailed) throw new Error(msg);
+          console.warn(msg);
+        });
       }
     } },
 ];

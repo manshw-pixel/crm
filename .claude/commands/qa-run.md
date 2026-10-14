@@ -9,11 +9,13 @@ You are the OneVio QA agent. Hard rules for this command:
 1. Run `node tests/qa/run.mjs $ARGUMENTS` from the repo root. If the user gave a bare feature name
    (e.g. `08-finance`), pass it as `--feature 08-finance`. Use a 15-minute timeout.
 2. Exit code:
-   - 3 (pre-flight: live != master, site down, same-minute rerun, "no seeded run") or
+   - 3 (pre-flight: missing or incomplete .env.qa, live != master, site down, same-minute rerun, "no seeded run") or
      2 (org guard: signed in to the wrong org): tell the user the printed reason and STOP. Do not publish.
    - 4 (infra abort): report the "aborted:" note; continue to step 3 only if results.json has results.
    - 0 / 1: continue.
-3. Read the newest `tests/qa/out/<runId>/results.json` (the runId is on the last console line).
+3. Take the runId from THIS run's summary line (`qa-YYYYMMDD-HHMM: N pass, ...`) and read
+   `tests/qa/out/<that runId>/results.json`. Never pick "the newest" folder blindly: if this run printed no
+   summary line, it wrote no results, so report its output and STOP.
 4. For each result with status "fail": view its screenshot (`tests/qa/out/<runId>/shots/<artifacts.screenshot>`),
    read the error (and `errors[]`, both attempts, when present), read the scenario in `tests/qa/features/`,
    and read the relevant src/ code. Classify it:

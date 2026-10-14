@@ -29,7 +29,8 @@ if (args.includes("--feature")) {
 const skipReset = args.includes("--skip-reset");
 const OUT = new URL("./out/", import.meta.url);
 
-const env = loadQaEnv();
+let env;
+try { env = loadQaEnv(); } catch (e) { preflightFail(`missing or incomplete .env.qa: ${e.message}`); }
 const clean = t => redact(t, env);
 const runId = makeRunId();
 const startedAt = new Date().toISOString();
