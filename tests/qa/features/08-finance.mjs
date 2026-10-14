@@ -114,6 +114,10 @@ export const scenarios = [
       const acctName = INV_ACCT(runId);
       if ((await invoiceRows(page, runId)).length) throw new Error(`a run invoice already exists (earlier attempt); not raising a second`);
       const account = await storeAccount(page, acctName);
+      // The hand-written literal below assumes 18% GST on an Indian customer; decide BEFORE any write.
+      const rate = Number(entity.default_tax_pct ?? 18), cust = account.country || entity.country;
+      if (entity.country !== "IN" || cust !== "IN" || rate !== 18)
+        throw new SkipScenario(`INR entity "${entity.name}" is ${entity.country}/${rate}% for a ${cust} customer; the literal check needs an IN entity at 18% (set Default tax % 18 in Settings -> Billing entities)`);
 
       await submitPO(page, acctName, { po_number: INV_PO(runId), po_value: 15000, currency: "INR", years: 1, billing_cycle: "annual", billing_start: isoPlus(0) });
       await approvePO(page, INV_PO(runId));
@@ -142,10 +146,8 @@ export const scenarios = [
         assert.ok(await form.getByText(`${t.label} ${t.pct}% INR ${two(t.amount)}`, { exact: true }).count(), `tax line ${t.label} not shown`);
       // Independent of the app's function: 10,000x1 + 2,500x2 = 15,000 subtotal.
       assert.equal(exp.subtotal, 15000);
-      if (applyTax && Number(entity.default_tax_pct ?? 18) === 18 && (account.country || "IN") === "IN")
-        assert.equal(shownTotal, "Total INR 17,700.00", "hand-computed: 15,000 + 18% GST = 17,700");
-      else if (!applyTax) assert.equal(shownTotal, "Total INR 15,000.00", "hand-computed: tax-exempt total = subtotal");
-      else assert.equal(exp.total, 15000 + Math.round(15000 * Number(entity.default_tax_pct)) / 100, "hand-computed total at the entity rate");
+      // Hand-written, independent of computeTotals: 15,000 + 18% GST = 17,700 (or 15,000 if the account is exempt).
+      assert.equal(shownTotal, applyTax ? "Total INR 17,700.00" : "Total INR 15,000.00", "hand-computed total");
 
       const block = form.locator("[data-inv-block]");
       if (await block.count()) throw new Error(`invoice form blocked: ${(await block.textContent()).trim()}`);
@@ -176,6 +178,8 @@ export const scenarios = [
       const { readFile } = await import("node:fs/promises");
       const buf = await readFile(await download.path());
       assert.equal(buf.subarray(0, 4).toString("latin1"), "%PDF", "file does not start with %PDF");
+      // jsPDF writes text streams uncompressed, so the invoice number is in the bytes as-is.
+      assert.ok(buf.toString("latin1").includes(number), `PDF does not contain invoice number ${number}`);
       assert.ok(buf.length > 5 * 1024, `PDF is only ${buf.length} bytes`);
     } },
 
@@ -186,9 +190,10 @@ export const scenarios = [
       const v = { po_number: SCHED_PO(runId), po_value: 100000.01, currency: "PHP", years: 1, billing_cycle: "quarterly", billing_start: isoPlus(200) };
       const expected = buildSchedule(v);
       assert.equal(expected.length, 4, "quarterly over 1 year = 4 periods");
-      const preview = await submitPO(page, PO_ACCT(runId), v);
-      if (!preview) throw new Error(`PO ${v.po_number} already exists: an earlier attempt of this run submitted it and failed (its error is lost on retry; rerun to see it)`);
+      let failed = false;
       try {
+        const preview = await submitPO(page, PO_ACCT(runId), v);
+        if (!preview) throw new Error(`PO ${v.po_number} already exists: an earlier attempt of this run submitted it and failed (its error is lost on retry; rerun to see it)`);
         const money = n => `PHP ${Number(n).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
         assert.deepEqual(preview, expected.map(r => [periodLabel(v, r), r.period_start, r.period_end, money(r.amount)]), "PO form schedule preview");
         // Hand-written: 100,000.01 split 4 ways leaves the extra cent on the last period.
@@ -202,9 +207,10 @@ export const scenarios = [
         await openAccount(page, PO_ACCT(runId));
         await page.locator('[data-account-tab="Purchase orders"]').click();
         assert.equal((await page.locator(`[data-po-row="${v.po_number}"] [data-po-invoiced]`).textContent()).trim(), "0 of 4 raised");
-      } finally {
+      } catch (e) { failed = true; throw e; } finally {
         // Cancel so the run's 4 periods don't pile up in "upcoming" forever (POs can't be deleted).
-        await (async () => {
+        const cleanup = await (async () => {
+          await page.keyboard.press("Escape"); // close any modal left open by a failure
           await openAccount(page, PO_ACCT(runId));
           await page.locator('[data-account-tab="Purchase orders"]').click();
           const row = page.locator(`[data-po-row="${v.po_number}"]`), st = await poStatus(page, v.po_number);
@@ -218,7 +224,13 @@ export const scenarios = [
             await page.locator("[data-po-reject]").click();
           }
           await row.locator("[data-po-status]").filter({ hasText: /Cancelled|Rejected/ }).waitFor({ timeout: 15000 });
-        })().catch(() => {});
+        })().then(() => null, e => e);
+        // Never silent: a primary failure keeps its own error but carries the cleanup note; otherwise fail on it.
+        const st = await poStatus(page, v.po_number).catch(() => "unknown");
+        if (st === "approved" || st === "submitted" || cleanup) {
+          const msg = `cleanup failed: PO ${v.po_number} left ${st}${cleanup ? ` (${String(cleanup.message).slice(0, 200)})` : ""}`;
+          if (failed) console.warn(`[${F}/purchase-order] ${msg}`); else throw new Error(msg);
+        }
       }
     } },
 
@@ -227,7 +239,8 @@ export const scenarios = [
       const number = await runInvoice(page, runId);
       const row = invoiceRow(page, number);
       if ((await row.locator("[data-invoice-status]").textContent()).trim() !== "Paid") {
-        await row.locator("[data-paid-checkbox]").check();
+        // Controlled checkbox whose onChange opens MarkPaidDialog: click, don't check().
+        await row.locator("[data-paid-checkbox]").click();
         await page.locator("[data-paid-ref]").fill(`QA ${runId}`);
         await page.locator("[data-paid-confirm]").click();
         await row.locator("[data-invoice-status]").filter({ hasText: /^Paid$/ }).waitFor({ timeout: 15000 });
