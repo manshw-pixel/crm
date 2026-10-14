@@ -178,12 +178,15 @@ export const scenarios = [
       const popupP = context.waitForEvent("page", { timeout: 15000 });
       await invoiceRow(page, number).locator("[data-download]").click();
       const popup = await popupP;
-      // Headless Chromium has no PDF viewer: the signed URL arrives as a download on the popup.
-      const download = await popup.waitForEvent("download", { timeout: 20000 });
-      const name = download.suggestedFilename();
-      assert.match(name, /\.pdf$/i, `suggested filename ${name}`);
-      const { readFile } = await import("node:fs/promises");
-      const buf = await readFile(await download.path());
+      // The app opens a 60s signed URL in a new tab (src/14-invoices.jsx:33). Whether the browser
+      // shows it in a PDF viewer (Edge) or downloads it varies by channel, so fetch the URL the tab
+      // was given -- that also proves the signed link itself works.
+      await popup.waitForURL(/token=/, { timeout: 20000 });
+      const url = popup.url();
+      assert.match(new URL(url).pathname, /\.pdf$/i, `signed URL is not a .pdf: ${new URL(url).pathname}`);
+      const res = await context.request.get(url);
+      assert.equal(res.status(), 200, `signed PDF URL returned ${res.status()}`);
+      const buf = await res.body();
       assert.equal(buf.subarray(0, 4).toString("latin1"), "%PDF", "file does not start with %PDF");
       // jsPDF writes text streams uncompressed, so the invoice number is in the bytes as-is.
       assert.ok(buf.toString("latin1").includes(number), `PDF does not contain invoice number ${number}`);
