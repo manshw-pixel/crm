@@ -5,7 +5,9 @@ import { searchCount, openAccount, stat, fmtMoneyIn, field } from "./_accounts.m
 import { nav } from "./_users-card.mjs";
 
 const F = "04-accounts";
-const manual = runId => `QA ${runId} Manual`;
+// "QA <runId>-m Manual": still starts "QA qa-" so the next reset deletes it, but NOT "QA <runId> "
+// (with the space), so it is not counted among the 15 seeded run accounts by 05/07/09.
+const manual = runId => `QA ${runId}-m Manual`;
 // Smallest well-formed-enough PDF; built in memory, never written to disk.
 const PDF = Buffer.from("%PDF-1.1\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[]/Count 0>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n");
 
@@ -25,7 +27,7 @@ async function ensureManual(page, runId, arr = 5000) {
 
 export const scenarios = [
   { id: `${F}/create-edit`, feature: F, title: "Create an account, edit its ARR, value survives reload", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       const name = await ensureManual(page, runId);
       assert.equal(await searchCount(page, name), 1, "created account not listed");
       await openAccount(page, name);
@@ -45,7 +47,7 @@ export const scenarios = [
     } },
 
   { id: `${F}/contact`, feature: F, title: "Add a contact, then delete it", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       const name = await ensureManual(page, runId);
       await openAccount(page, name);
       const who = `QA ${runId} Contact ${Date.now() % 100000}`;
@@ -64,7 +66,7 @@ export const scenarios = [
     } },
 
   { id: `${F}/touchpoint`, feature: F, title: "Log a call; it appears in the activity timeline", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       const name = await ensureManual(page, runId);
       await openAccount(page, name);
       const summary = `QA ${runId} call ${Date.now() % 100000}`;
@@ -79,7 +81,7 @@ export const scenarios = [
     } },
 
   { id: `${F}/attachment`, feature: F, title: "Upload a PDF; opening it yields a working signed URL", role: "admin",
-    run: async ({ page, context, runId }) => {
+    run: async ({ page, context, thisRunId: runId }) => {
       const name = await ensureManual(page, runId);
       await openAccount(page, name);
       const summary = `QA ${runId} attach ${Date.now() % 100000}`, file = `qa-${runId}.pdf`;
@@ -106,7 +108,7 @@ export const scenarios = [
 
   // Never raises or changes limits: only asserts the message when the org is already full.
   { id: `${F}/account-limit-at-cap`, feature: F, title: "Create is blocked with the plan message when the org is at its account limit", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       await nav(page, "Accounts").click();
       const r = await page.evaluate(async () => {
         const o = await sb.from("orgs").select("max_accounts");

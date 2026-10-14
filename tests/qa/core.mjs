@@ -23,6 +23,7 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
     }
     const t0 = Date.now();
     let lastErr, artifacts;
+    const errs = [];
     for (let attempt = 1; attempt <= 2; attempt++) {
       let ctx;
       try {
@@ -45,12 +46,18 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
           break;
         }
         lastErr = err;
+        errs.push(String(err?.message || err));
         if (attempt === 2 && onFail) artifacts = await onFail(s, ctx, err, attempt).catch(() => undefined);
       } finally {
         await ctx?.close?.().catch(() => {});
       }
     }
-    if (lastErr) results.push({ id: s.id, feature: s.feature, title: s.title, status: "fail", attempts: 2, ms: Date.now() - t0, error: String(lastErr.message || lastErr), artifacts });
+    if (lastErr) {
+      const r = { id: s.id, feature: s.feature, title: s.title, status: "fail", attempts: 2, ms: Date.now() - t0, error: String(lastErr.message || lastErr), artifacts };
+      // Both attempts failed differently: keep each, since attempt 1's error is often the real cause.
+      if (errs.length === 2 && errs[0] !== errs[1]) r.errors = errs;
+      results.push(r);
+    }
   }
   return results;
 }
@@ -71,3 +78,7 @@ export function redact(text, env) {
   for (const u of Object.values(env?.users || {})) if (u?.pass) s = s.split(u.pass).join("[redacted]");
   return s;
 }
+
+// --skip-reset reuses the accounts of the most recent run that DID reset (its seedRunId).
+// Older history entries without seedRunId are not trusted.
+export const latestSeedRunId = history => [...(history || [])].reverse().find(h => h?.seedRunId)?.seedRunId ?? null;

@@ -50,3 +50,9 @@ test("attribute values are escaped", () => {
   assert.ok(html.includes('src="shots/a&quot;&lt;b&gt;.png"'));
   assert.ok(!html.includes('a"<b>'));
 });
+
+test("both attempt errors shown when they differ", () => {
+  const r = { ...results, results: [{ id: "f/x", feature: "f", title: "T", status: "fail", error: "second", errors: ["first <a>", "second"] }] };
+  const html = renderReport(r, [], {});
+  assert.match(html, /Attempt 1/); assert.ok(html.includes("first &lt;a&gt;")); assert.match(html, /Attempt 2/);
+});

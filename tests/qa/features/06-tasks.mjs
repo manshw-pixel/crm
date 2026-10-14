@@ -26,8 +26,8 @@ async function addTask(page, acct, title, owner) {
 
 export const scenarios = [
   { id: `${F}/create-assign-complete`, feature: F, title: "Create a task assigned to the CSM; it lists; completing moves it to Done", role: "admin",
-    run: async ({ page, runId, csmName }) => {
-      const title = `QA ${runId} call ${Date.now() % 100000}`;
+    run: async ({ page, runId, thisRunId, csmName }) => {
+      const title = `QA ${thisRunId} call ${Date.now() % 100000}`;
       await addTask(page, ACCT(runId), title, csmName);
       await openTasks(page, { q: title });
       let rows = (await taskTitles(page)).filter(r => r.title === title);
@@ -49,9 +49,9 @@ export const scenarios = [
   // scope "mine" keeps t.owner === user.name). Rows don't show the owner, so the CSM creates one
   // task for itself and one for the admin, then checks Mine shows exactly its own.
   { id: `${F}/filter`, feature: F, title: "Mine (as CSM) shows the CSM's tasks and hides others'", role: "csm",
-    run: async ({ page, runId, csmName, adminName }) => {
+    run: async ({ page, runId, thisRunId, csmName, adminName }) => {
       if (!adminName || adminName === csmName) throw new SkipScenario("admin display name unknown or equal to the CSM's");
-      const tag = `QA ${runId} filter`;
+      const tag = `QA ${thisRunId} filter`;
       const mine = `${tag} csm`, theirs = `${tag} admin`;
       await openTasks(page, { q: tag });
       const have = (await taskTitles(page)).map(r => r.title);

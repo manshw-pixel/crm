@@ -49,3 +49,16 @@ test("partial AM keys throw naming the missing one", () => {
   assert.throws(() => validateEnv({ ...parseEnv(NO_AM), QA_AM_EMAIL: "m@x.in" }), /QA_AM_PASS/);
   assert.throws(() => validateEnv({ ...parseEnv(NO_AM), QA_AM_PASS: "p" }), /QA_AM_EMAIL/);
 });
+
+test("loadQaEnv honours QA_ENV_FILE", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const f = join(mkdtempSync(join(tmpdir(), "qa-env-")), "alt.env");
+  writeFileSync(f, FULL.replace("QA_ORG_NAME=CRM", "QA_ORG_NAME=Not The QA Org"));
+  const { loadQaEnv } = await import("../env.mjs");
+  const prev = process.env.QA_ENV_FILE;
+  process.env.QA_ENV_FILE = f;
+  try { assert.equal(loadQaEnv().orgName, "Not The QA Org"); }
+  finally { if (prev === undefined) delete process.env.QA_ENV_FILE; else process.env.QA_ENV_FILE = prev; }
+});

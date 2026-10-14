@@ -87,3 +87,21 @@ test("SkipScenario on retry after a failed attempt is a fail carrying attempt 1'
   assert.equal(r.length, 1); assert.equal(r[0].status, "fail"); assert.equal(r[0].attempts, 2);
   assert.match(r[0].error, /^boom \(skipped on retry after failure: already seeded\)$/);
 });
+
+test("fail on both attempts keeps both errors when they differ, one when identical", async () => {
+  let n = 0;
+  const r = await runScenarios([
+    sc("diff", async () => { throw new Error(++n === 1 ? "timeout on click" : "duplicate row"); }),
+    sc("same", async () => { throw new Error("boom"); }),
+  ], ctx);
+  assert.equal(r[0].error, "duplicate row");
+  assert.deepEqual(r[0].errors, ["timeout on click", "duplicate row"]);
+  assert.equal(r[1].errors, undefined);
+});
+
+test("latestSeedRunId: newest entry that seeded; null when none did", async () => {
+  const { latestSeedRunId } = await import("../core.mjs");
+  assert.equal(latestSeedRunId([{ runId: "a", seedRunId: "a" }, { runId: "b" }, { runId: "c", seedRunId: "c" }, { runId: "d" }]), "c");
+  assert.equal(latestSeedRunId([{ runId: "x" }]), null);
+  assert.equal(latestSeedRunId(undefined), null);
+});

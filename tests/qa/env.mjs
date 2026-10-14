@@ -31,7 +31,7 @@ export function validateEnv(e) {
   return { baseUrl: e.QA_BASE_URL, orgName: e.QA_ORG_NAME, users };
 }
 
-export function loadQaEnv(path = DEFAULT_PATH) {
+export function loadQaEnv(path = process.env.QA_ENV_FILE || DEFAULT_PATH) {
   if (!existsSync(path)) throw new Error(`${path} not found -- copy .env.qa.example and fill in the QA logins`);
   return validateEnv(parseEnv(readFileSync(path, "utf8")));
 }

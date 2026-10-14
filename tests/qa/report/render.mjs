@@ -68,7 +68,7 @@ export function renderReport(results, history = [], analysis = {}) {
     const a = analysis[r.id];
     const shot = r.artifacts?.screenshot ? `<img src="shots/${esc(r.artifacts.screenshot)}" alt="${esc(`Screenshot of ${r.title}`)}">` : "";
     const an = a ? `<dl><dt>Cause</dt><dd>${esc(a.cause)}</dd><dt>Where</dt><dd><code>${esc(a.fileLine)}</code></dd><dt>Fix</dt><dd>${esc(a.fix)}</dd><dt>Confidence</dt><dd>${esc(a.confidence)}</dd></dl>` : "";
-    return `<div class="card"><strong>${esc(r.title)}</strong>${badge(r)}<div class="meta">${esc(r.id)}</div><pre>${esc(r.error)}</pre>${an}${shot}</div>`;
+    return `<div class="card"><strong>${esc(r.title)}</strong>${badge(r)}<div class="meta">${esc(r.id)}</div>${r.errors?.length > 1 ? r.errors.map((e, i) => `<div class="meta">Attempt ${i + 1}</div><pre>${esc(e)}</pre>`).join("") : `<pre>${esc(r.error)}</pre>`}${an}${shot}</div>`;
   }).join("");
 
   const fixed = prev ? [...prevFailed].filter(id => !failedNow.has(id) && rows.some(r => r.id === id && r.status !== "skipped")) : [];

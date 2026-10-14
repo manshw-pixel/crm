@@ -16,6 +16,11 @@ const LINES = runId => [
   { description: `QA ${runId} licence`, qty: 1, rate: 10000 },
   { description: `QA ${runId} services`, qty: 2, rate: 2500 },
 ];
+// The invoice scenarios find "the run invoice" by searching the seeded account's run id, so a
+// --skip-reset rerun would see the previous run's invoice. They need a freshly seeded run.
+const needFreshSeed = ({ runId, thisRunId }) => {
+  if (thisRunId && thisRunId !== runId) throw new SkipScenario(`invoice scenarios need a fresh seed (--skip-reset reuses ${runId})`);
+};
 const SETUP = "No INR billing entity in the Crm org, so no invoice can be raised. One-time setup: sign in as the QA admin -> "
   + "Settings -> Billing entities -> Add entity with Country IN (currency INR, Default tax % 18, any name/address/state), then rerun.";
 
@@ -106,7 +111,8 @@ async function runInvoice(page, runId) {
 
 export const scenarios = [
   { id: `${F}/create-invoice`, feature: F, title: "Raise an invoice with two lines; totals match the invoice math and a hand-computed figure", role: "admin",
-    run: async ({ page, runId, env }) => {
+    run: async ({ page, runId, thisRunId, env }) => {
+      needFreshSeed({ runId, thisRunId });
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
       const entity = await inrEntity(page);
@@ -166,7 +172,8 @@ export const scenarios = [
     } },
 
   { id: `${F}/pdf-download`, feature: F, title: "The run invoice's PDF downloads as a real PDF", role: "admin",
-    run: async ({ page, context, runId }) => {
+    run: async ({ page, context, runId, thisRunId }) => {
+      needFreshSeed({ runId, thisRunId });
       const number = await runInvoice(page, runId);
       const popupP = context.waitForEvent("page", { timeout: 15000 });
       await invoiceRow(page, number).locator("[data-download]").click();
@@ -184,10 +191,10 @@ export const scenarios = [
     } },
 
   { id: `${F}/purchase-order`, feature: F, title: "A submitted PO lists its billing schedule; once approved its periods list as upcoming", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, runId, thisRunId = runId }) => {
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
-      const v = { po_number: SCHED_PO(runId), po_value: 100000.01, currency: "PHP", years: 1, billing_cycle: "quarterly", billing_start: isoPlus(200) };
+      const v = { po_number: SCHED_PO(thisRunId), po_value: 100000.01, currency: "PHP", years: 1, billing_cycle: "quarterly", billing_start: isoPlus(200) };
       const expected = buildSchedule(v);
       assert.equal(expected.length, 4, "quarterly over 1 year = 4 periods");
       let failed = false;
@@ -235,7 +242,8 @@ export const scenarios = [
     } },
 
   { id: `${F}/payment-status`, feature: F, title: "Marking the run invoice paid moves it from the pending filter to the paid filter", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, runId, thisRunId }) => {
+      needFreshSeed({ runId, thisRunId });
       const number = await runInvoice(page, runId);
       const row = invoiceRow(page, number);
       if ((await row.locator("[data-invoice-status]").textContent()).trim() !== "Paid") {
@@ -250,7 +258,8 @@ export const scenarios = [
     } },
 
   { id: `${F}/status-filter`, feature: F, title: "Overdue filter shows none of this run's invoices (all due in future)", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, runId, thisRunId }) => {
+      needFreshSeed({ runId, thisRunId });
       const number = await runInvoice(page, runId); // non-vacuous: the run has an invoice under "all"
       assert.ok((await invoiceRows(page, runId, "all")).includes(number));
       assert.deepEqual(await invoiceRows(page, runId, "overdue"), [], "overdue filter + runId");

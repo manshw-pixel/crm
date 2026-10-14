@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { loadQaEnv } from "./env.mjs";
-import { makeRunId, runScenarios, summarise, GuardError, redact, skipReason } from "./core.mjs";
+import { makeRunId, runScenarios, summarise, GuardError, redact, skipReason, latestSeedRunId } from "./core.mjs";
 import { parseLiveVersion, checkVersion } from "./guard.mjs";
 import { signIn } from "./session.mjs";
 import { resetQaOrg } from "./reset.mjs";
@@ -45,6 +45,13 @@ if (!res.ok) preflightFail(`${env.baseUrl} unreachable (${res.status ?? ""} ${re
 const liveVersion = parseLiveVersion(await res.text());
 const v = checkVersion(liveVersion, masterVersion);
 if (!v.ok) preflightFail(v.message);
+
+// Accounts are named after the run that seeded them. --skip-reset finds them via the last seeded
+// run; scenarios name anything NEW with thisRunId so reruns never collide.
+const histFile = new URL("history.json", OUT);
+const history = existsSync(histFile) ? JSON.parse(readFileSync(histFile, "utf8")) : [];
+const seedRunId = skipReset ? latestSeedRunId(history) : runId;
+if (!seedRunId) preflightFail("no seeded run -- run without --skip-reset first");
 
 const featDir = new URL("./features/", import.meta.url);
 const files = existsSync(featDir) ? readdirSync(featDir).filter(f => f.endsWith(".mjs") && (!feature || f.startsWith(feature))).sort() : [];
@@ -77,16 +84,17 @@ try {
   browser = await chromium.launch({ channel: process.env.CRM_TEST_CHANNEL ?? "msedge" });
   const csmName = await readDisplayName(browser, "csm");
   const adminName = await readDisplayName(browser, "admin");
-  if (!skipReset) {
+  if (skipReset) notes.push(`skip-reset: using accounts seeded by ${seedRunId}`);
+  else {
     const admin = await signIn(browser, env, "admin");
     try {
-      const r = await resetQaOrg({ ...admin, runId, csmName, adminName }, runId);
+      const r = await resetQaOrg({ ...admin, runId, thisRunId: runId, csmName, adminName }, runId);
       notes.push(`reset: deleted ${r.deleted} stale QA accounts, imported ${r.imported}, updated ${r.updated}`);
       for (const w of r.warnings || []) notes.push(`import warning: ${w}`);
     } finally { await admin.close(); }
   }
   results = await runScenarios(scenarios,
-    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId, csmName, adminName }),
+    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId: seedRunId, thisRunId: runId, csmName, adminName }),
     { skip: s => skipReason(s, env),
       onFail: async (s, ctx) => {
         if (!ctx?.page) return undefined;
@@ -103,11 +111,12 @@ try {
 
 for (const r of results) if (r.error) r.error = clean(r.error);
 const summary = summarise(results);
-const out = { runId, startedAt, finishedAt: new Date().toISOString(), liveVersion, masterVersion, feature, summary, results, notes: notes.map(clean) };
+// seedRunId is recorded only once a reset actually ran (and finished), so a guard abort or a
+// failed reset is never reused by a later --skip-reset.
+const seeded = !skipReset && notes.some(n => n.startsWith("reset: "));
+const out = { runId, seedRunId: seeded || skipReset ? seedRunId : null, startedAt, finishedAt: new Date().toISOString(), liveVersion, masterVersion, feature, summary, results, notes: notes.map(clean) };
 writeFileSync(new URL("results.json", dir), JSON.stringify(out, null, 2));
-const histFile = new URL("history.json", OUT);
-const history = existsSync(histFile) ? JSON.parse(readFileSync(histFile, "utf8")) : [];
-history.push({ runId, summary, liveVersion, failedIds: results.filter(r => r.status === "fail").map(r => r.id) });
+history.push({ runId, ...(seeded ? { seedRunId } : {}), summary, liveVersion, failedIds: results.filter(r => r.status === "fail").map(r => r.id) });
 writeFileSync(histFile, JSON.stringify(history.slice(-20), null, 2));
 console.log(`${runId}: ${summary.pass} pass, ${summary.flaky} flaky, ${summary.fail} fail, ${summary.skipped} skipped -> ${fileURLToPath(new URL("results.json", dir))}`);
 for (const n of out.notes) console.log(`  ${n}`);
