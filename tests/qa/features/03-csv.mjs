@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { EXPECTED } from "../fixtures/expected.mjs";
-import { importCsv, fixtureCsv, waitForSaved } from "../reset.mjs";
+import { importCsv, fixtureCsv, waitForSaved, unambiguousOffset } from "../reset.mjs";
 import { searchCount, openAccount, stat, fmtMoneyIn, fmtDateIn, isoPlus, field } from "./_accounts.mjs";
 import { nav } from "./_users-card.mjs";
 
 const F = "03-csv";
 // First PHP row of the fixture (the brief's "first EUR account"; the importer has no EUR).
+// Its date is the fixture's {U+25}: day >= 13, so a day/month swap could not pass.
 const PHP_ROW = "Nimbus Telecom", PHP_DAYS = 25, PHP_TIER = "Gold";
 const REIMPORT_ROW = "Acme Corp", OLD_ARR = "1200000", NEW_ARR = 1234567;
 
@@ -19,7 +20,8 @@ export const scenarios = [
     run: async ({ page, runId, csmName }) => {
       const name = `QA ${runId} ${PHP_ROW}`;
       await openAccount(page, name);
-      const iso = isoPlus(PHP_DAYS);
+      const iso = isoPlus(unambiguousOffset(PHP_DAYS));
+      assert.ok(+iso.slice(8) >= 13, "fixture date is ambiguous");
       assert.equal((await stat(page, "Renewal").textContent()).trim(), await fmtDateIn(page, iso), "renewal date (DD-MM read day-first)");
       assert.equal((await stat(page, "CSM").textContent()).trim(), csmName, "owner");
       const custom = page.locator("[data-custom-details]");

@@ -4,12 +4,29 @@ import { nav } from "./_users-card.mjs";
 export const scenarios = [];
 
 // Accounts list filtered by `q`; returns the filtered count from the sr-only results region (:203).
-export async function searchCount(page, q) {
+// Settles first: the search box holds `q`, the count equals the rendered rows (or the list is
+// windowed, >100 rows), and two reads >= 300ms apart agree -- so a stale count can't be returned.
+export async function searchCount(page, q, timeoutMs = 15000) {
   await nav(page, "Accounts").click();
-  await page.getByPlaceholder(/^Search/).fill(q);
-  await page.waitForTimeout(400);
-  const t = await page.locator('[data-live="results"]').textContent();
-  return +(/(\d+) accounts/.exec(t || "")?.[1] ?? NaN);
+  const box = page.getByPlaceholder(/^Search/);
+  await box.fill(q);
+  const read = () => page.evaluate(q => {
+    const box = [...document.querySelectorAll("input")].find(i => /^Search/.test(i.placeholder || ""));
+    const m = /(\d+) accounts/.exec(document.querySelector('[data-live="results"]')?.textContent || "");
+    if (!box || box.value !== q || !m) return null;
+    const n = +m[1], rows = document.querySelectorAll("tr[data-account-row]").length;
+    const windowed = !!document.querySelector("[data-row-spacer]");
+    return windowed || rows === n ? n : null;
+  }, q);
+  const until = Date.now() + timeoutMs;
+  let prev = await read();
+  while (Date.now() < until) {
+    await page.waitForTimeout(300);
+    const cur = await read();
+    if (cur != null && cur === prev) return cur;
+    prev = cur;
+  }
+  throw new Error(`account count for "${q}" did not settle`);
 }
 
 // Open an account by its exact name from the list; waits for the detail heading.

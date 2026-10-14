@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { waitForSaved } from "../reset.mjs";
+import { SkipScenario } from "../core.mjs";
 import { searchCount, openAccount, stat, fmtMoneyIn, field } from "./_accounts.mjs";
 import { nav } from "./_users-card.mjs";
 
@@ -71,9 +72,10 @@ export const scenarios = [
       await page.getByPlaceholder("Summary…").fill(summary);
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
-      const entry = page.locator("div.border-b").filter({ hasText: summary });
-      await entry.first().waitFor({ timeout: 10000 });
-      assert.match(await entry.first().textContent(), /^call/, "logged activity is not a call");
+      // The timeline row: type badge (span.w-16) + summary carrying this run's id.
+      const entry = page.locator("div.border-b").filter({ has: page.getByText(summary, { exact: true }) }).first();
+      await entry.waitFor({ timeout: 10000 });
+      assert.equal((await entry.locator("span.w-16").first().textContent()).trim(), "call", "logged activity is not a call");
     } },
 
   { id: `${F}/attachment`, feature: F, title: "Upload a PDF; opening it yields a working signed URL", role: "admin",
@@ -111,10 +113,9 @@ export const scenarios = [
         const a = await sb.from("accounts").select("id", { count: "exact", head: true });
         return o.error || a.error || !o.data || o.data.length !== 1 ? null : { lim: o.data[0].max_accounts, used: a.count };
       });
-      if (!r || r.lim == null || r.used < r.lim) {
-        console.log(`  note: limit message not exercised: org has room (accounts ${r?.used ?? "?"}, limit ${r?.lim ?? "unlimited/unknown"})`);
-        return;
-      }
+      if (!r) throw new Error("could not read the org's account limit/count");
+      if (r.lim == null) throw new SkipScenario("org has no account limit — limit message not exercised");
+      if (r.used < r.lim) throw new SkipScenario(`org has room (${r.used}/${r.lim} accounts) — limit message not exercised`);
       await page.getByRole("button", { name: "+ New account" }).click();
       await field(page, "Name *").fill(`QA ${runId} OverLimit`);
       await page.getByRole("button", { name: "Create account" }).click();
@@ -122,6 +123,6 @@ export const scenarios = [
     } },
 
   { id: `${F}/account-limit`, feature: F, title: "Set max accounts = current count; create is blocked", role: "admin",
-    skip: "limits are set from the client console (platform admin only); the message is covered by account-limit-at-cap when the org is full",
+    skip: "not exercised: limits are set from the client console (platform admin only), which the QA agent never changes",
     run: async () => {} },
 ];

@@ -9,6 +9,10 @@ export const makeRunId = (d = new Date()) =>
 // A scenario's own `skip` reason wins; otherwise AM scenarios skip when no AM user is configured.
 export const skipReason = (s, env) => s.skip ?? ((s.role === "am" && !env.users.am) ? "no AM user configured" : null);
 
+// Thrown by a scenario to record itself "skipped" at runtime (e.g. a precondition the org
+// doesn't meet). No retry, no onFail; the message is the skip reason.
+export class SkipScenario extends Error {}
+
 export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
   const results = [];
   for (const s of scenarios) {
@@ -29,6 +33,11 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
         break;
       } catch (err) {
         if (err instanceof GuardError) { err.results = results; throw err; }
+        if (err instanceof SkipScenario) {
+          results.push({ id: s.id, feature: s.feature, title: s.title, status: "skipped", attempts: 1, ms: Date.now() - t0, reason: err.message });
+          lastErr = null;
+          break;
+        }
         lastErr = err;
         if (attempt === 2 && onFail) artifacts = await onFail(s, ctx, err, attempt).catch(() => undefined);
       } finally {

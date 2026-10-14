@@ -7,12 +7,19 @@ const pad = n => String(n).padStart(2, "0");
 // DD-MM-YYYY, the format the importer reads day-first (src/lib/csv.js:43-50). Built from local
 // calendar parts so no timezone shifts the day.
 const dmy = (from, n) => { const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + n); return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`; };
+// {U+n}: the first date >= n days out whose day is >= 13, so a day/month swap cannot parse
+// (day > 12) or coincide (day != month). Returns the offset in days; at most n+18.
+export const unambiguousOffset = (n, from = new Date()) => {
+  for (let k = n; ; k++) if (new Date(from.getFullYear(), from.getMonth(), from.getDate() + k).getDate() >= 13) return k;
+};
 
 // {RUN} -> run id, {CSM} -> the CSM's name (the importer's "csm" column is free text matched
-// against team member names, src/17-csv.jsx:62), {D+n} -> a renewal date n days from `today`.
+// against team member names, src/17-csv.jsx:62), {D+n} -> a renewal date n days from `today`,
+// {U+n} -> the same but nudged to a day >= 13 (see unambiguousOffset).
 export const fixtureCsv = (runId, owners, today = new Date()) =>
   CSV.replaceAll("{RUN}", runId).replaceAll("{CSM}", owners.csm).replaceAll("{ADMIN}", owners.admin)
-    .replace(/\{D\+(\d+)\}/g, (_, n) => dmy(today, +n));
+    .replace(/\{D\+(\d+)\}/g, (_, n) => dmy(today, +n))
+    .replace(/\{U\+(\d+)\}/g, (_, n) => dmy(today, unambiguousOffset(+n, today)));
 
 export const staleAccountNames = (names, runId) =>
   names.filter(n => n.startsWith("QA qa-") && !n.startsWith(`QA ${runId} `));

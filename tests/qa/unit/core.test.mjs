@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeRunId, runScenarios, summarise, GuardError, skipReason } from "../core.mjs";
+import { makeRunId, runScenarios, summarise, GuardError, skipReason, SkipScenario } from "../core.mjs";
 
 const ctx = async () => ({});
 const sc = (id, run) => ({ id: `01-x/${id}`, feature: "01-x", title: id, run });
@@ -70,4 +70,12 @@ test("skipReason: scenario's own skip wins, else the AM rule", () => {
   assert.equal(skipReason({ role: "am" }, noAm), "no AM user configured");
   assert.equal(skipReason({ role: "am" }, withAm), null);
   assert.equal(skipReason({ role: "admin" }, noAm), null);
+});
+
+test("SkipScenario thrown at runtime: skipped with its reason, one attempt, no onFail", async () => {
+  let runs = 0, fails = 0, closes = 0;
+  const r = await runScenarios([{ id: "f/s", feature: "f", title: "t", run: async () => { runs++; throw new SkipScenario("no limit"); } }],
+    async () => ({ close: async () => { closes++; } }), { onFail: async () => { fails++; } });
+  assert.equal(runs, 1); assert.equal(fails, 0); assert.equal(closes, 1);
+  assert.equal(r[0].status, "skipped"); assert.equal(r[0].attempts, 1); assert.equal(r[0].reason, "no limit");
 });

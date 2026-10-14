@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { openUsersCard, nav, MAIN } from "./_users-card.mjs";
 import { EXPECTED } from "../fixtures/expected.mjs";
+import { SkipScenario } from "../core.mjs";
 
 const F = "02-users";
 const OK = ".bg-emerald-50.text-emerald-700", ERR = "div.bg-rose-50.text-rose-600"; // UsersCard :467-468
@@ -16,21 +17,22 @@ async function runRowNames(page, runId, scope) {
   return rows.evaluateAll(trs => trs.map(tr => tr.children[2]?.textContent.trim()));
 }
 
+const addUserForm = page => {
+  const form = page.locator("form").filter({ has: page.getByPlaceholder("Temp password") });
+  return { form, err: page.locator(ERR), submit: () => form.getByRole("button", { name: "Add user" }).click() };
+};
+
 export const scenarios = [
-  // USER DECISION: this scenario must NEVER create a real user. It submits only when the submit
+  // USER DECISION: these scenarios must NEVER create a real user. They submit only when the submit
   // is provably rejected: client-side validation, or the org already full by its own user list.
-  { id: `${F}/add-user-form`, feature: F, title: "Add user validates input and enforces the plan's user limit", role: "admin",
+  { id: `${F}/add-user-validation`, feature: F, title: "Add user rejects a missing name and a short password", role: "admin",
     run: async ({ page, runId }) => {
       // Backstop: no sign-up request may leave this page, whatever the app decides.
       await page.route("**/auth/v1/signup**", r => r.abort());
       await openUsersCard(page);
-      const form = page.locator("form").filter({ has: page.getByPlaceholder("Temp password") });
-      const err = page.locator(ERR);
-      const email = `qa-${runId}@example.invalid`;
-      const submit = () => form.getByRole("button", { name: "Add user" }).click();
-
+      const { form, err, submit } = addUserForm(page);
       // 1. Missing name (src/25-auth-admin.jsx:420).
-      await form.getByPlaceholder("Email").fill(email);
+      await form.getByPlaceholder("Email").fill(`qa-${runId}@example.invalid`);
       await form.getByPlaceholder("Temp password").fill("abcdefgh");
       await submit();
       await err.filter({ hasText: "Name and email are required." }).waitFor({ timeout: 10000 });
@@ -39,18 +41,25 @@ export const scenarios = [
       await form.getByPlaceholder("Temp password").fill("abc");
       await submit();
       await err.filter({ hasText: "Temporary password must be at least 6 characters." }).waitFor({ timeout: 10000 });
+    } },
 
-      // 3. The plan limit, only if the org is provably full. Enabled rows in the admin's list are a
-      // LOWER bound on seats (open invites also count; the platform admin is excluded from both).
+  { id: `${F}/add-user-limit`, feature: F, title: "Add user is refused with the plan message when the org is full", role: "admin",
+    run: async ({ page, runId }) => {
+      await page.route("**/auth/v1/signup**", r => r.abort());
+      await openUsersCard(page);
+      // Enabled rows in the admin's list are a LOWER bound on seats (open invites also count;
+      // the platform admin is excluded from both), so "full" here is provable, never assumed.
       const enabled = await page.locator("div[data-user-id]:not(:has([data-user-disabled-badge]))").count();
       const lim = await page.evaluate(async () => {
         const { data, error } = await sb.from("orgs").select("max_users");
         return error || !data || data.length !== 1 ? null : data[0].max_users;
       });
-      if (lim == null || enabled < lim) {
-        console.log(`  note: limit message not exercised: org has free seats (enabled ${enabled}, limit ${lim ?? "unlimited/unknown"})`);
-        return;
-      }
+      if (lim == null || enabled < lim)
+        throw new SkipScenario(`org has free seats (enabled ${enabled}, limit ${lim ?? "unlimited/unknown"}) — limit message not exercised`);
+      const { form, err, submit } = addUserForm(page);
+      const email = `qa-${runId}@example.invalid`;
+      await form.getByPlaceholder("Name").fill(`QA ${runId} Limit`);
+      await form.getByPlaceholder("Email").fill(email);
       await form.getByPlaceholder("Temp password").fill("abcdefgh");
       await submit();
       await err.or(page.locator(OK)).first().waitFor({ timeout: 30000 });
@@ -94,6 +103,6 @@ export const scenarios = [
     } },
 
   { id: `${F}/user-limit`, feature: F, title: "Org user limit blocks add-user", role: "admin",
-    skip: "limits are set from the client console (platform admin only); the limit message is covered by add-user-form when the org is full",
+    skip: "limits are set from the client console (platform admin only); not exercised here (the QA agent never changes limits); add-user-limit checks the message only when the org is already full",
     run: async () => {} },
 ];
