@@ -34,6 +34,9 @@ footer{color:var(--muted);font-size:12px;margin-top:24px;border-top:1px solid va
 `;
 
 export function renderReport(results, history = [], analysis = {}) {
+  // Callers may pass the whole history.json, which already contains this run: drop it so it is
+  // neither the diff baseline nor a duplicate cell in the strip.
+  history = (history || []).filter(h => h.runId !== results.runId);
   const s = results.summary || {};
   const rows = results.results || [];
   const prev = history.at(-1);

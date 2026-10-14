@@ -36,3 +36,17 @@ test("skipped shown grey with reason and counted separately; fixed-since badge; 
   assert.match(html, /Fixed since last run/);
   assert.ok(html.includes("n &lt;b&gt;"));
 });
+
+test("history entry for the current run is excluded from baseline and strip", () => {
+  const self = { runId: results.runId, summary: results.summary, failedIds: ["08-finance/b"] };
+  const html = renderReport(results, [...history, self], {});
+  assert.match(html, /New failure/);
+  assert.equal((html.match(/<span class="(pass|fail|flaky)" title=/g) || []).length, 2);
+});
+
+test("attribute values are escaped", () => {
+  const r = { ...results, results: [{ id: 'x"y', feature: "f", title: "T", status: "fail", error: "e", artifacts: { screenshot: 'a"<b>.png' } }] };
+  const html = renderReport(r, [], {});
+  assert.ok(html.includes('src="shots/a&quot;&lt;b&gt;.png"'));
+  assert.ok(!html.includes('a"<b>'));
+});

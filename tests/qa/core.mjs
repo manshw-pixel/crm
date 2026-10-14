@@ -46,3 +46,10 @@ export function summarise(results) {
   const count = s => results.filter(r => r.status === s).length;
   return { total: results.length, pass: count("pass"), fail: count("fail"), flaky: count("flaky"), skipped: count("skipped"), byFeature };
 }
+
+// Replace every configured password in text before it is written to results/report/console.
+export function redact(text, env) {
+  let s = String(text ?? "");
+  for (const u of Object.values(env?.users || {})) if (u?.pass) s = s.split(u.pass).join("[redacted]");
+  return s;
+}
