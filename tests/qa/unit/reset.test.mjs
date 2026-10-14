@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fixtureCsv, staleAccountNames } from "../reset.mjs";
+import { fixtureCsv, staleAccountNames, parseImportBanner } from "../reset.mjs";
 import { EXPECTED } from "../fixtures/expected.mjs";
 import { parseCSV, parseCsvNumber, parseCsvDate, csvDateOrder } from "../../../src/lib/csv.js";
 import { CURRENCIES } from "../../../src/lib/money.js";
@@ -58,4 +58,14 @@ test("stale = other runs' QA accounts only", () => {
   assert.deepEqual(staleAccountNames(
     ["QA qa-20261013-0900 Acme", "QA qa-20261014-1530 Beta", "Real Customer", "QA Tier Co"],
     "qa-20261014-1530"), ["QA qa-20261013-0900 Acme"]);
+});
+
+test("parseImportBanner: clean, warned and error banners", () => {
+  const base = "Imported 15 new · updated 0 existing (matched by account # or name). Columns: accountNo, name (required), tier";
+  assert.deepEqual(parseImportBanner(base + "✕"), { ok: 15, updated: 0, warnings: [] });
+  const w = parseImportBanner(base + " ⚠ 2 unreadable date(s) left unchanged (A, B). ⚠ 1 row(s) had an unrecognized tier (set to Mid).✕");
+  assert.equal(w.ok, 15);
+  assert.deepEqual(w.warnings, ["2 unreadable date(s) left unchanged (A, B).", "1 row(s) had an unrecognized tier (set to Mid)."]);
+  assert.deepEqual(parseImportBanner("Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported.✕"),
+    { err: "Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported." });
 });

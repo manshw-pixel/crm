@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { EXPECTED } from "./fixtures/expected.mjs";
 
 const CSV = readFileSync(fileURLToPath(new URL("./fixtures/accounts.csv", import.meta.url)), "utf8");
 const pad = n => String(n).padStart(2, "0");
@@ -16,21 +17,31 @@ export const fixtureCsv = (runId, owners, today = new Date()) =>
 export const staleAccountNames = (names, runId) =>
   names.filter(n => n.startsWith("QA qa-") && !n.startsWith(`QA ${runId} `));
 
+// Pure: the visible banner's text -> { ok, updated, warnings } or { err }. Banner is the div around the
+// dismiss button, src/20-account-list.jsx:210-225: "Imported N new · updated M existing ... Columns: ...",
+// then (only when something was coerced) a bold span of "⚠ ..." sentences (:214-223). Errors are the
+// bare message (importMsg.err, :211) with no "Imported" prefix.
+export function parseImportBanner(text) {
+  const t = String(text || "").replace(/✕\s*$/, "").trim();
+  const m = /^Imported (\d+) new · updated (\d+) existing/.exec(t);
+  if (!m) return { err: t };
+  const warnings = t.split("⚠").slice(1).map(w => w.trim()).filter(Boolean);
+  return { ok: +m[1], updated: +m[2], warnings };
+}
+
 // Upload through the real Import CSV flow. There is no confirm step: choosing the file imports it.
 //  - "Import CSV" button + hidden input: src/20-account-list.jsx:195-198 (accept=".csv,text/csv")
-//  - result: sr-only live region [data-live="import"], src/20-account-list.jsx:207-209, reads
-//    "Imported N new, updated M existing" or the error text. Must be on the Accounts view.
+//  - result: visible banner (div holding the "Dismiss import message" button, :210-224); the sr-only
+//    [data-live="import"] region (:207) is only used to detect that a result arrived.
 export async function importCsv(page, csvText, filename = "qa.csv") {
-  const live = page.locator('[data-live="import"]');
-  // clear any previous message so we wait for THIS import's result (dismiss: 20-account-list.jsx:224)
   const dismiss = page.getByRole("button", { name: "Dismiss import message" });
   if (await dismiss.count()) await dismiss.click();
   await page.locator('input[type="file"][accept*="csv"]').setInputFiles({ name: filename, mimeType: "text/csv", buffer: Buffer.from(csvText) });
   await page.waitForFunction(() => (document.querySelector('[data-live="import"]')?.textContent || "").trim() !== "", null, { timeout: 20000 });
-  const msg = (await live.textContent()).trim();
-  const m = /^Imported (\d+) new, updated (\d+) existing/.exec(msg);
-  if (!m) throw new Error(`CSV import failed: ${msg}`);
-  return { ok: +m[1], updated: +m[2] };
+  const banner = page.locator('div:has(> button[aria-label="Dismiss import message"])').first();
+  const r = parseImportBanner(await banner.textContent());
+  if (r.err !== undefined) throw new Error(`CSV import failed: ${r.err}`);
+  return r;
 }
 
 // Deletes stale QA accounts through the list's bulk bar, then imports the fixture.
@@ -44,20 +55,26 @@ export async function importCsv(page, csvText, filename = "qa.csv") {
 export async function resetQaOrg(ctx, runId) {
   const { page, env } = ctx;
   await page.locator('nav[aria-label="Main"] button[aria-label="Accounts"]').click();
-  await page.getByPlaceholder(/^Search/).fill("QA qa-");
-  await page.waitForTimeout(300); // let the filter + selection-reset effect settle
-  const labels = await page.locator('tr[data-account-row] input[type="checkbox"][aria-label^="Select "]')
-    .evaluateAll(els => els.map(e => e.getAttribute("aria-label")));
-  const stale = staleAccountNames(labels.map(l => l.replace(/^Select /, "")), runId);
-  if (stale.length) {
+  let deleted = 0;
+  for (let pass = 0; ; pass++) {
+    await page.getByPlaceholder(/^Search/).fill("QA qa-");
+    await page.waitForTimeout(300); // let the filter + selection-reset effect settle
+    const labels = await page.locator('tr[data-account-row] input[type="checkbox"][aria-label^="Select "]')
+      .evaluateAll(els => els.map(e => e.getAttribute("aria-label")));
+    const stale = staleAccountNames(labels.map(l => l.replace(/^Select /, "")), runId);
+    if (!stale.length) break;
+    if (pass >= 10) throw new Error(`reset: ${stale.length} stale QA accounts still present after 10 delete passes`);
     for (const n of stale) await page.getByRole("checkbox", { name: `Select ${n}`, exact: true }).check();
     await page.locator("[data-bulkbar]").getByRole("button", { name: "Delete", exact: true }).click();
     await page.getByLabel(/Type DELETE to confirm/).fill("DELETE");
     await page.locator("[data-bulk-confirm]").click();
     await page.locator("[data-bulkbar]").waitFor({ state: "detached", timeout: 15000 });
+    deleted += stale.length;
   }
   await page.getByPlaceholder(/^Search/).fill("");
   const csm = ctx.csmName || env.users.csm.name || env.users.csm.email;
   const r = await importCsv(page, fixtureCsv(runId, { csm }));
-  return { deleted: stale.length, imported: r.ok };
+  if (r.ok + r.updated !== EXPECTED.accounts)
+    throw new Error(`reset: expected ${EXPECTED.accounts} accounts imported, got ${r.ok} new + ${r.updated} updated${r.warnings.length ? `; warnings: ${r.warnings.join(" | ")}` : ""}`);
+  return { deleted, imported: r.ok, updated: r.updated, warnings: r.warnings };
 }
