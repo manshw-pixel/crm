@@ -32,6 +32,7 @@ import "./arr-audit.test.mjs";
 import "./second-pass.test.mjs";
 import "./page-polish.test.mjs";
 import "./tier3-polish.test.mjs";
+import "./renewals-order.test.mjs";
 import "./dashboard-polish.test.mjs";
 import "./health-mix.test.mjs";
 import "./confirm-dialog.test.mjs";

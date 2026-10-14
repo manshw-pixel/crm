@@ -11,7 +11,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
   for (let i = 0; i < 12; i++) {
     const m = new Date(now.getFullYear(), now.getMonth() + i, 1);
     const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`; // local, not toISOString — UTC shifts the month
-    months.push({ key, label: m.toLocaleDateString("en-US", { month: "short", year: "numeric" }), items: scored.filter(a => a.renewalDate.slice(0, 7) === key) });
+    months.push({ key, label: m.toLocaleDateString("en-US", { month: "short", year: "numeric" }), items: scored.filter(a => a.renewalDate.slice(0, 7) === key).sort((a, b) => a.renewalDate.localeCompare(b.renewalDate)) });
   }
   // 90-day forecast by renewal stage (USD)
   const due90 = scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 90; });
