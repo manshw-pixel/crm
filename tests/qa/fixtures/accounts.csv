@@ -1,0 +1,16 @@
+name,tier,arr,currency,industry,csm,renewalDate,contractStatus,QA Tier
+QA {RUN} Acme Corp,Enterprise,1200000,INR,Manufacturing,{CSM},{D+10},Active,Gold
+QA {RUN} Birch Labs,Mid,800000,INR,Software,{CSM},{D+20},Active,Silver
+QA {RUN} Cedar Foods,Enterprise,2500000,INR,Food,{CSM},{D+30},Auto-renew,Gold
+QA {RUN} Delta Logistics,SMB,450000,INR,Logistics,{CSM},{D+40},Active,Silver
+QA {RUN} Eagle Steel,Enterprise,3000000,INR,Metals,{CSM},{D+50},Active,Gold
+QA {RUN} Falcon Retail,Mid,950000,INR,Retail,{CSM},{D+60},Churn risk,Silver
+QA {RUN} Granite Infra,Mid,600000,INR,Construction,{CSM},{D+70},Active,Silver
+QA {RUN} Harbor Pharma,Enterprise,1750000,INR,Pharma,{CSM},{D+80},Auto-renew,Gold
+QA {RUN} Iris Textiles,Mid,2200000,INR,Textiles,{CSM},{D+90},Active,Gold
+QA {RUN} Juniper Cloud,Mid,48000,USD,Software,{CSM},{D+15},Active,Silver
+QA {RUN} Kestrel Media,SMB,120000,USD,Media,{CSM},{D+45},Churn risk,Gold
+QA {RUN} Lumen Energy,Enterprise,75000,USD,Energy,{CSM},{D+75},Auto-renew,Gold
+QA {RUN} Maple Health,SMB,30000,USD,Healthcare,{CSM},{D+105},In negotiation,Silver
+QA {RUN} Nimbus Telecom,Enterprise,2400000,PHP,Telecom,{CSM},{D+25},Active,Gold
+QA {RUN} Orchid Bank,Mid,1100000,PHP,Finance,{CSM},{D+120},Active,Silver

@@ -1,0 +1,63 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const CSV = readFileSync(fileURLToPath(new URL("./fixtures/accounts.csv", import.meta.url)), "utf8");
+const pad = n => String(n).padStart(2, "0");
+// DD-MM-YYYY, the format the importer reads day-first (src/lib/csv.js:43-50). Built from local
+// calendar parts so no timezone shifts the day.
+const dmy = (from, n) => { const d = new Date(from.getFullYear(), from.getMonth(), from.getDate() + n); return `${pad(d.getDate())}-${pad(d.getMonth() + 1)}-${d.getFullYear()}`; };
+
+// {RUN} -> run id, {CSM} -> the CSM's name (the importer's "csm" column is free text matched
+// against team member names, src/17-csv.jsx:62), {D+n} -> a renewal date n days from `today`.
+export const fixtureCsv = (runId, owners, today = new Date()) =>
+  CSV.replaceAll("{RUN}", runId).replaceAll("{CSM}", owners.csm)
+    .replace(/\{D\+(\d+)\}/g, (_, n) => dmy(today, +n));
+
+export const staleAccountNames = (names, runId) =>
+  names.filter(n => n.startsWith("QA qa-") && !n.startsWith(`QA ${runId} `));
+
+// Upload through the real Import CSV flow. There is no confirm step: choosing the file imports it.
+//  - "Import CSV" button + hidden input: src/20-account-list.jsx:195-198 (accept=".csv,text/csv")
+//  - result: sr-only live region [data-live="import"], src/20-account-list.jsx:207-209, reads
+//    "Imported N new, updated M existing" or the error text. Must be on the Accounts view.
+export async function importCsv(page, csvText, filename = "qa.csv") {
+  const live = page.locator('[data-live="import"]');
+  // clear any previous message so we wait for THIS import's result (dismiss: 20-account-list.jsx:224)
+  const dismiss = page.getByRole("button", { name: "Dismiss import message" });
+  if (await dismiss.count()) await dismiss.click();
+  await page.locator('input[type="file"][accept*="csv"]').setInputFiles({ name: filename, mimeType: "text/csv", buffer: Buffer.from(csvText) });
+  await page.waitForFunction(() => (document.querySelector('[data-live="import"]')?.textContent || "").trim() !== "", null, { timeout: 20000 });
+  const msg = (await live.textContent()).trim();
+  const m = /^Imported (\d+) new, updated (\d+) existing/.exec(msg);
+  if (!m) throw new Error(`CSV import failed: ${msg}`);
+  return { ok: +m[1], updated: +m[2] };
+}
+
+// Deletes stale QA accounts through the list's bulk bar, then imports the fixture.
+//  - sidebar nav button: aria-label="Accounts" inside nav[aria-label="Main"], src/26-app.jsx:403-405
+//  - search box: placeholder "Search  ( / )", src/20-account-list.jsx:253
+//  - row: tr[data-account-row] (:301); its select checkbox has aria-label "Select <name>" (:303)
+//  - bulk bar [data-bulkbar] with a "Delete" button (:265,271); dialog asks to type DELETE
+//    (src/19-dialogs-bulk.jsx:166-170) and confirms with [data-bulk-confirm] (:174)
+//  - selection clears whenever a filter changes (:154), so tick everything AFTER the search settles.
+// Churned accounts are hidden by default (:126); the fixture has none, so they are not a concern.
+export async function resetQaOrg(ctx, runId) {
+  const { page, env } = ctx;
+  await page.locator('nav[aria-label="Main"] button[aria-label="Accounts"]').click();
+  await page.getByPlaceholder(/^Search/).fill("QA qa-");
+  await page.waitForTimeout(300); // let the filter + selection-reset effect settle
+  const labels = await page.locator('tr[data-account-row] input[type="checkbox"][aria-label^="Select "]')
+    .evaluateAll(els => els.map(e => e.getAttribute("aria-label")));
+  const stale = staleAccountNames(labels.map(l => l.replace(/^Select /, "")), runId);
+  if (stale.length) {
+    for (const n of stale) await page.getByRole("checkbox", { name: `Select ${n}`, exact: true }).check();
+    await page.locator("[data-bulkbar]").getByRole("button", { name: "Delete", exact: true }).click();
+    await page.getByLabel(/Type DELETE to confirm/).fill("DELETE");
+    await page.locator("[data-bulk-confirm]").click();
+    await page.locator("[data-bulkbar]").waitFor({ state: "detached", timeout: 15000 });
+  }
+  await page.getByPlaceholder(/^Search/).fill("");
+  const csm = ctx.csmName || env.users.csm.name || env.users.csm.email;
+  const r = await importCsv(page, fixtureCsv(runId, { csm }));
+  return { deleted: stale.length, imported: r.ok };
+}
