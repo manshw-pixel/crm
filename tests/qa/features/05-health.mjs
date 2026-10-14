@@ -104,15 +104,16 @@ export const scenarios = [
         return null;
       }, `QA ${runId} `);
       if (!target) throw new SkipScenario("no at-risk run account with a non-empty health playbook band");
-      // Fresh run accounts have no ♥ tasks; a retry finds the first attempt's (same-day ids are
-      // deduped by the backfill, so re-seeding adds none and the count below still holds).
-      if (target.existing && target.existing !== target.steps)
-        throw new Error(`${target.name} already has ${target.existing} ♥ tasks before seeding (expected 0 or ${target.steps})`);
+      // The import never seeds ♥ tasks: the band-crossing seeder initialises a new account
+      // silently (healthBand undefined -> set, no items, src/26-app.jsx:310-315), so a fresh run
+      // account has none. Any existing ones mean an earlier attempt seeded -> skip, which the
+      // runner records as a fail when that earlier attempt failed (core.mjs).
+      if (target.existing !== 0) throw new SkipScenario(`${target.name} already has ${target.existing} ♥ tasks before seeding`);
 
       await nav(page, "Settings").click();
       await page.getByRole("button", { name: "Seed playbooks now" }).click();
       await page.getByRole("button", { name: /^Confirm — seed \d+ accounts\?$/ }).click();
-      await page.getByText(/^(Seeded \d+ accounts \(\d+ tasks\)|Already up to date — nothing to seed)\.$/).waitFor({ timeout: 10000 });
+      await page.getByText(/^Seeded \d+ accounts \(\d+ tasks\)\.$/).waitFor({ timeout: 10000 });
       await waitForSaved(page);
 
       await nav(page, "Tasks").click();

@@ -33,6 +33,12 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
         break;
       } catch (err) {
         if (err instanceof GuardError) { err.results = results; throw err; }
+        if (err instanceof SkipScenario && lastErr) {
+          // A retry that skips must not hide attempt 1's failure (e.g. attempt 1 did the write).
+          lastErr = new Error(`${lastErr.message || lastErr} (skipped on retry after failure: ${err.message})`);
+          if (onFail) artifacts = await onFail(s, ctx, lastErr, attempt).catch(() => undefined);
+          break;
+        }
         if (err instanceof SkipScenario) {
           results.push({ id: s.id, feature: s.feature, title: s.title, status: "skipped", attempts: 1, ms: Date.now() - t0, reason: err.message });
           lastErr = null;

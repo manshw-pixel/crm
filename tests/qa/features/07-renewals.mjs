@@ -29,6 +29,19 @@ const dashTotal = async page => {
   return (await page.locator('[data-stat="Total ARR (USD)"] [data-stat-value]').textContent()).trim();
 };
 
+// Reactivate through the UI ("show churned" toggle, then the detail page's ↻ Reactivate) when
+// the account is churned in the app's state; a no-op otherwise.
+async function reactivateIfChurned(page, name) {
+  const churned = await page.evaluate(n => !!window.__store.getState().accounts.find(a => a.name === n)?.churn, name);
+  if (!churned) return;
+  await nav(page, "Accounts").click();
+  await page.getByLabel(/^show churned/).check(); // churned rows are hidden by default (src/20-account-list.jsx:259)
+  await page.getByPlaceholder(/^Search/).fill(name);
+  await page.locator("tr[data-account-row]").filter({ hasText: name }).first().click({ timeout: 15000 }); // name cell also holds a "churned" badge
+  await page.getByRole("button", { name: "↻ Reactivate" }).click();
+  await waitForSaved(page);
+}
+
 export const scenarios = [
   { id: `${F}/upcoming`, feature: F, title: "Renewals board lists this run's accounts by month, in date order", role: "admin",
     run: async ({ page, runId }) => {
@@ -77,37 +90,33 @@ export const scenarios = [
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
       const accts = await runAccounts(page, runId);
-      const pickName = ["Juniper Cloud", "Lumen Energy", "Kestrel Media"].find(c => accts.some(a => a.name === `QA ${runId} ${c}` && !a.churn));
-      if (!pickName) throw new SkipScenario("every USD run account is already churned");
+      const before = await exactTotalUSD(page);
+      // fmtMoney's step at this total ($X.XXM -> 10K, $NK -> 1K): the churned ARR must be at least
+      // one step, or the rounded display could legitimately stay the same.
+      const step = Math.round(before / 1e3) >= 1000 ? 1e4 : 1e3;
+      const pickName = ["Kestrel Media", "Lumen Energy", "Juniper Cloud", "Maple Health"]
+        .find(c => fixtureRow(c).arr >= step && accts.some(a => a.name === `QA ${runId} ${c}` && !a.churn));
+      if (!pickName) throw new SkipScenario(`no unchurned USD run account with ARR >= the $${step} display step`);
       const fx = fixtureRow(pickName), name = `QA ${runId} ${pickName}`;
       assert.equal(fx.currency, "USD");
       assert.equal(accts.find(a => a.name === name).arr, fx.arr, `${name}: stored ARR differs from the fixture`);
 
-      const before = await exactTotalUSD(page);
       const shownBefore = await dashTotal(page);
       assert.equal(shownBefore, await fmtMoneyIn(page, before, "USD"), "dashboard Total ARR before");
-
-      await openAccount(page, name);
-      await page.locator("[data-more-actions]").click();
-      await page.getByRole("menuitem", { name: "✖ Mark churned" }).click();
-      await page.getByRole("button", { name: /^Confirm churn/ }).click();
-      await waitForSaved(page);
       try {
+        await openAccount(page, name);
+        await page.locator("[data-more-actions]").click();
+        await page.getByRole("menuitem", { name: "✖ Mark churned" }).click();
+        await page.getByRole("button", { name: /^Confirm churn/ }).click();
+        await waitForSaved(page);
         const after = await exactTotalUSD(page);
         assert.equal(before - after, fx.arr, `exact ARR delta should be ${fx.arr} USD`);
         const shownAfter = await dashTotal(page);
         assert.equal(shownAfter, await fmtMoneyIn(page, before - fx.arr, "USD"), "dashboard Total ARR after churn");
         assert.notEqual(shownAfter, shownBefore, "dashboard Total ARR did not change");
       } finally {
-        // Reactivate: reset's stale-account sweep only sees the list's default (non-churned)
-        // rows (reset.mjs, src/20-account-list.jsx:126), so a churned run account would never
-        // be deleted by a later reset.
-        await nav(page, "Accounts").click();
-        await page.getByLabel(/^show churned/).check(); // churned rows are hidden by default (:260)
-        await page.getByPlaceholder(/^Search/).fill(name);
-        await page.locator("tr[data-account-row]").filter({ hasText: name }).first().click({ timeout: 15000 }); // name cell also holds a "churned" badge
-        await page.getByRole("button", { name: "↻ Reactivate" }).click();
-        await waitForSaved(page);
+        // Reactivate only if it is actually churned; cleanup errors never mask the original.
+        await reactivateIfChurned(page, name).catch(() => {});
       }
     } },
 ];

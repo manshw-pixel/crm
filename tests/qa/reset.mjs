@@ -70,10 +70,16 @@ export async function waitForSaved(page, timeoutMs = 60000) {
 //  - bulk bar [data-bulkbar] with a "Delete" button (:265,271); dialog asks to type DELETE
 //    (src/19-dialogs-bulk.jsx:166-170) and confirms with [data-bulk-confirm] (:174)
 //  - selection clears whenever a filter changes (:154), so tick everything AFTER the search settles.
-// Churned accounts are hidden by default (:126); the fixture has none, so they are not a concern.
+// Churned stale accounts are included via the "show churned" toggle (below).
 export async function resetQaOrg(ctx, runId) {
   const { page, env } = ctx;
   await page.locator('nav[aria-label="Main"] button[aria-label="Accounts"]').click();
+  // Churned rows are hidden by default (:126). The "show churned (N)" toggle only renders when
+  // the org has churned accounts (:259), so wait for the first fetch (sidebar drops " · loading…", src/26-app.jsx:411), then tick it if present --
+  // otherwise a churned stale QA account (07-renewals churns one) would never be swept.
+  await page.waitForFunction(() => /\d+ accounts/.test(document.querySelector('[data-live="results"]')?.textContent || "") && !document.body.innerText.includes("· loading…"), null, { timeout: 20000 });
+  const showChurned = page.getByLabel(/^show churned/);
+  if (await showChurned.count()) await showChurned.check();
   let deleted = 0;
   for (let pass = 0; ; pass++) {
     await page.getByPlaceholder(/^Search/).fill("QA qa-");

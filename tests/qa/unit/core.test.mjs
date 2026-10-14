@@ -79,3 +79,11 @@ test("SkipScenario thrown at runtime: skipped with its reason, one attempt, no o
   assert.equal(runs, 1); assert.equal(fails, 0); assert.equal(closes, 1);
   assert.equal(r[0].status, "skipped"); assert.equal(r[0].attempts, 1); assert.equal(r[0].reason, "no limit");
 });
+
+test("SkipScenario on retry after a failed attempt is a fail carrying attempt 1's error", async () => {
+  let n = 0;
+  const r = await runScenarios([{ id: "f/s", feature: "f", title: "t", run: async () => {
+    if (++n === 1) throw new Error("boom"); throw new SkipScenario("already seeded"); } }], ctx);
+  assert.equal(r.length, 1); assert.equal(r[0].status, "fail"); assert.equal(r[0].attempts, 2);
+  assert.match(r[0].error, /^boom \(skipped on retry after failure: already seeded\)$/);
+});

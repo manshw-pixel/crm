@@ -8,16 +8,17 @@ import { openTasks, taskTitles } from "./_tasks.mjs";
 const F = "06-tasks";
 const ACCT = runId => `QA ${runId} Birch Labs`; // CSM-owned fixture row
 
-// "+ Add task" on the account page (AddTaskForm, src/13-forms.jsx:162-197). The form's
-// owner <select> is the 4th control in its first row (title, due, priority, owner).
+// "+ Add task" on the account page (AddTaskForm, src/13-forms.jsx:162-197). The form has two
+// <select>s, priority then owner, so the owner is select #2. The owner list is checked before
+// anything is typed, so a missing owner skips with no UI write.
 async function addTask(page, acct, title, owner) {
   await openAccount(page, acct);
   await page.getByRole("button", { name: "+ Add task" }).click();
   const form = page.locator("form").filter({ has: page.getByPlaceholder("Task title…") });
-  await form.getByPlaceholder("Task title…").fill(title);
   const sel = form.locator("select").nth(1);
   const opts = await sel.locator("option").allTextContents();
   if (!opts.includes(owner)) throw new SkipScenario(`task owner "${owner}" is not offered in the owner list (${opts.join(", ")})`);
+  await form.getByPlaceholder("Task title…").fill(title);
   await sel.selectOption(owner);
   await form.getByRole("button", { name: "Add", exact: true }).click();
   await waitForSaved(page);
