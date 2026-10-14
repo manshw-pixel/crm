@@ -9,6 +9,7 @@ export const scenarios = [];
 export async function searchCount(page, q, timeoutMs = 15000) {
   await nav(page, "Accounts").click();
   const box = page.getByPlaceholder(/^Search/);
+  await box.waitFor({ timeout: 15000 });
   await box.fill(q);
   const read = () => page.evaluate(q => {
     const box = [...document.querySelectorAll("input")].find(i => /^Search/.test(i.placeholder || ""));
@@ -22,6 +23,9 @@ export async function searchCount(page, q, timeoutMs = 15000) {
   let prev = await read();
   while (Date.now() < until) {
     await page.waitForTimeout(300);
+    // The nav click resets the list's filters (src/26-app.jsx resetAccounts); if that reset
+    // lands after our fill, the box is cleared -- type the query again rather than wait forever.
+    if ((await box.inputValue()) !== q) { await box.fill(q); prev = null; continue; }
     const cur = await read();
     if (cur != null && cur === prev) return cur;
     prev = cur;
