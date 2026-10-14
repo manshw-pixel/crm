@@ -26,7 +26,7 @@ export const scenarios = [
   // USER DECISION: these scenarios must NEVER create a real user. They submit only when the submit
   // is provably rejected: client-side validation, or the org already full by its own user list.
   { id: `${F}/add-user-validation`, feature: F, title: "Add user rejects a missing name and a short password", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       // Backstop: no sign-up request may leave this page, whatever the app decides.
       await page.route("**/auth/v1/signup**", r => r.abort());
       await openUsersCard(page);
@@ -44,7 +44,7 @@ export const scenarios = [
     } },
 
   { id: `${F}/add-user-limit`, feature: F, title: "Add user is refused with the plan message when the org is full", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, thisRunId: runId }) => {
       await page.route("**/auth/v1/signup**", r => r.abort());
       await openUsersCard(page);
       // Enabled rows in the admin's list are a LOWER bound on seats (open invites also count;

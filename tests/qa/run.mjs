@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { loadQaEnv } from "./env.mjs";
-import { makeRunId, runScenarios, summarise, GuardError, redact, skipReason, latestSeedRunId } from "./core.mjs";
+import { makeRunId, runScenarios, summarise, GuardError, redact, skipReason, latestSeedRunId, redactResult } from "./core.mjs";
 import { parseLiveVersion, checkVersion } from "./guard.mjs";
 import { signIn } from "./session.mjs";
 import { resetQaOrg } from "./reset.mjs";
@@ -109,7 +109,7 @@ try {
   console.error(clean(notes.at(-1)));
 } finally { await browser?.close().catch(() => {}); }
 
-for (const r of results) if (r.error) r.error = clean(r.error);
+for (const r of results) redactResult(r, clean);
 const summary = summarise(results);
 // seedRunId is recorded only once a reset actually ran (and finished), so a guard abort or a
 // failed reset is never reused by a later --skip-reset.

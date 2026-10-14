@@ -105,3 +105,11 @@ test("latestSeedRunId: newest entry that seeded; null when none did", async () =
   assert.equal(latestSeedRunId([{ runId: "x" }]), null);
   assert.equal(latestSeedRunId(undefined), null);
 });
+
+test("redactResult scrubs error, errors[] and reason", async () => {
+  const { redactResult, redact } = await import("../core.mjs");
+  const env = { users: { admin: { pass: "s3cret!" } } };
+  const r = redactResult({ error: "x s3cret!", errors: ["a s3cret!", "b"], reason: "r s3cret!" }, t => redact(t, env));
+  assert.ok(!JSON.stringify(r).includes("s3cret!"));
+  assert.deepEqual(r.errors, ["a [redacted]", "b"]);
+});

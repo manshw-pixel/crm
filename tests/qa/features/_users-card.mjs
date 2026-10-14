@@ -7,8 +7,16 @@ export const nav = (page, name) => page.locator(`${MAIN} button[aria-label="${na
 
 export async function openUsersCard(page) {
   await nav(page, "Settings").click();
-  // Card title "Users (N)"; the list loads from admin_user_list after mount.
-  await page.getByText(/^Users \(\d+\)$/).first().waitFor({ timeout: 15000 });
+  // Card title "Users (N)" renders as "Users (0)" BEFORE admin_user_list returns (useState([]),
+  // :339-345), so waiting for any count let callers read an empty list. Wait for a non-zero title
+  // whose N equals the rendered rows (the signed-in admin is always listed). Returns N.
+  await page.getByText(/^Users \([1-9]\d*\)$/).first().waitFor({ timeout: 15000 });
+  const h = await page.waitForFunction(() => {
+    const t = [...document.querySelectorAll("*")].find(e => e.children.length === 0 && /^Users \(\d+\)$/.test(e.textContent.trim()));
+    const n = t ? +/\d+/.exec(t.textContent)[0] : -1;
+    return n > 0 && document.querySelectorAll("div[data-user-id]").length === n ? n : null;
+  }, null, { timeout: 15000, polling: 250 });
+  return h.jsonValue();
 }
 
 // The user's row: div[data-user-id] whose email line equals `email` (:443-453).

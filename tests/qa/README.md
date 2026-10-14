@@ -10,6 +10,7 @@ It never touches the database directly and never changes `src/`.
 3. Copy `.env.qa.example` to `.env.qa` and fill in `QA_BASE_URL`, `QA_ORG_NAME=Crm` and each
    `QA_<ROLE>_EMAIL` / `QA_<ROLE>_PASS`. `.env.qa` is git-ignored; never commit it.
    `QA_ENV_FILE=<path>` points the runner at a different env file.
+   It only selects which file is read: the org guard still compares the signed-in org to that file's `QA_ORG_NAME`.
 4. Optional, to un-skip the invoice scenarios: as the QA admin add an INR billing entity (country IN,
    Default tax % 18) in Settings -> Billing entities.
 

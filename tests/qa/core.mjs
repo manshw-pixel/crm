@@ -82,3 +82,11 @@ export function redact(text, env) {
 // --skip-reset reuses the accounts of the most recent run that DID reset (its seedRunId).
 // Older history entries without seedRunId are not trusted.
 export const latestSeedRunId = history => [...(history || [])].reverse().find(h => h?.seedRunId)?.seedRunId ?? null;
+
+// Every free-text field of a result that can carry app/console text goes through redact before it is written.
+export function redactResult(r, clean) {
+  if (r.error) r.error = clean(r.error);
+  if (r.errors) r.errors = r.errors.map(clean);
+  if (r.reason) r.reason = clean(r.reason);
+  return r;
+}

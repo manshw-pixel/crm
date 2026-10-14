@@ -48,7 +48,7 @@ export const scenarios = [
   // The fixture accounts have no activities and default inputs, so they start Yellow (58 under
   // the default weights) with recency 0.
   { id: `${F}/touchpoint-moves-score`, feature: F, title: "Logging a call raises an at-risk account's health score", role: "admin",
-    run: async ({ page, runId }) => {
+    run: async ({ page, runId, thisRunId = runId }) => {
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
       const pick = await page.evaluate(p => {
@@ -71,7 +71,7 @@ export const scenarios = [
       const before = await detailScore(page, t.name);
       assert.equal(+before, t.before, "UI score before differs from the app's own healthScore");
       await page.getByRole("button", { name: "+ Log activity" }).click();
-      await page.getByPlaceholder("Summary…").fill(`QA ${runId} health call`);
+      await page.getByPlaceholder("Summary…").fill(`QA ${thisRunId} health call`);
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
       await page.reload();
