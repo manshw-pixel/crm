@@ -11,7 +11,7 @@ const dmy = (from, n) => { const d = new Date(from.getFullYear(), from.getMonth(
 // {RUN} -> run id, {CSM} -> the CSM's name (the importer's "csm" column is free text matched
 // against team member names, src/17-csv.jsx:62), {D+n} -> a renewal date n days from `today`.
 export const fixtureCsv = (runId, owners, today = new Date()) =>
-  CSV.replaceAll("{RUN}", runId).replaceAll("{CSM}", owners.csm)
+  CSV.replaceAll("{RUN}", runId).replaceAll("{CSM}", owners.csm).replaceAll("{ADMIN}", owners.admin)
     .replace(/\{D\+(\d+)\}/g, (_, n) => dmy(today, +n));
 
 export const staleAccountNames = (names, runId) =>
@@ -86,7 +86,7 @@ export async function resetQaOrg(ctx, runId) {
   }
   await page.getByPlaceholder(/^Search/).fill("");
   const csm = ctx.csmName || env.users.csm.name || env.users.csm.email;
-  const r = await importCsv(page, fixtureCsv(runId, { csm }));
+  const r = await importCsv(page, fixtureCsv(runId, { csm, admin: ctx.adminName }));
   await waitForSaved(page);
   if (r.ok + r.updated !== EXPECTED.accounts)
     throw new Error(`reset: expected ${EXPECTED.accounts} accounts imported, got ${r.ok} new + ${r.updated} updated${r.warnings.length ? `; warnings: ${r.warnings.join(" | ")}` : ""}`);

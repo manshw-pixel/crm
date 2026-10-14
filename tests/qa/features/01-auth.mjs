@@ -8,6 +8,17 @@ const SIGNIN_ERR = "form .bg-rose-50.text-rose-600";
 // The disabled gate, src/26-app.jsx:574-580.
 const REMOVED = "Your access has been removed.";
 
+// Re-enable can take a moment to reach RLS: retry the fresh sign-in until the main nav shows (~20s).
+async function leadCanSignIn(browser, env, lead) {
+  const until = Date.now() + 20000;
+  for (;;) {
+    const s = await rawSignIn(browser, env, lead.email, lead.pass);
+    try { await s.page.locator(MAIN).waitFor({ timeout: 8000 }); return; }
+    catch (e) { if (Date.now() > until) throw e; }
+    finally { await s.close(); }
+  }
+}
+
 export const scenarios = [
   { id: `${F}/admin-sign-in`, feature: F, title: "Admin signs in and sees the Dashboard nav", role: "admin",
     run: async ({ page }) => { await nav(page, "Dashboard").waitFor({ timeout: 15000 }); } },
@@ -48,12 +59,18 @@ export const scenarios = [
       } catch (e) { primary = e; }
       // Restore, always. Failing to restore outranks any primary failure.
       try {
-        const enable = row.locator("[data-user-enable-btn]");
-        if (await enable.count()) await enable.click();
-        await row.locator("[data-user-disable-btn]").waitFor({ timeout: 15000 });
-        const s = await rawSignIn(context.browser(), env, lead.email, lead.pass);
-        try { await s.page.locator(MAIN).waitFor({ timeout: 20000 }); }
-        finally { await s.close(); }
+        const badge = row.locator("[data-user-disabled-badge]"), enable = row.locator("[data-user-enable-btn]");
+        const disable = row.locator("[data-user-disable-btn]");
+        // The disable may still be landing (or never have happened): settle on one state first.
+        await badge.or(enable).or(disable).first().waitFor({ timeout: 15000 });
+        await page.waitForTimeout(500);
+        if (await badge.count() || await enable.count()) {
+          await enable.waitFor({ timeout: 15000 });
+          await enable.click();
+        }
+        await badge.waitFor({ state: "detached", timeout: 15000 });
+        await disable.waitFor({ timeout: 15000 });
+        await leadCanSignIn(context.browser(), env, lead);
       } catch (e) {
         throw new Error(`QA Lead left DISABLED — re-enable in Settings > Users (${e.message})`);
       }

@@ -13,4 +13,4 @@ QA {RUN} Kestrel Media,SMB,120000,USD,Media,{CSM},{D+45},Churn risk,Gold
 QA {RUN} Lumen Energy,Enterprise,75000,USD,Energy,{CSM},{D+75},Auto-renew,Gold
 QA {RUN} Maple Health,SMB,30000,USD,Healthcare,{CSM},{D+105},In negotiation,Silver
 QA {RUN} Nimbus Telecom,Enterprise,2400000,PHP,Telecom,{CSM},{D+25},Active,Gold
-QA {RUN} Orchid Bank,Mid,1100000,PHP,Finance,{CSM},{D+120},Active,Silver
+QA {RUN} Orchid Bank,Mid,1100000,PHP,Finance,{ADMIN},{D+120},Active,Silver

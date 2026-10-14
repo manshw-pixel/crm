@@ -1,8 +1,9 @@
-// Shared helpers for Settings > Users (UsersCard, src/25-auth-admin.jsx:338-472). Not a feature
-// file: it exports no `scenarios`, and run.mjs flatMaps m.scenarios (undefined is dropped below).
+// Shared helpers for Settings > Users (UsersCard, src/25-auth-admin.jsx:338-472). Not a feature:
+// its `scenarios` is empty so run.mjs can load it like any other file.
 export const scenarios = [];
 
-export const nav = (page, name) => page.locator(`nav[aria-label="Main"] button[aria-label="${name}"]`);
+export const MAIN = 'nav[aria-label="Main"]';
+export const nav = (page, name) => page.locator(`${MAIN} button[aria-label="${name}"]`);
 
 export async function openUsersCard(page) {
   await nav(page, "Settings").click();
@@ -17,10 +18,12 @@ export const userRow = (page, email) =>
 // Raw sign-in in a fresh context, WITHOUT the org guard (a disabled user's RLS returns no org).
 export async function rawSignIn(browser, env, email, pass) {
   const context = await browser.newContext();
-  const page = await context.newPage();
-  await page.goto(env.baseUrl);
-  await page.fill('input[type="email"]', email);
-  await page.fill('input[type="password"]', pass);
-  await page.getByRole("button", { name: /sign in/i }).click();
-  return { context, page, close: () => context.close() };
+  try {
+    const page = await context.newPage();
+    await page.goto(env.baseUrl);
+    await page.fill('input[type="email"]', email);
+    await page.fill('input[type="password"]', pass);
+    await page.getByRole("button", { name: /sign in/i }).click();
+    return { context, page, close: () => context.close() };
+  } catch (e) { await context.close().catch(() => {}); throw e; }
 }

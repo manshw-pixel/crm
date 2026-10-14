@@ -58,16 +58,16 @@ if (existsSync(dir)) { console.error(`out/${runId}/ already exists (run started 
 const shots = new URL("shots/", dir);
 mkdirSync(shots, { recursive: true });
 
-// The QA CSM's display name: the fixture's csm column is matched against team-member NAMES.
+// The QA CSM's and admin's display names: the fixture's csm column is matched against team-member NAMES.
 // Read from the sign-out button's title "Sign out (<user.name>)" (src/26-app.jsx), which is
 // rendered for every role and in both collapsed and expanded sidebar states, unlike the name
-// div which is hidden when collapsed. Signing in as the CSM also proves that user works.
-async function readCsmName(browser) {
-  const csm = await signIn(browser, env, "csm");
+// div which is hidden when collapsed. Signing in also proves each user works.
+async function readDisplayName(browser, role) {
+  const csm = await signIn(browser, env, role);
   try {
     const t = await csm.page.locator('button[title^="Sign out ("]').first().getAttribute("title", { timeout: 15000 });
     const name = /^Sign out \((.*)\)$/.exec(t || "")?.[1]?.trim();
-    if (!name) throw new Error("could not read the QA CSM's display name from the sidebar");
+    if (!name) throw new Error(`could not read the QA ${role}'s display name from the sidebar`);
     return name;
   } finally { await csm.close(); }
 }
@@ -75,17 +75,18 @@ async function readCsmName(browser) {
 let code = 0, results = [], browser;
 try {
   browser = await chromium.launch({ channel: process.env.CRM_TEST_CHANNEL ?? "msedge" });
-  const csmName = await readCsmName(browser);
+  const csmName = await readDisplayName(browser, "csm");
+  const adminName = await readDisplayName(browser, "admin");
   if (!skipReset) {
     const admin = await signIn(browser, env, "admin");
     try {
-      const r = await resetQaOrg({ ...admin, runId, csmName }, runId);
+      const r = await resetQaOrg({ ...admin, runId, csmName, adminName }, runId);
       notes.push(`reset: deleted ${r.deleted} stale QA accounts, imported ${r.imported}, updated ${r.updated}`);
       for (const w of r.warnings || []) notes.push(`import warning: ${w}`);
     } finally { await admin.close(); }
   }
   results = await runScenarios(scenarios,
-    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId, csmName }),
+    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId, csmName, adminName }),
     { skip: s => skipReason(s, env),
       onFail: async (s, ctx) => {
         if (!ctx?.page) return undefined;
@@ -100,7 +101,6 @@ try {
   console.error(clean(notes.at(-1)));
 } finally { await browser?.close().catch(() => {}); }
 
-notes.push("Add-user scenario leaves one unconfirmed sign-up per run (manshw+qa-<runId>@gmail.com).");
 for (const r of results) if (r.error) r.error = clean(r.error);
 const summary = summarise(results);
 const out = { runId, startedAt, finishedAt: new Date().toISOString(), liveVersion, masterVersion, feature, summary, results, notes: notes.map(clean) };

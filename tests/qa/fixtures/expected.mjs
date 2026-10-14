@@ -8,4 +8,7 @@ export const EXPECTED = {
   countByCurrency: { INR: 9, USD: 4, PHP: 2 },
   countByStatus: { "Active": 9, "Auto-renew": 3, "Churn risk": 2, "In negotiation": 1 },
   customFieldLabel: "QA Tier",
+  // One row (Orchid Bank) is owned by the QA admin so "My book" scoping is observable.
+  countByOwner: { csm: 14, admin: 1 },
+  adminOwned: "Orchid Bank",
 };

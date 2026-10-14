@@ -6,13 +6,13 @@ import { parseCSV, parseCsvNumber, parseCsvDate, csvDateOrder } from "../../../s
 import { CURRENCIES } from "../../../src/lib/money.js";
 
 const RUN = "qa-20261014-1530";
-const csv = fixtureCsv(RUN, { csm: "QA CSM" }, new Date(2026, 9, 14));
+const csv = fixtureCsv(RUN, { csm: "QA CSM", admin: "QA Admin" }, new Date(2026, 9, 14));
 
 test("fixture is stamped with the run id and matches EXPECTED", () => {
   const rows = csv.trim().split(/\r?\n/).slice(1);
   assert.equal(rows.length, EXPECTED.accounts);
   assert.ok(rows.every(r => r.includes(`QA ${RUN} `)));
-  assert.ok(!/\{(RUN|CSM|D\+\d+)\}/.test(csv));
+  assert.ok(!/\{(RUN|CSM|ADMIN|D\+\d+)\}/.test(csv));
   assert.ok(!csv.includes("{AM}"));
 });
 
@@ -41,6 +41,10 @@ test("EXPECTED is recomputed from the CSV the importer would parse", () => {
   assert.deepEqual(counts, EXPECTED.countByCurrency);
   assert.deepEqual(statuses, EXPECTED.countByStatus);
   assert.ok(!("Churned" in statuses), "the importer skips Churned rows");
+  const owners = { csm: 0, admin: 0 };
+  for (const r of data) owners[{ "QA CSM": "csm", "QA Admin": "admin" }[r[idx("csm")]]]++;
+  assert.deepEqual(owners, EXPECTED.countByOwner);
+  assert.equal(data.find(r => r[idx("csm")] === "QA Admin")[0], `QA ${RUN} ${EXPECTED.adminOwned}`);
 });
 
 test("renewal dates are DD-MM-YYYY, within the next 120 days", () => {
