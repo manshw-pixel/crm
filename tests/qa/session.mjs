@@ -1,4 +1,4 @@
-import { parseOrgName, assertQaOrg } from "./guard.mjs";
+import { orgNameFromRows, assertQaOrg } from "./guard.mjs";
 import { GuardError } from "./core.mjs";
 
 export async function signIn(browser, env, role, { viewport } = {}) {
@@ -18,21 +18,28 @@ export async function signIn(browser, env, role, { viewport } = {}) {
   } catch (e) { await close(); throw e; }
 }
 
-// Polls the sidebar for up to 15s; a name still "…" at the end is a guard failure, not a pass.
-// Scoped to [data-current-org] (src/26-app.jsx) so no other "· " text on the page can match.
+// Polls up to 15s for the user's org name. The sidebar badge is platform-admin only, so we ask the
+// app's own Supabase client (`sb`, src/00-core-config.jsx) instead: RLS orgs_select returns exactly
+// the signed-in user's own org for non-platform users. Still null at the end is a guard failure.
 async function waitForOrgName(page) {
   const until = Date.now() + 15000;
   while (Date.now() < until) {
-    const text = await page.locator("[data-current-org]").first().textContent({ timeout: 2000 }).catch(() => "");
-    const name = parseOrgName(text || "");
-    if (name) return name;
+    try {
+      const rows = await page.evaluate(async () => {
+        const { data, error } = await sb.from("orgs").select("name");
+        return error ? null : data;
+      });
+      const name = orgNameFromRows(rows);
+      if (name) return name;
+    } catch { /* sb not ready yet: keep polling */ }
     await page.waitForTimeout(500);
   }
   return null;
 }
 
+// The sidebar button reads "Sign out", or "⎋" with title "Sign out (name)" when collapsed.
 export async function signOut(page) {
-  await page.getByRole("button", { name: /^sign out$/i }).first().click();
+  await page.locator('button[title^="Sign out"], button:has-text("Sign out")').first().click();
 }
 
 export { GuardError };

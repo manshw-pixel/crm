@@ -2,11 +2,13 @@
 // anything other than an exact, loaded org name is a GuardError, which stops the run.
 import { GuardError } from "./core.mjs";
 
-export function parseOrgName(text) {
-  const i = text.lastIndexOf("· ");
-  if (i < 0) return null;
-  const name = text.slice(i + 2).trim();
-  return !name || name === "…" ? null : name;
+// rows = result of select("name") on orgs as the signed-in user. RLS returns only the user's own
+// org for non-platform users, so exactly one row is the only trustworthy answer; zero, several
+// (a platform admin sees every org) or an error all fail closed.
+export function orgNameFromRows(rows) {
+  if (!Array.isArray(rows) || rows.length !== 1) return null;
+  const n = rows[0]?.name;
+  return typeof n === "string" && n ? n : null;
 }
 
 export function assertQaOrg(actual, expected) {
