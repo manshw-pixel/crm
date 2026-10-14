@@ -44,6 +44,18 @@ export async function importCsv(page, csvText, filename = "qa.csv") {
   return r;
 }
 
+// The banner and the bulk bar update from LOCAL state; the rows reach the server later through
+// the app's serial write queue (src/lib/write-queue.js, global `writeQueue`, src/06-write-queue.jsx).
+// Closing the context before it drains silently drops the writes -- the first live run "imported
+// 15" and persisted none -- so wait for pending === 0, and fail on the queue's "error" (gave up).
+export async function waitForSaved(page, timeoutMs = 60000) {
+  const h = await page.waitForFunction(() => {
+    const s = writeQueue.queueState();
+    return s.status === "error" ? "error" : s.pending === 0 && s.status === "saved" ? "saved" : false;
+  }, null, { timeout: timeoutMs, polling: 250 });
+  if (await h.jsonValue() === "error") throw new Error("reset: the app's write queue gave up (\"Not saved\"); changes were rolled back");
+}
+
 // Deletes stale QA accounts through the list's bulk bar, then imports the fixture.
 //  - sidebar nav button: aria-label="Accounts" inside nav[aria-label="Main"], src/26-app.jsx:403-405
 //  - search box: placeholder "Search  ( / )", src/20-account-list.jsx:253
@@ -69,11 +81,13 @@ export async function resetQaOrg(ctx, runId) {
     await page.getByLabel(/Type DELETE to confirm/).fill("DELETE");
     await page.locator("[data-bulk-confirm]").click();
     await page.locator("[data-bulkbar]").waitFor({ state: "detached", timeout: 15000 });
+    await waitForSaved(page);
     deleted += stale.length;
   }
   await page.getByPlaceholder(/^Search/).fill("");
   const csm = ctx.csmName || env.users.csm.name || env.users.csm.email;
   const r = await importCsv(page, fixtureCsv(runId, { csm }));
+  await waitForSaved(page);
   if (r.ok + r.updated !== EXPECTED.accounts)
     throw new Error(`reset: expected ${EXPECTED.accounts} accounts imported, got ${r.ok} new + ${r.updated} updated${r.warnings.length ? `; warnings: ${r.warnings.join(" | ")}` : ""}`);
   return { deleted, imported: r.ok, updated: r.updated, warnings: r.warnings };
