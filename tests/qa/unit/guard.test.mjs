@@ -29,3 +29,15 @@ test("version parse and compare", () => {
   assert.equal(r.ok, false);
   assert.match(r.message, /live is aaaaaaa, master is cbadbda/);
 });
+
+test("checkVersion: unknown live is never ok, even if master is also unknown", () => {
+  assert.equal(checkVersion(null, "cbadbda").ok, false);
+  assert.equal(checkVersion(undefined, "cbadbda").ok, false);
+  assert.equal(checkVersion(null, null).ok, false);
+});
+
+test("assertQaOrg: empty expected name throws GuardError", () => {
+  assert.throws(() => assertQaOrg("", ""), GuardError);
+  assert.throws(() => assertQaOrg(undefined, undefined), GuardError);
+  assert.throws(() => assertQaOrg("CRM", ""), GuardError);
+});

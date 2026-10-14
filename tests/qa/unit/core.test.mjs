@@ -53,3 +53,13 @@ test("skip: non-null reason records skipped without calling makeCtx or run", asy
   assert.equal(s.total, 2);
   assert.deepEqual(s.byFeature["01-x"], { pass: 1, fail: 0, flaky: 0, skipped: 1 });
 });
+
+test("GuardError carries the results gathered so far", async () => {
+  const err = await runScenarios([
+    sc("first", async () => {}),
+    sc("g", async () => { throw new GuardError("wrong org"); }),
+  ], ctx).catch(e => e);
+  assert.ok(err instanceof GuardError);
+  assert.equal(err.results.length, 1);
+  assert.equal(err.results[0].status, "pass");
+});

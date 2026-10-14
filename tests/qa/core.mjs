@@ -25,7 +25,7 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
         lastErr = null;
         break;
       } catch (err) {
-        if (err instanceof GuardError) throw err;
+        if (err instanceof GuardError) { err.results = results; throw err; }
         lastErr = err;
         if (attempt === 2 && onFail) artifacts = await onFail(s, ctx, err, attempt).catch(() => undefined);
       } finally {

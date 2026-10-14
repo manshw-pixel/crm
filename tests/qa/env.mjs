@@ -1,6 +1,9 @@
 // Loads the QA agent's credentials. These are real logins for the live site, so this
 // module is the only place that reads them and nothing downstream may log them.
 import { readFileSync, existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+const DEFAULT_PATH = fileURLToPath(new URL("../../.env.qa", import.meta.url));
 
 const REQUIRED_ROLES = ["admin", "csm", "lead"];
 const key = (r, f) => `QA_${r.toUpperCase()}_${f}`;
@@ -28,7 +31,7 @@ export function validateEnv(e) {
   return { baseUrl: e.QA_BASE_URL, orgName: e.QA_ORG_NAME, users };
 }
 
-export function loadQaEnv(path = ".env.qa") {
+export function loadQaEnv(path = DEFAULT_PATH) {
   if (!existsSync(path)) throw new Error(`${path} not found -- copy .env.qa.example and fill in the QA logins`);
   return validateEnv(parseEnv(readFileSync(path, "utf8")));
 }

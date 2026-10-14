@@ -12,11 +12,12 @@ export function orgNameFromRows(rows) {
 }
 
 export function assertQaOrg(actual, expected) {
+  if (typeof expected !== "string" || !expected) throw new GuardError("org guard: no expected org name configured (QA_ORG_NAME). Run aborted before any change.");
   if (actual !== expected) throw new GuardError(`org guard: signed in to "${actual ?? "(not loaded)"}", expected "${expected}". Run aborted before any change.`);
 }
 
 export const parseLiveVersion = html => html.match(/const APP_VERSION = "([0-9a-f]{7,40})"/)?.[1] ?? null;
 
-export const checkVersion = (live, master) => live === master
+export const checkVersion = (live, master) => live && live === master
   ? { ok: true, message: `live build ${live} matches master` }
   : { ok: false, message: `live is ${live ?? "unknown"}, master is ${master}: wait for the Pages deploy to finish, then re-run` };
