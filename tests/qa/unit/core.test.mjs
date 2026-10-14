@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { makeRunId, runScenarios, summarise, GuardError } from "../core.mjs";
+import { makeRunId, runScenarios, summarise, GuardError, skipReason } from "../core.mjs";
 
 const ctx = async () => ({});
 const sc = (id, run) => ({ id: `01-x/${id}`, feature: "01-x", title: id, run });
@@ -62,4 +62,12 @@ test("GuardError carries the results gathered so far", async () => {
   assert.ok(err instanceof GuardError);
   assert.equal(err.results.length, 1);
   assert.equal(err.results[0].status, "pass");
+});
+
+test("skipReason: scenario's own skip wins, else the AM rule", () => {
+  const noAm = { users: { am: null } }, withAm = { users: { am: { email: "x" } } };
+  assert.equal(skipReason({ role: "admin", skip: "platform only" }, withAm), "platform only");
+  assert.equal(skipReason({ role: "am" }, noAm), "no AM user configured");
+  assert.equal(skipReason({ role: "am" }, withAm), null);
+  assert.equal(skipReason({ role: "admin" }, noAm), null);
 });

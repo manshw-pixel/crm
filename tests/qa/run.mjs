@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 import { loadQaEnv } from "./env.mjs";
-import { makeRunId, runScenarios, summarise, GuardError, redact } from "./core.mjs";
+import { makeRunId, runScenarios, summarise, GuardError, redact, skipReason } from "./core.mjs";
 import { parseLiveVersion, checkVersion } from "./guard.mjs";
 import { signIn } from "./session.mjs";
 import { resetQaOrg } from "./reset.mjs";
@@ -86,7 +86,7 @@ try {
   }
   results = await runScenarios(scenarios,
     async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId, csmName }),
-    { skip: s => (s.role === "am" && !env.users.am) ? "no AM user configured" : null,
+    { skip: s => skipReason(s, env),
       onFail: async (s, ctx) => {
         if (!ctx?.page) return undefined;
         const file = `${s.id.replaceAll("/", "__")}.png`;
@@ -100,7 +100,7 @@ try {
   console.error(clean(notes.at(-1)));
 } finally { await browser?.close().catch(() => {}); }
 
-notes.push("Add-user scenario leaves one unconfirmed sign-up per run (qa+<runId>@mail.onevio.in).");
+notes.push("Add-user scenario leaves one unconfirmed sign-up per run (manshw+qa-<runId>@gmail.com).");
 for (const r of results) if (r.error) r.error = clean(r.error);
 const summary = summarise(results);
 const out = { runId, startedAt, finishedAt: new Date().toISOString(), liveVersion, masterVersion, feature, summary, results, notes: notes.map(clean) };

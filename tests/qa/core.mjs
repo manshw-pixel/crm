@@ -6,6 +6,9 @@ const pad = n => String(n).padStart(2, "0");
 export const makeRunId = (d = new Date()) =>
   `qa-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 
+// A scenario's own `skip` reason wins; otherwise AM scenarios skip when no AM user is configured.
+export const skipReason = (s, env) => s.skip ?? ((s.role === "am" && !env.users.am) ? "no AM user configured" : null);
+
 export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
   const results = [];
   for (const s of scenarios) {
