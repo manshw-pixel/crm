@@ -226,10 +226,10 @@ begin
   return removed;
 end $$;
 
-revoke execute on function public.approve_po(uuid, numeric[], boolean) from public;
-revoke execute on function public.reject_po(uuid, text) from public;
-revoke execute on function public.cancel_po(uuid) from public;
-revoke execute on function public.po_schedule_rows(purchase_orders) from public;
+revoke execute on function public.approve_po(uuid, numeric[], boolean) from public, anon;
+revoke execute on function public.reject_po(uuid, text) from public, anon;
+revoke execute on function public.cancel_po(uuid) from public, anon;
+revoke execute on function public.po_schedule_rows(purchase_orders) from public, anon;
 grant execute on function public.approve_po(uuid, numeric[], boolean) to authenticated;
 grant execute on function public.reject_po(uuid, text) to authenticated;
 grant execute on function public.cancel_po(uuid) to authenticated;
@@ -338,9 +338,9 @@ begin
   if not found then raise exception 'invoice not found'; end if;
 end $$;
 
-revoke execute on function public.create_invoice(jsonb) from public;
-revoke execute on function public.set_invoice_status(uuid, text, date, text, text) from public;
-revoke execute on function public.attach_invoice_pdf(uuid, text) from public;
+revoke execute on function public.create_invoice(jsonb) from public, anon;
+revoke execute on function public.set_invoice_status(uuid, text, date, text, text) from public, anon;
+revoke execute on function public.attach_invoice_pdf(uuid, text) from public, anon;
 revoke execute on function public.is_finance() from public, anon;
 grant execute on function public.create_invoice(jsonb) to authenticated;
 grant execute on function public.set_invoice_status(uuid, text, date, text, text) to authenticated;
@@ -385,7 +385,7 @@ begin
   update invoices set sent_at = now(), sent_by = auth.uid() where id = inv.id returning * into inv;
   return inv;
 end $$;
-revoke execute on function public.send_invoice(uuid, text) from public;
+revoke execute on function public.send_invoice(uuid, text) from public, anon;
 grant execute on function public.send_invoice(uuid, text) to authenticated;
 
 -- ---------- storage ----------
