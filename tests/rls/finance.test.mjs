@@ -349,3 +349,21 @@ test("po: cancel removes only un-raised items and keeps invoices", async () => {
   assert.equal(r.data, 8 - left[0].raised);
   assert.equal((await sql("select count(*)::int n from invoices where po_id = $1", [poId]))[0].n, before[0].n);
 });
+
+// The privilege itself, not a refused call: is_finance() already refuses anon, so a failed
+// rpc would pass with or without the revoke. Supabase grants anon EXECUTE directly, which
+// `revoke ... from public` does not touch -- hence `from public, anon` in finance.sql.
+test("finance: anon holds no EXECUTE on finance RPCs; authenticated still does", async () => {
+  const fns = ["public.approve_po(uuid, numeric[], boolean)", "public.reject_po(uuid, text)", "public.cancel_po(uuid)",
+    "public.po_schedule_rows(purchase_orders)", "public.create_invoice(jsonb)",
+    "public.set_invoice_status(uuid, text, date, text, text)", "public.attach_invoice_pdf(uuid, text)",
+    "public.send_invoice(uuid, text)"];
+  for (const f of fns) {
+    const [r] = await sql("select has_function_privilege('anon', $1, 'execute') a, has_function_privilege('authenticated', $1, 'execute') u", [f]);
+    assert.equal(r.a, false, `anon must not execute ${f}`);
+    assert.equal(r.u, true, `authenticated must still execute ${f}`);
+  }
+  // Control: the check can see a real anon grant, so false above is not vacuous.
+  const [c] = await sql("select has_function_privilege('anon', 'public.submit_demo_request(text, text, text, text, text, text, text)', 'execute') a");
+  assert.equal(c.a, true);
+});
