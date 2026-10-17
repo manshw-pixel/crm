@@ -2,6 +2,11 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="referrer" content="strict-origin-when-cross-origin" />
+<!-- Frame guard: GitHub Pages cannot send X-Frame-Options or CSP frame-ancestors, and a meta
+     CSP ignores frame-ancestors. So if another site frames the CRM (clickjacking), hide the
+     page, try to break out, and stop loading before the app boots. -->
+<script>if(window.self!==window.top){document.documentElement.style.display="none";try{window.top.location.replace(window.self.location.href)}catch(e){}if(window.stop)window.stop();}</script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <meta name="theme-color" content="#f6f8fb" />
 <!-- Theme before first paint (Light / Dark / Auto, src/lib/theme.js). Mirrors normalizeChoice

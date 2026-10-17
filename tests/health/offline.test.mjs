@@ -14,7 +14,7 @@ const SEED = `window.__seedRows = { accounts: [${JSON.stringify(seedAccount())}]
 test("dist makes zero non-file requests", async () => {
   const url = buildMockedHtml(SEED);
   const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
-  const page = await browser.newPage();
+  const page = await browser.newPage({ bypassCSP: true });   // the injected mock is an inline script the dist CSP would refuse; csp.test.mjs covers the real policy
   const remote = [];
   // file: is the document itself; data: is the inlined supabase bundle. Neither touches
   // the network. Anything else is a remote dependency and a build regression.

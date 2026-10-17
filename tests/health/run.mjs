@@ -39,6 +39,7 @@ import "./confirm-dialog.test.mjs";
 import "./undo-actions.test.mjs";
 import "./boundary.test.mjs";
 import "./offline.test.mjs";
+import "./csp.test.mjs";
 import "./currency-history.test.mjs";
 import "./redenomination.test.mjs";
 import "./diffrow.test.mjs";
