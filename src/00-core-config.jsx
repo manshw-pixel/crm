@@ -28,8 +28,8 @@ const { useState, useEffect, useReducer, useMemo, useRef, useCallback, useContex
 // build.mjs replaces this exact literal with the short commit SHA. Kept as a plain literal
 // rather than a placeholder token so the source stays runnable un-built.
 const APP_VERSION = "dev";
-const SUPABASE_URL = "https://avrtiyfoxlvxwqdkrznd.supabase.co";
-const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2cnRpeWZveGx2eHdxZGtyem5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTA1NjUsImV4cCI6MjA5ODcyNjU2NX0.D0rhXOgtn4Prfx_2opJHLhmsuCCEI3jTICw7DjfYX2Y";
+const SUPABASE_URL = "https://hmnbhweoktljjuiigzqo.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtbmJod2Vva3Rsamp1aWlnenFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3NTgwOTYsImV4cCI6MjEwODMzNDA5Nn0.WWxbKoxBf77zFIcqtSKZjL7gv1KzKDBFbB_K7Nnxb-A";
 /* =========================================================================== */
 const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
 // __sbFactory is the test seam: the E2E harness installs an in-memory Supabase mock here
