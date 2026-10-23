@@ -172,7 +172,7 @@ const handWrittenCss = styleMatch[1];
 
 const head = headMatch[1]
   // the five runtime deps, now vendored and inlined below
-  .replace(/<script src="https:\/\/unpkg\.com\/[^"]*"><\/script>\s*/g, "")
+  .replace(/<script src="https:\/\/unpkg\.com\/[^"]*"[^>]*><\/script>\s*/g, "")
   .replace(/<script src="https:\/\/cdn\.tailwindcss\.com"><\/script>\s*/g, "")
   // the Google Fonts preconnect + stylesheet; Inter is embedded as base64 instead
   .replace(/<link rel="preconnect" href="https:\/\/fonts\.googleapis\.com">\s*/g, "")
