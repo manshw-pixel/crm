@@ -353,7 +353,7 @@ export async function launchFinance(opts = {}) {
   const file = join(dir, "crm.html");
   writeFileSync(file, html);
   const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
-  const page = await browser.newPage({ bypassCSP: true });   // the injected mock is an inline script the dist CSP would refuse; csp.test.mjs covers the real policy
+  const page = await browser.newPage({ bypassCSP: true, ...(opts.pageOpts || {}) });   // the injected mock is an inline script the dist CSP would refuse; csp.test.mjs covers the real policy
   await page.goto("file://" + file.replace(/\\/g, "/"));
   await page.waitForSelector("#root", { timeout: 15000 });
   return { page, browser };
