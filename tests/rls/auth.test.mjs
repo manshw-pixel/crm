@@ -58,9 +58,11 @@ test("re-running the setup file leaves an uninvited sign-up org-less", async () 
 // which is exactly what fires handle_new_user(), so the trigger's own matching is tested.
 test("invite email matching is case-insensitive", async () => {
   await sql(`insert into invites (email, org_id, role) values ('mixed@test.local', $1, 'user')`, [ORG_B]);
-  const [u] = await sql(`insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data)
+  // Confirmed at insert, as the auto-confirming local stack writes a sign-up: an unconfirmed
+  // login never claims an invite (see confirm-attach.test.mjs).
+  const [u] = await sql(`insert into auth.users (instance_id, id, aud, role, email, raw_user_meta_data, email_confirmed_at)
     values ('00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated',
-            'MiXed@Test.Local', '{}'::jsonb) returning id`);
+            'MiXed@Test.Local', '{}'::jsonb, now()) returning id`);
   assert(await orgOf(u.id) === ORG_B, "a mixed-case address did not match its lowercase invite");
 });
 

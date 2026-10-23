@@ -241,13 +241,19 @@ grant execute on function public.lead_child_ok(text, uuid, text, jsonb) to authe
 -- admins, own org only) and create_org() (platform admin), never by the client directly.
 -- Gate: this is a trigger on auth.users, not callable through the API; the invite match
 -- IS the gate, and a sign-up with no match gets role 'user' and no org.
+-- Only a CONFIRMED login may claim an invite. Anyone can sign up with an address they do not
+-- own; if that unverified login took the invite, whoever set its password would hold the
+-- invited role (account pre-hijack). An unconfirmed sign-up stays org-less with the invite
+-- left open, and handle_user_confirmed() below attaches it once the owner clicks the link.
 create or replace function public.handle_new_user()
 returns trigger language plpgsql security definer set search_path = public as $$
 declare
   inv invites;
 begin
-  select * into inv from invites
-   where lower(email) = lower(trim(new.email)) and accepted_at is null;
+  if new.email_confirmed_at is not null then
+    select * into inv from invites
+     where lower(email) = lower(trim(new.email)) and accepted_at is null;
+  end if;
   -- invites_one_open_per_email guarantees at most one row: no tiebreak needed.
   insert into profiles (id, name, role, org_id)
   values (
@@ -266,6 +272,34 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- The other half of the rule above: when a login's email becomes confirmed, attach it through
+-- its open invite. attach_orgless_login() (defined further down; resolved at run time) keeps
+-- its refusals -- never a platform admin, a disabled login or one already in an org. A refusal
+-- here must not fail the confirmation itself, so it is swallowed and the invite stays open.
+create or replace function public.handle_user_confirmed()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  inv invites;
+begin
+  select * into inv from invites
+   where lower(email) = lower(trim(new.email)) and accepted_at is null;
+  if inv.email is null then return new; end if;
+  begin
+    perform public.attach_orgless_login('confirm', inv.email, new.id, inv.org_id, inv.role);
+    update invites set accepted_at = now() where email = inv.email and org_id = inv.org_id;
+  exception when others then
+    null;
+  end;
+  return new;
+end $$;
+revoke execute on function public.handle_user_confirmed() from public, anon, authenticated;
+
+drop trigger if exists on_auth_user_confirmed on auth.users;
+create trigger on_auth_user_confirmed
+  after update of email_confirmed_at on auth.users
+  for each row when (old.email_confirmed_at is null and new.email_confirmed_at is not null)
+  execute function public.handle_user_confirmed();
 
 -- ---------- admin guard: any number of admins per org, but never zero ----------
 create or replace function public.guard_admin_count()
@@ -1147,10 +1181,13 @@ begin
   end if;
   -- handle_new_user() only fires for a NEW login, so an address that already has one would
   -- never pick up an invite. Deal with it here instead of leaving a dead invite behind.
-  select p.id, p.org_id into existing
+  -- Only a confirmed login is attached here. An unconfirmed one may belong to someone who
+  -- signed up with an address they do not own, so it gets the open invite below instead,
+  -- which handle_user_confirmed() honours once the address is verified.
+  select p.id, p.org_id, u.email_confirmed_at is not null as confirmed into existing
     from profiles p join auth.users u on u.id = p.id
    where lower(u.email) = addr limit 1;
-  if found then
+  if found and (existing.org_id is not null or existing.confirmed) then
     if existing.org_id = public.current_org() then
       raise exception 'invite_user: % is already a member of this workspace', addr;
     elsif existing.org_id is not null then
@@ -1189,6 +1226,7 @@ declare
   addr text := lower(trim(p_admin_email));
   existing_id uuid;
   existing_org uuid;
+  existing_confirmed boolean;
 begin
   if not public.is_platform_admin() then
     raise exception 'create_org: platform admin only';
@@ -1216,7 +1254,7 @@ begin
   -- handle_new_user() fires only for a NEW login, so an admin address that already has one
   -- would never pick up the invite. As invite_user does: refuse a login in another workspace
   -- (before any insert), attach an org-less one below.
-  select p.id, p.org_id into existing_id, existing_org
+  select p.id, p.org_id, u.email_confirmed_at is not null into existing_id, existing_org, existing_confirmed
     from profiles p join auth.users u on u.id = p.id
    where lower(u.email) = addr limit 1;
   if existing_org is not null then
@@ -1228,7 +1266,9 @@ begin
   if to_regclass('public.org_alert_prefs') is not null then
     execute 'insert into org_alert_prefs (org_id) values ($1) on conflict (org_id) do nothing' using new_id;
   end if;
-  if existing_id is not null then
+  -- Only a confirmed login becomes the admin now (see invite_user). An unconfirmed one gets
+  -- the open invite, which handle_user_confirmed() honours once the address is verified.
+  if existing_id is not null and existing_confirmed then
     perform public.attach_orgless_login('create_org', addr, existing_id, new_id, 'admin');
     insert into invites (email, org_id, role, created_by, accepted_at) values (addr, new_id, 'admin', auth.uid(), now());
   else
