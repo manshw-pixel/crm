@@ -84,7 +84,9 @@ export default {
       });
       if (!verify.ok) return fail(502, "unavailable", GENERIC, origin);
       const verdict = await verify.json().catch(() => ({}));
-      if (verdict.success !== true) return fail(400, "captcha", "Please complete the check and try again.", origin);
+      // The token must also have been solved on one of our own pages, not on a site reusing the key.
+      const hostOk = allowedOrigins(env).some(o => { try { return new URL(o).hostname === verdict.hostname; } catch { return false; } });
+      if (verdict.success !== true || !hostOk) return fail(400, "captcha", "Please complete the check and try again.", origin);
 
       const res = await fetch(`${env.SUPABASE_URL}/rest/v1/rpc/submit_demo_request`, {
         method: "POST",

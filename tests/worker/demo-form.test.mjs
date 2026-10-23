@@ -19,7 +19,7 @@ const post = (body, origin = "https://onevio.in", extra = {}) => new Request("ht
 });
 
 // Routes fetch by URL and records every call.
-function stub({ captcha = { success: true }, rpc = () => new Response('"ok"', { status: 200 }) } = {}) {
+function stub({ captcha = { success: true, hostname: "onevio.in" }, rpc = () => new Response('"ok"', { status: 200 }) } = {}) {
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -84,6 +84,7 @@ test("www.onevio.in is allowed by default; ALLOWED_ORIGINS overrides", async () 
   const env = { ...ENV, ALLOWED_ORIGINS: "https://staging.example, https://other.example" };
   const b = await run(post(FORM, "https://onevio.in"), env);
   assert.equal(b.res.status, 403, "default list is replaced, not extended");
+  stub({ captcha: { success: true, hostname: "staging.example" } });   // a token solved on the staging page
   const c = await run(post(FORM, "https://staging.example"), env);
   assert.equal(c.res.status, 200);
   assert.equal(c.res.headers.get("Access-Control-Allow-Origin"), "https://staging.example");
@@ -132,6 +133,23 @@ test("a failed Turnstile check is 400 captcha and the RPC is not called", async 
   assert.equal(form.get("secret"), "ts-secret-111");
   assert.equal(form.get("response"), "tok-1");
   assert.equal(form.get("remoteip"), "203.0.113.9");
+});
+
+test("a token solved on another hostname is 400 captcha and the RPC is not called", async () => {
+  for (const hostname of ["evil.example", "onevio.in.evil.example", undefined]) {
+    const calls = stub({ captcha: { success: true, hostname } });
+    const { res, json } = await run(post(FORM));
+    assert.equal(res.status, 400, String(hostname));
+    assert.equal(json.error, "captcha");
+    assert.equal(calls.every(c => c.url !== RPC), true);
+  }
+});
+
+test("a token solved on www.onevio.in is accepted", async () => {
+  const calls = stub({ captcha: { success: true, hostname: "www.onevio.in" } });
+  const { res } = await run(post(FORM));
+  assert.equal(res.status, 200);
+  assert.equal(calls.some(c => c.url === RPC), true);
 });
 
 test("a missing token never reaches the RPC", async () => {
@@ -220,7 +238,7 @@ test("a hung upstream times out as 502 unavailable (siteverify hang makes no RPC
     assert.equal(r.json.error, "unavailable");
     assert.deepEqual(calls, [SITEVERIFY]);
     globalThis.fetch = (url, init) => String(url) === SITEVERIFY
-      ? Promise.resolve(new Response('{"success":true}')) : hang(url, init);
+      ? Promise.resolve(new Response('{"success":true,"hostname":"onevio.in"}')) : hang(url, init);
     r = await run(post(FORM));
     assert.equal(r.res.status, 502);
     assert.equal(r.json.error, "unavailable");
