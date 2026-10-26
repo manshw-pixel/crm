@@ -38,7 +38,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
-  useEffect(() => setTab("overview"), [id]);
+  useEffect(() => { setTab("overview"); setHandoverOpen(false); }, [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm && !ro) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);

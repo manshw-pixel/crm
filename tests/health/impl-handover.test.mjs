@@ -104,3 +104,41 @@ test("settings: admin edits the implementation checklist; user does not see it",
     assert(await page.locator("[data-impl-item]").count() === 0, "checklist editor shown to user");
   } finally { await browser.close(); }
 });
+
+test("handover: switching account (palette, same AccountDetail) closes the open form; toast focuses its first field", async () => {
+  const B = seedAccount({ id: "b1", name: "Betamax", csm: "Test User" });
+  const s = seed("user").replace(`${JSON.stringify([ACCT])}`, JSON.stringify([ACCT, B]));
+  const { page, browser } = await launch(s);
+  try {
+    await openAcct(page);
+    await page.locator("select").filter({ hasText: "Discovery" }).last().selectOption("Won");
+    await page.getByRole("button", { name: "Book it" }).click();
+    await page.locator("[data-toast-action]").click();
+    await page.waitForSelector("[data-handover-form]");
+    const focused = await page.evaluate(() => document.activeElement && document.activeElement.closest("[data-checklist-item]")?.dataset.checklistItem);
+    assert(focused === "order_form", "first field not focused: " + focused);
+    await page.locator('[data-checklist-item="customer_contact"] input').fill("Typed for Acme");
+    await page.keyboard.press("Control+k");
+    await page.keyboard.type("betamax");
+    await page.waitForTimeout(200);
+    await page.getByRole("option", { name: /Betamax/ }).first().click().catch(async () => { await page.getByText("Betamax").first().click(); });
+    await page.waitForFunction(() => document.querySelector("#root").textContent.includes("← BackBetamax"));
+    assert(await page.locator("[data-new-project]").count() === 1, "precondition: Projects card rendered on B");
+    assert(await page.locator("[data-handover-form]").count() === 0, "handover form still open on the other account");
+  } finally { await browser.close(); }
+});
+
+test("settings: the last checklist item cannot be removed", async () => {
+  const one = `window.__seedRows.settings = [{ id: "implChecklist", data: [{ id: "only", label: "Only", kind: "check", required: true }] }];`;
+  const { page, browser } = await launch(seed("admin") + one);
+  try {
+    await page.click('button[title="Settings"]');
+    await page.locator('[data-impl-item]').first().waitFor({ timeout: 5000 });
+    const n = await page.locator("[data-impl-item]").count();
+    if (n !== 1) { // seed shape not honoured: remove down to one through the UI
+      for (let i = n; i > 1; i--) { await page.locator('[data-impl-item] [aria-label="Remove item"]').first().click(); await page.waitForTimeout(30); }
+    }
+    assert(await page.locator("[data-impl-item]").count() === 1, "precondition: one item");
+    assert(await page.locator('[data-impl-item] [aria-label="Remove item"]').isDisabled(), "last item removable");
+  } finally { await browser.close(); }
+});

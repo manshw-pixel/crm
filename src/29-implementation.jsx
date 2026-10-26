@@ -18,6 +18,13 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
   const [values, setValues] = useState({});
   const [err, setErr] = useState("");
   const set = (k, v) => setValues(s => ({ ...s, [k]: v }));
+  const formRef = useRef(null);
+  // opened from the "Start onboarding" toast the form may be far below: bring it into view
+  useEffect(() => {
+    const f = formRef.current; if (!f) return;
+    f.scrollIntoView && f.scrollIntoView({ behavior: "smooth", block: "center" });
+    const first = f.querySelector("input"); if (first) first.focus({ preventScroll: true });
+  }, []);
   const submit = e => {
     e.preventDefault();
     const miss = missingRequired(template, values);
@@ -33,7 +40,7 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
     onDone();
   };
   return (
-    <form data-handover-form className="space-y-2" onSubmit={submit}>
+    <form ref={formRef} data-handover-form className="space-y-2" onSubmit={submit}>
       <div className="text-sm font-bold text-slate-800">New {IMPL_TYPE_LABEL[type].toLowerCase()} project · handover checklist</div>
       {template.map(it => (
         <label key={it.id} data-checklist-item={it.id} className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
@@ -55,7 +62,7 @@ function ProjectsCard({ account, st, dispatch, user, open, setOpen }) {
   return (
     <Card title={`Projects (${projects.length})`} right={canCreate && !open
       ? <Btn data-new-project onClick={() => setOpen(true)}>+ New project</Btn> : null}>
-      {open && canCreate && <div className="mb-3"><HandoverForm account={account} st={st} dispatch={dispatch} user={user} onDone={() => setOpen(false)} /></div>}
+      {open && canCreate && <div className="mb-3"><HandoverForm key={account.id} account={account} st={st} dispatch={dispatch} user={user} onDone={() => setOpen(false)} /></div>}
       {projects.length === 0 && <div className="text-sm text-slate-500">No implementation projects.</div>}
       {projects.map(p => (
         <div key={p.id} data-project-row={p.id} data-stage={p.stage} data-type={p.type} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
@@ -113,7 +120,7 @@ function ImplChecklistSettingsCard({ st, dispatch }) {
           <label className="flex items-center gap-1 text-xs"><input type="checkbox" checked={!!it.required} onChange={e => patch(it.id, { required: e.target.checked })} />Required</label>
           <button title="Move up" aria-label="Move up" disabled={i === 0} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(i, -1)}>▲</button>
           <button title="Move down" aria-label="Move down" disabled={i === items.length - 1} className="text-xs text-slate-500 disabled:opacity-30" onClick={() => move(i, 1)}>▼</button>
-          <button title="Remove item" aria-label="Remove item" className="text-xs text-rose-600" onClick={() => save(items.filter(x => x.id !== it.id))}>✕</button>
+          <button title="Remove item" aria-label="Remove item" disabled={items.length === 1} className="text-xs text-rose-600 disabled:opacity-30" onClick={() => save(items.filter(x => x.id !== it.id))}>✕</button>
         </div>
       ))}
       <Btn data-impl-add-item onClick={() => save([...items, { id: uid(), label: "New item", kind: "check", required: false }])}>+ Add item</Btn>
