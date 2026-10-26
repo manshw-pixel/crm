@@ -1545,6 +1545,15 @@ begin
   end loop;
 end $$;
 
+-- Ruling 2026-10-26: the project's implementer may also delete tasks on their own project.
+drop policy if exists project_tasks_delete on public.project_tasks;
+create policy project_tasks_delete on public.project_tasks for delete to authenticated
+  using ((select public.is_active()) and org_id = (select public.current_org())
+         and ((select public.is_impl_manager())
+              or exists (select 1 from public.projects p where p.org_id = project_tasks.org_id
+                         and p.id = project_tasks.data->>'projectId'
+                         and p.data->>'implementerId' = auth.uid()::text)));
+
 -- Is the caller the CSM (by display name, read live) of this account? Names, not ids: the
 -- account's csm field is free text kept in sync by renameEverywhere().
 create or replace function public.is_account_csm(p_org uuid, p_account text)

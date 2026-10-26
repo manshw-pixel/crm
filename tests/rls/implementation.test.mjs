@@ -176,3 +176,15 @@ test("invite_user accepts impl_lead and impl_user", async () => {
       /role must be/, "control: an unknown role was accepted");
   } finally { await sql(`delete from invites where email like 'inv-%@test.local'`); }
 });
+
+test("the implementer deletes tasks on their own project; another impl_user cannot", async () => {
+  const other = await otherImpl();
+  try {
+    const impl = await world();
+    await seed("project_tasks", "im-t", { projectId: "im-p", accountId: "im-acc", title: "A", status: "todo", signoff: "pending" });
+    await other.client.from("project_tasks").delete().eq("id", "im-t");   // a denied delete raises nothing
+    assert(await stillExists("project_tasks", "im-t"), "another impl_user deleted the task");
+    const { error } = await impl.client.from("project_tasks").delete().eq("id", "im-t");
+    assert(!error && !(await stillExists("project_tasks", "im-t")), "control: implementer delete failed: " + error?.message);
+  } finally { await clean(); }
+});
