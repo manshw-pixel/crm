@@ -16,7 +16,7 @@ const W_ACCT = seedAccount({ id: "a1", name: "Acme", csm: "Cara" });
 const W_TASK = { id: "k1", projectId: "p1", accountId: "a1", title: "Configure", ownerId: "u2", due: isoDay(TODAY + 14 * DAY), estHours: 10,
   timeLog: [{ by: "Ivy", at: isoDay(TODAY - 2 * DAY), hours: 2 }], status: "todo", signoff: "pending", signoffNote: "", signedBy: null, signedAt: null, order: 1 };
 const wSeed = role => `window.__seedRows = { accounts: ${rows([W_ACCT])}, contacts: [], activities: [], tasks: [], opportunities: [],
-  projects: ${rows([proj("p1", "a1", "in_progress", "u2", [h("01-15", "queued", "in_progress")])])}, project_tasks: ${rows([W_TASK])},
+  projects: ${rows([proj("p1", "a1", "in_progress", "u2", [h("01-01", "queued", "in_progress")])])}, project_tasks: ${rows([W_TASK])},
   settings: [], team: [],
   profiles: [{ id: "u1", org_id: "org-a", name: "Boss", role: "${role}" }, { id: "u2", org_id: "org-a", name: "Ivy", role: "impl_user" },
     { id: "u3", org_id: "org-a", name: "Zed", role: "impl_user" }] };`;
@@ -77,7 +77,7 @@ const MID = seedAccount({ id: "a2", name: "Smallco", csm: "Test User" }); MID.ti
 // last year, so no period is in the future (the card blanks future periods)
 const LAST = YEAR - 1;
 const D_PROJECTS = [
-  proj("p1", "a1", "in_progress", "u2", [h("01-15", "queued", "in_progress", LAST)]),
+  proj("p1", "a1", "in_progress", "u2", [h("01-01", "queued", "in_progress", LAST)]),
   proj("p2", "a2", "live", "u2", [h("02-01", "handover", "queued", LAST), h("02-10", "queued", "in_progress", LAST), h("03-05", "csm_review", "live", LAST)]),
   proj("p3", "a2", "on_hold", "u2", [h("04-01", "handover", "queued", LAST), h("04-03", "queued", "on_hold", LAST)]),
 ];

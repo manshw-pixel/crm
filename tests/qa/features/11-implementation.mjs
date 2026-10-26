@@ -347,12 +347,12 @@ export const scenarios = [
       const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       assert.deepEqual(await labels(), MONTHS, "Month mode does not show Jan..Dec");
       // The run's project went Live now, so the current month counts it as Completed.
-      const bar = card.locator(`[data-impl-bar="${MONTHS[new Date().getMonth()]}"]`);
+      const bar = card.locator(`[data-impl-bar="${MONTHS[new Date().getUTCMonth()]}"]`);
       assert.ok(+await bar.getAttribute("data-completed") >= 1, `current month shows ${await bar.getAttribute("data-completed")} Completed, expected at least 1 (did ${F}/go-live run?)`);
       await page.locator("[data-impl-mode=quarter]").click();
       await page.waitForFunction(() => document.querySelectorAll("[data-impl-period-label]").length === 4, null, { timeout: 10000 });
       assert.deepEqual(await labels(), ["Q1", "Q2", "Q3", "Q4"], "Quarter mode does not show Q1..Q4");
-      const q = card.locator(`[data-impl-bar="Q${Math.floor(new Date().getMonth() / 3) + 1}"]`);
+      const q = card.locator(`[data-impl-bar="Q${Math.floor(new Date().getUTCMonth() / 3) + 1}"]`);
       assert.ok(+await q.getAttribute("data-completed") >= 1, "current quarter shows no Completed project");
     } },
 ];

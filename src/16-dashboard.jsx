@@ -278,14 +278,14 @@ function ArrBridgeCard({ b }) {
    st.projects is already RLS-scoped, so a restricted lead sees only their accounts' projects. */
 var IMPL_STATUSES = [["active", "Active"], ["completed", "Completed"], ["onHold", "On hold"]];
 function ImplProjectsCard({ projects, accounts }) {
-  const thisYear = new Date().getFullYear();
+  const today = iso(Date.now()); // UTC day; every "now" below derives from it
+  const thisYear = +today.slice(0, 4), thisMonth = +today.slice(5, 7) - 1;
   const [year, setYear] = useState(thisYear);
   const [mode, setMode] = useState("month");
   const [tier, setTier] = useState("All");
   const [pick, setPick] = useState(null); // tier-table period index; null = the default
   const [hov, setHov] = useState(null);
   const tierById = useMemo(() => Object.fromEntries(accounts.map(a => [a.id, a.tier || "—"])), [accounts]);
-  const today = iso(Date.now());
   // chartCounts replays history to each period end, so a period still in the future would
   // repeat today's stages as if they were known: blank those periods instead.
   const data = useMemo(() => {
@@ -302,7 +302,7 @@ function ImplProjectsCard({ projects, accounts }) {
   // default table period: the latest with any data (every tier), else the current period
   const any = i => Object.values(data.byTier).some(t => t.active[i] + t.completed[i] + t.onHold[i] > 0);
   let latest = -1; periods.forEach((_, i) => { if (any(i)) latest = i; });
-  const nowIdx = year === thisYear ? (mode === "quarter" ? Math.floor(new Date().getMonth() / 3) : new Date().getMonth()) : periods.length - 1;
+  const nowIdx = year === thisYear ? (mode === "quarter" ? Math.floor(thisMonth / 3) : thisMonth) : periods.length - 1;
   const sel = pick !== null && pick < periods.length ? pick : latest >= 0 ? latest : nowIdx;
   const w = 520, h = 170, padL = 28, padR = 8, padT = 12, padB = 22;
   const max = Math.max(...totals, 1);
