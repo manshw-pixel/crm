@@ -62,6 +62,15 @@
     html.dark [data-tip-series="Yellow"] { fill: rgb(180 83 9); }
     html.dark [data-tip-series="Red"] { fill: rgb(190 18 60); }
   }
+  /* Implementation projects chart: validated categorical steps per mode (dataviz validator,
+     light vs #fcfcfb, dark vs the dark card). Dark has its own steps: the dark 500s sit above
+     the dark lightness band. */
+  .impl-seg-active { fill: rgb(var(--indigo-500)); } .impl-seg-completed { fill: rgb(var(--emerald-500)); } .impl-seg-onHold { fill: rgb(var(--amber-500)); }
+  .impl-key-active { background: rgb(var(--indigo-500)); } .impl-key-completed { background: rgb(var(--emerald-500)); } .impl-key-onHold { background: rgb(var(--amber-500)); }
+  @media screen {
+    html.dark .impl-seg-active { fill: rgb(90 95 190); } html.dark .impl-seg-completed { fill: rgb(40 170 125); } html.dark .impl-seg-onHold { fill: rgb(180 127 28); }
+    html.dark .impl-key-active { background: rgb(90 95 190); } html.dark .impl-key-completed { background: rgb(40 170 125); } html.dark .impl-key-onHold { background: rgb(180 127 28); }
+  }
   html { font-size: 12.5px; }
   body { background: rgb(var(--page)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: rgb(var(--slate-700)); }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
