@@ -32,6 +32,8 @@ const SUPABASE_URL = "https://hmnbhweoktljjuiigzqo.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhtbmJod2Vva3Rsamp1aWlnenFvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI3NTgwOTYsImV4cCI6MjEwODMzNDA5Nn0.WWxbKoxBf77zFIcqtSKZjL7gv1KzKDBFbB_K7Nnxb-A";
 /* =========================================================================== */
 const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
+// Implementation roles are read-only on every CRM table (RLS: SELECT only); the UI mirrors that.
+const isImplRole = u => !!u && (u.role === "impl_lead" || u.role === "impl_user");
 // __sbFactory is the test seam: the E2E harness installs an in-memory Supabase mock here
 // before the app boots. It is never set in production, so the real client is what ships.
 // (This replaced a regex-over-source-text swap in harness.mjs, which could not survive
@@ -71,3 +73,16 @@ const signOut = async () => {
 const ORG_LIMITS = { maxAccounts: null, loaded: false };
 let CURRENT_ORG = null;
 
+
+// Default implementation handover checklist (settings.implChecklist overrides it). Admins edit it
+// under Settings -> Implementation; each project keeps a copy of the template it was created with.
+const DEFAULT_IMPL_CHECKLIST = [
+  { id: "order_form", label: "Signed order form attached", kind: "check", required: true },
+  { id: "go_live_target", label: "Go-live target date", kind: "date", required: true },
+  { id: "customer_contact", label: "Customer project contact", kind: "text", required: true },
+  { id: "modules_scope", label: "Modules / scope purchased", kind: "text", required: true },
+  { id: "licences", label: "Licences sold", kind: "text", required: false },
+  { id: "commitments", label: "Special commitments made in the sale", kind: "text", required: false },
+  { id: "integrations", label: "Integrations required", kind: "text", required: false },
+  { id: "kickoff", label: "Kickoff call scheduled", kind: "check", required: false },
+];

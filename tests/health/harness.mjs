@@ -29,7 +29,8 @@ const MOCK = `window.__sbFactory = () => {
       // firing off scored.length alone.
       // __loadError fails those reads instead, for the "load failed, still render" path.
       const delay = window.__loadDelay || 0;
-      const out = window.__loadError ? { data: null, error: { message: window.__loadError } } : { data: window.__seedRows?.[t] || [], error: null };
+      // __tableError: { table: {code, message} } fails reads of just that table.
+      const out = window.__tableError?.[t] ? { data: null, error: window.__tableError[t] } : window.__loadError ? { data: null, error: { message: window.__loadError } } : { data: window.__seedRows?.[t] || [], error: null };
       const p = delay
         ? new Promise(res => setTimeout(() => res(out), delay))
         : Promise.resolve(out);

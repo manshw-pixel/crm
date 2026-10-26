@@ -7,6 +7,7 @@ import { iso, addMonths } from "./dates.js";
 import { QBR_FREQ_MONTHS } from "./qbr.js";
 import { clampInputs, healthScore } from "./scoring.js";
 import { auditChanges, withAudit } from "./audit.js";
+import { historyEntry, applySignoff, STAGE_LABEL } from "./implementation.js";
 
 /* Compute what actually changed between two versions of one row.
    This exists so that NO form has to diff: dispatch already holds prev and next, and this
@@ -46,7 +47,9 @@ export function diffRow(prev, next) {
    An unchanged row produces nothing. */
 export function persistOps(action, next, prev) {
   const ops = [];
-  const prevOf = (t, id) => ((prev && prev[t]) || []).find(x => x.id === id);
+  // state key for a table: project_tasks rows live under state.projectTasks
+  const keyOf = t => t === "project_tasks" ? "projectTasks" : t;
+  const prevOf = (t, id) => ((prev && prev[keyOf(t)]) || []).find(x => x.id === id);
   const up = (t, item) => {
     const { patch, appends, sets } = diffRow(prevOf(t, item.id), item);
     const full = { ...patch, ...sets };
@@ -61,8 +64,10 @@ export function persistOps(action, next, prev) {
     .forEach(a => up("accounts", a));
   const cascade = id => {
     del("accounts", "id", id);
-    ["contacts", "activities", "tasks", "opportunities"].forEach(t => del(t, "data->>accountId", id));
+    ["contacts", "activities", "tasks", "opportunities", "projects", "project_tasks"].forEach(t => del(t, "data->>accountId", id));
   };
+  // activities the reducer just added (a stage change writes a system activity on the account)
+  const newActivities = () => { const had = new Set(((prev && prev.activities) || []).map(x => x.id)); return next.activities.filter(x => !had.has(x.id)); };
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = acct(action.item.id); up("accounts", a || action.item); break; }
     case "ADD_CONTACT": up("contacts", action.item); break;
@@ -107,8 +112,27 @@ export function persistOps(action, next, prev) {
       break;
     }
     case "SET_OPP_STAGE": { const o = next.opportunities.find(x => x.id === action.id); if (o) up("opportunities", o); break; }
+    case "ADD_PROJECT": up("projects", action.item); break;
+    case "EDIT_PROJECT": { const x = (next.projects || []).find(v => v.id === action.id); if (x) up("projects", x); break; }
+    case "SET_PROJECT_STAGE": {
+      const x = (next.projects || []).find(v => v.id === action.id); if (x) up("projects", x);
+      newActivities().forEach(v => up("activities", v)); break;
+    }
+    case "ADD_PROJECT_TASK": up("project_tasks", action.item); break;
+    case "EDIT_PROJECT_TASK": case "LOG_TASK_TIME": { const x = (next.projectTasks || []).find(v => v.id === action.id); if (x) up("project_tasks", x); break; }
+    case "SIGNOFF_TASK": {
+      const t = (next.projectTasks || []).find(v => v.id === action.taskId);
+      if (t) {
+        (next.projectTasks || []).filter(v => v.projectId === t.projectId).forEach(v => up("project_tasks", v));
+        const p = (next.projects || []).find(v => v.id === t.projectId); if (p) up("projects", p);
+        newActivities().forEach(v => up("activities", v));
+      }
+      break;
+    }
+    case "DELETE_PROJECT_TASK": del("project_tasks", "id", action.id); break;
     case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
-    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS": {
+    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS":
+    case "SET_IMPL_CHECKLIST": case "SET_IMPL_PLAN_TEMPLATES": case "SET_IMPL_CAPACITY": {
       // settings always writes (even an empty diff), exactly as before the move
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
       ops.push({ kind: "merge", table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
@@ -116,6 +140,27 @@ export function persistOps(action, next, prev) {
     }
   }
   return ops;
+}
+
+// Projects and their tasks belonging to accounts the reducer is deleting. Keys are added only
+// when the state already has them, so a state without the implementation tables is unchanged.
+const implWithout = (state, gone) => ({
+  ...(state.projects ? { projects: state.projects.filter(r => !gone(r)) } : {}),
+  ...(state.projectTasks ? { projectTasks: state.projectTasks.filter(r => !gone(r)) } : {}),
+});
+
+// Move project `p` to stage `to`: its own history ledger, liveAt/startedAt/holdReason, and a
+// system activity on the account (system:true, so health recency scoring ignores it).
+function withStage(state, p, to, note, actor, now) {
+  const upd = { ...p, stage: to, history: [...(p.history || []), historyEntry(p.stage, to, actor, note, now)],
+    holdReason: to === "on_hold" ? (note || "") : null };
+  if (to === "live") upd.liveAt = now;
+  if (to === "in_progress" && !p.startedAt) upd.startedAt = now;
+  const label = STAGE_LABEL[to] || to;
+  return { ...state,
+    projects: state.projects.map(x => x.id === p.id ? upd : x),
+    activities: [...state.activities, { id: uid(), accountId: p.accountId, type: "note", date: iso(Date.now()),
+      summary: `Implementation project moved to ${label} by ${actor.name}${note ? `: ${note}` : ""}`, system: true }] };
 }
 
 export function reducer(state, action) {
@@ -199,7 +244,8 @@ export function reducer(state, action) {
       contacts: state.contacts.filter(c => c.accountId !== action.id),
       activities: state.activities.filter(x => x.accountId !== action.id),
       tasks: state.tasks.filter(t => t.accountId !== action.id),
-      opportunities: state.opportunities.filter(o => o.accountId !== action.id) };
+      opportunities: state.opportunities.filter(o => o.accountId !== action.id),
+      ...implWithout(state, a => a.accountId === action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
@@ -274,7 +320,8 @@ export function reducer(state, action) {
         contacts: state.contacts.filter(r => !gone(r)),
         activities: state.activities.filter(r => !gone(r)),
         tasks: state.tasks.filter(r => !gone(r)),
-        opportunities: state.opportunities.filter(r => !gone(r)) };
+        opportunities: state.opportunities.filter(r => !gone(r)),
+        ...implWithout(state, gone) };
     }
     case "RESTORE_SNAPSHOT": {
       const merge = (cur, saved) => {
@@ -299,6 +346,31 @@ export function reducer(state, action) {
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
     case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };
+    case "ADD_PROJECT": return { ...state, projects: [...(state.projects || []), action.item] };
+    case "EDIT_PROJECT": return { ...state, projects: (state.projects || []).map(p => p.id === action.id ? { ...p, ...action.patch } : p) };
+    case "SET_PROJECT_STAGE": {
+      const p = (state.projects || []).find(x => x.id === action.id);
+      if (!p || p.stage === action.to) return state;
+      return withStage(state, p, action.to, action.note, action.actor, action.now);
+    }
+    case "ADD_PROJECT_TASK": return { ...state, projectTasks: [...(state.projectTasks || []), action.item] };
+    case "EDIT_PROJECT_TASK": return { ...state, projectTasks: (state.projectTasks || []).map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
+    case "LOG_TASK_TIME": return { ...state, projectTasks: (state.projectTasks || []).map(t => t.id === action.id ? { ...t, timeLog: [...(t.timeLog || []), action.entry] } : t) };
+    case "DELETE_PROJECT_TASK": return { ...state, projectTasks: (state.projectTasks || []).filter(t => t.id !== action.id) };
+    case "SIGNOFF_TASK": {
+      const all = state.projectTasks || [];
+      const task = all.find(t => t.id === action.taskId);
+      const p = task && (state.projects || []).find(x => x.id === task.projectId);
+      if (!task || !p) return state;
+      const mine = all.filter(t => t.projectId === p.id);
+      const { tasks: signed, projectStage } = applySignoff(mine, action.taskId, action.verdict, action.note, action.actor, action.now);
+      const byId = new Map(signed.map(t => [t.id, t]));
+      const s1 = { ...state, projectTasks: all.map(t => byId.get(t.id) || t) };
+      return projectStage === p.stage ? s1 : withStage(s1, p, projectStage, action.note, action.actor, action.now);
+    }
+    case "SET_IMPL_CHECKLIST": return { ...state, settings: { ...state.settings, implChecklist: action.items } };
+    case "SET_IMPL_PLAN_TEMPLATES": return { ...state, settings: { ...state.settings, implPlanTemplates: action.items } };
+    case "SET_IMPL_CAPACITY": return { ...state, settings: { ...state.settings, implCapacity: action.map } };
     case "SET_CUSTOM_FIELDS": return { ...state, settings: { ...state.settings, customFields: action.fields } };
     case "SEED_PLAYBOOK": return { ...state,
       tasks: [...state.tasks, ...action.items],

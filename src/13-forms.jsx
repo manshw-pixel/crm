@@ -69,14 +69,14 @@ function docExpiryBadge(doc) {
   if (d <= EXPIRY_WARN_DAYS) return <span className="nm-inset !rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-600">Expires in {d}d</span>;
   return null;
 }
-function DocumentsCard({ a, dispatch, user }) {
+function DocumentsCard({ a, dispatch, user, readOnly }) {
   const toast = useToast();
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [confirmDoc, setConfirmDoc] = useState(null);
   return (
-    <Card title={`Documents (${docs.length})`} right={<button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
+    <Card title={`Documents (${docs.length})`} right={readOnly ? null : <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
       {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
       {docs.length === 0 && !adding && <div className="text-sm text-slate-500">No documents yet.</div>}
       {DOC_CATEGORIES.map(cat => {
@@ -92,10 +92,10 @@ function DocumentsCard({ a, dispatch, user }) {
                   {docExpiryBadge(d)}
                   {d.amount != null && <span className="text-xs font-semibold text-slate-700">{fmtMoney(d.amount, a.currency)}</span>}
                   {(d.effectiveDate || d.expiryDate) && <span className="text-xs text-slate-500">{d.effectiveDate ? fmtDate(d.effectiveDate) : "—"} → {d.expiryDate ? fmtDate(d.expiryDate) : "—"}</span>}
-                  <button title="Edit document" aria-label="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
-                    onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>
-                  <button title="Delete document" aria-label="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
-                    onClick={() => setConfirmDoc(d)}>✕</button>
+                  {!readOnly && <button title="Edit document" aria-label="Edit document" className="ml-auto text-xs text-indigo-500 hover:text-indigo-700"
+                    onClick={() => { setAdding(false); setEditId(id => id === d.id ? null : d.id); }}>✎</button>}
+                  {!readOnly && <button title="Delete document" aria-label="Delete document" className="text-xs text-rose-500 hover:text-rose-700"
+                    onClick={() => setConfirmDoc(d)}>✕</button>}
                 </div>
                 {editId === d.id && <div className="nm-inset mt-2 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} existing={d} onDone={() => setEditId(null)} /></div>}
               </div>

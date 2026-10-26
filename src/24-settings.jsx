@@ -329,7 +329,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
     el.click(); URL.revokeObjectURL(url);
   };
   const bulkReplace = async state => {
-    try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state: { ...state, team: st.team } }); }
+    try { await replaceAllRemote(state); dispatch({ type: "REPLACE", state: { ...state, team: st.team, projects: st.projects, projectTasks: st.projectTasks } }); }
     catch (ex) { toast({ text: "Bulk update failed: " + ex.message, tone: "error" }); }
   };
   const doImport = e => {

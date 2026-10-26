@@ -18,6 +18,13 @@ const base = () => ({
   opportunities: [{ id: "o1", accountId: "a1", name: "Upsell", stage: "Discovery" }],
   settings: { ...mergeSettings({}), rates: { INR: 0.012 }, snapshots: [], segments: [] },
 });
+const implBase = () => ({ ...base(),
+  projects: [{ id: "p1", accountId: "a1", stage: "csm_review", history: [], liveAt: null },
+             { id: "p2", accountId: "b1", stage: "planning", history: [] }],
+  projectTasks: [
+    { id: "k1", projectId: "p1", accountId: "a1", title: "A", status: "done", signoff: "signed", timeLog: [] },
+    { id: "k2", projectId: "p1", accountId: "a1", title: "B", status: "done", signoff: "pending", timeLog: [] },
+    { id: "k3", projectId: "p2", accountId: "b1", title: "C", status: "todo", signoff: "pending", timeLog: [] }] });
 // run one action against frozen state: an in-place mutation throws (strict-mode module)
 const run = (action, st = base()) => {
   deepFreeze(st);
@@ -73,6 +80,20 @@ const ACTIONS = {
   EDIT_DOCUMENT: { type: "EDIT_DOCUMENT", id: "a1", docId: "d0", patch: { title: "v2" }, by: "T" },
   DELETE_DOCUMENT: { type: "DELETE_DOCUMENT", id: "a1", docId: "d0", by: "T" },
 };
+const SIGN = { actor: { id: "u1", name: "Priya", role: "user" }, now: "2026-06-15T12:00:00.000Z" };
+Object.assign(ACTIONS, {
+  ADD_PROJECT: { type: "ADD_PROJECT", item: { id: "p9", accountId: "a1", stage: "handover" } },
+  EDIT_PROJECT: { type: "EDIT_PROJECT", id: "p1", patch: { targetGoLive: "2026-09-01" } },
+  SET_PROJECT_STAGE: { type: "SET_PROJECT_STAGE", id: "p2", to: "in_progress", note: "", ...SIGN },
+  ADD_PROJECT_TASK: { type: "ADD_PROJECT_TASK", item: { id: "k9", projectId: "p1", accountId: "a1", title: "x" } },
+  EDIT_PROJECT_TASK: { type: "EDIT_PROJECT_TASK", id: "k3", patch: { title: "y" } },
+  LOG_TASK_TIME: { type: "LOG_TASK_TIME", id: "k3", entry: { by: "Priya", at: TODAY, hours: 1 } },
+  DELETE_PROJECT_TASK: { type: "DELETE_PROJECT_TASK", id: "k3" },
+  SIGNOFF_TASK: { type: "SIGNOFF_TASK", taskId: "k2", verdict: "signed", note: "", ...SIGN },
+  SET_IMPL_CHECKLIST: { type: "SET_IMPL_CHECKLIST", items: [] },
+  SET_IMPL_PLAN_TEMPLATES: { type: "SET_IMPL_PLAN_TEMPLATES", items: [] },
+  SET_IMPL_CAPACITY: { type: "SET_IMPL_CAPACITY", map: { u1: 20 } },
+});
 const withDoc = () => { const s = base(); s.accounts[0] = { ...s.accounts[0], documents: [{ id: "d0", category: "Contract", title: "MSA" }] }; return s; };
 
 test("every reducer action is covered by this table", async () => {
@@ -84,7 +105,7 @@ test("every reducer action is covered by this table", async () => {
 
 for (const [type, action] of Object.entries(ACTIONS)) {
   test(`${type}: never mutates state (frozen input) and returns a new state`, () => {
-    const st = type.endsWith("_DOCUMENT") && type !== "ADD_DOCUMENT" ? withDoc() : base();
+    const st = type.endsWith("_DOCUMENT") && type !== "ADD_DOCUMENT" ? withDoc() : implBase();
     const { prev, next } = run(action, st);
     assert.notEqual(next, prev);
   });
@@ -180,7 +201,8 @@ test("DELETE_ACCOUNT cascades, orphans the sub, and writes the sub's cleared par
   assert.ok(!("_orphaned" in A(next, "s1")), "no internal flag leaks into state");
   assert.deepEqual([next.contacts, next.activities, next.tasks, next.opportunities].map(l => l.map(r => r.id)), [["c2"], [], ["t2"], []]);
   assert.deepEqual(deletes(ops), ["accounts:id=a1", "contacts:data->>accountId=a1", "activities:data->>accountId=a1",
-    "tasks:data->>accountId=a1", "opportunities:data->>accountId=a1"]);
+    "tasks:data->>accountId=a1", "opportunities:data->>accountId=a1",
+    "projects:data->>accountId=a1", "project_tasks:data->>accountId=a1"]);
   assert.deepEqual(merges(ops).map(o => [o.rowId, o.patch]), [["s1", { parentId: null }]]);
 });
 
@@ -188,7 +210,7 @@ test("BULK_DELETE: deletes each account's cascade; a sub whose parent survives i
   const { next, ops } = run({ type: "BULK_DELETE", ids: ["b1"] });
   assert.equal(A(next, "s1").parentId, "a1");
   assert.deepEqual(merges(ops), []);
-  assert.equal(deletes(ops).length, 5);
+  assert.equal(deletes(ops).length, 7);
   const both = run(ACTIONS.BULK_DELETE);
   assert.deepEqual(both.next.accounts.map(a => a.id), ["s1"]);
   assert.deepEqual(merges(both.ops).map(o => o.rowId), ["s1"]);
@@ -296,4 +318,69 @@ test("diffRow: trailing growth is an append; reorder/removal/edit is a whole-arr
 test("diffRow: a removed or undefined field travels as explicit null", () => {
   assert.deepEqual(diffRow({ a: 1, b: 2 }, { a: 1 }).patch, { b: null });
   assert.deepEqual(diffRow({ a: 1 }, { a: undefined }).patch, { a: null });
+});
+
+/* ---------------------------- implementation projects ---------------------------- */
+const ACTOR = { id: "u1", name: "Priya", role: "user" };
+const impl = (action, st = implBase()) => run(action, st);
+
+test("SIGNOFF_TASK returned: task back to todo, project to in_progress, other signed task stays signed", () => {
+  const { next, ops } = impl({ type: "SIGNOFF_TASK", taskId: "k2", verdict: "returned", note: "redo", actor: ACTOR, now: "2026-06-15T12:00:00.000Z" });
+  const T = id => next.projectTasks.find(t => t.id === id);
+  assert.equal(T("k2").status, "todo"); assert.equal(T("k2").signoff, "returned"); assert.equal(T("k1").signoff, "signed");
+  assert.equal(next.projects.find(p => p.id === "p1").stage, "in_progress");
+  const m = merges(ops);
+  const proj = m.find(o => o.table === "projects");
+  assert.equal(proj.rowId, "p1"); assert.equal(proj.patch.stage, "in_progress");
+  assert.deepEqual(proj.appends.history.map(h => [h.from, h.to, h.by]), [["csm_review", "in_progress", "Priya"]]);
+  assert.deepEqual(m.filter(o => o.table === "project_tasks").map(o => o.rowId), ["k2"]);
+  const act = m.find(o => o.table === "activities");
+  assert.equal(act.patch.system, true); assert.equal(act.patch.accountId, "a1");
+});
+
+test("SIGNOFF_TASK signed on the last task takes the project live", () => {
+  const { next, ops } = impl({ type: "SIGNOFF_TASK", taskId: "k2", verdict: "signed", note: "", actor: ACTOR, now: "2026-06-15T12:00:00.000Z" });
+  const p = next.projects.find(x => x.id === "p1");
+  assert.equal(p.stage, "live"); assert.equal(p.liveAt, "2026-06-15T12:00:00.000Z");
+  assert.equal(next.projectTasks.find(t => t.id === "k2").signedBy, "Priya");
+  assert.ok(merges(ops).some(o => o.table === "projects" && o.patch.stage === "live"));
+});
+
+test("SIGNOFF_TASK signed with others pending changes only the task (no stage write, no activity)", () => {
+  const st = implBase(); st.projectTasks[0].signoff = "pending";
+  const { ops } = impl({ type: "SIGNOFF_TASK", taskId: "k1", verdict: "signed", note: "", actor: ACTOR, now: "2026-06-15T12:00:00.000Z" }, st);
+  assert.deepEqual(merges(ops).map(o => o.table), ["project_tasks"]);
+});
+
+test("LOG_TASK_TIME appends to timeLog via appends, not a whole-array set", () => {
+  const entry = { by: "Priya", at: "2026-06-15", hours: 2 };
+  const { next, ops } = impl({ type: "LOG_TASK_TIME", id: "k3", entry });
+  assert.deepEqual(next.projectTasks.find(t => t.id === "k3").timeLog, [entry]);
+  assert.deepEqual(merges(ops).map(o => [o.table, o.rowId, o.patch, o.appends]), [["project_tasks", "k3", {}, { timeLog: [entry] }]]);
+});
+
+test("SET_PROJECT_STAGE appends history, stamps startedAt, writes a system activity", () => {
+  const { next, ops } = impl({ type: "SET_PROJECT_STAGE", id: "p2", to: "in_progress", note: "go", actor: ACTOR, now: "2026-06-15T12:00:00.000Z" });
+  const p = next.projects.find(x => x.id === "p2");
+  assert.equal(p.stage, "in_progress"); assert.equal(p.startedAt, "2026-06-15T12:00:00.000Z");
+  assert.equal(next.activities.at(-1).system, true); assert.equal(next.activities.at(-1).accountId, "b1");
+  assert.deepEqual(merges(ops).map(o => o.table), ["projects", "activities"]);
+});
+
+test("project/task add, edit, delete write to projects and project_tasks; settings keys write settings", () => {
+  const a = impl({ type: "ADD_PROJECT", item: { id: "p9", accountId: "a1", stage: "handover" } });
+  assert.deepEqual(merges(a.ops).map(o => [o.table, o.rowId]), [["projects", "p9"]]);
+  const e = impl({ type: "EDIT_PROJECT_TASK", id: "k3", patch: { title: "C2" } });
+  assert.deepEqual(merges(e.ops).map(o => [o.table, o.patch]), [["project_tasks", { title: "C2" }]]);
+  assert.deepEqual(deletes(impl({ type: "DELETE_PROJECT_TASK", id: "k3" }).ops), ["project_tasks:id=k3"]);
+  const s = impl({ type: "SET_IMPL_CAPACITY", map: { u1: 20 } });
+  assert.deepEqual(merges(s.ops).map(o => [o.table, o.patch.implCapacity]), [["settings", { u1: 20 }]]);
+  assert.deepEqual(impl({ type: "SET_IMPL_CHECKLIST", items: [] }).next.settings.implChecklist, []);
+  assert.deepEqual(impl({ type: "SET_IMPL_PLAN_TEMPLATES", items: [{ name: "x" }] }).next.settings.implPlanTemplates, [{ name: "x" }]);
+});
+
+test("DELETE_ACCOUNT also removes that account's projects and tasks from state", () => {
+  const { next } = impl({ type: "DELETE_ACCOUNT", id: "a1" });
+  assert.deepEqual(next.projects.map(p => p.id), ["p2"]);
+  assert.deepEqual(next.projectTasks.map(t => t.id), ["k3"]);
 });

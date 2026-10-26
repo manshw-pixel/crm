@@ -60,8 +60,8 @@ function seedData() {
   Object.assign(accounts[1], { currency: "INR", arr: 15000000 });   // Bluepeak billed in ₹
   Object.assign(accounts[5], { currency: "PHP", arr: 1400000 });    // Helio billed in ₱
   accounts[4].inputsUpdatedAt = addDays(-55);                        // Quartz: stale-inputs demo
-  return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
+  return { accounts, contacts, activities, tasks, opportunities, team: [], projects: [], projectTasks: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], projects: [], projectTasks: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 

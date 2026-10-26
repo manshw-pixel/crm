@@ -17,14 +17,25 @@ const writeQueue = createWriteQueue({
   onChange: st => window.__onQueueChange && window.__onQueueChange(st),
 });
 
+// Only a MISSING table counts as empty (supabase-setup.sql not re-run yet); any other error throws.
+const missingTable = e => e.code === "42P01" || e.code === "PGRST205" || /does not exist|schema cache/i.test(e.message || "");
+function implRows(r) {
+  if (!r.error) return r.data.map(x => x.data);
+  if (missingTable(r.error)) return [];
+  throw r.error;
+}
 const accountNoBackfilled = new Set();
 async function fetchAll() {
   const res = await Promise.all([
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
     sb.from("settings").select("data"),
     sb.from("profiles").select("id,name,role,disabled,finance"),
+    // implementation tables are read LAST so res[0..6] keep their indexes
+    ...IMPL_TABLES.map(t => sb.from(t).select("data")),
   ]);
-  const bad = res.find(r => r.error);
+  // The implementation tables are tolerated missing: until supabase-setup.sql is re-run they
+  // do not exist, and that must not stop the CRM itself from loading.
+  const bad = res.slice(0, 7).find(r => r.error);
   if (bad) throw bad.error;
   const [ac, co, act, ta, op, se] = res.slice(0, 6).map(r => r.data.map(x => x.data));
   ac.forEach(a => { if (!a.currency) a.currency = "USD"; });
@@ -43,8 +54,11 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
+    projects: implRows(res[7]),
+    projectTasks: implRows(res[8]),
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
-      segments: saved.segments || [], customFields: saved.customFields || [] },
+      segments: saved.segments || [], customFields: saved.customFields || [],
+      implChecklist: saved.implChecklist || DEFAULT_IMPL_CHECKLIST, implPlanTemplates: saved.implPlanTemplates || [], implCapacity: saved.implCapacity || {} },
   };
 }
