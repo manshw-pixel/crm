@@ -62,3 +62,10 @@ test("loadQaEnv honours QA_ENV_FILE", async () => {
   try { assert.equal(loadQaEnv().orgName, "Not The QA Org"); }
   finally { if (prev === undefined) delete process.env.QA_ENV_FILE; else process.env.QA_ENV_FILE = prev; }
 });
+
+test("impl user is optional and a partial pair throws", () => {
+  const base = { QA_BASE_URL: "u", QA_ORG_NAME: "CRM", QA_ADMIN_EMAIL: "a", QA_ADMIN_PASS: "p", QA_CSM_EMAIL: "c", QA_CSM_PASS: "p", QA_LEAD_EMAIL: "l", QA_LEAD_PASS: "p" };
+  assert.equal(validateEnv(base).users.impl, null);
+  assert.deepEqual(validateEnv({ ...base, QA_IMPL_EMAIL: "i@x.in", QA_IMPL_PASS: "pw" }).users.impl, { email: "i@x.in", pass: "pw" });
+  assert.throws(() => validateEnv({ ...base, QA_IMPL_EMAIL: "i@x.in" }), /QA_IMPL_PASS/);
+});

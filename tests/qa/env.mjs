@@ -25,9 +25,14 @@ export function validateEnv(e) {
   const amEmail = e.QA_AM_EMAIL, amPass = e.QA_AM_PASS;
   if (amEmail && !amPass) missing.push("QA_AM_PASS");
   if (amPass && !amEmail) missing.push("QA_AM_EMAIL");
+  // Implementation-role user is optional in the same way.
+  const implEmail = e.QA_IMPL_EMAIL, implPass = e.QA_IMPL_PASS;
+  if (implEmail && !implPass) missing.push("QA_IMPL_PASS");
+  if (implPass && !implEmail) missing.push("QA_IMPL_EMAIL");
   if (missing.length) throw new Error(`.env.qa is missing ${missing.join(", ")} -- see .env.qa.example`);
   const users = Object.fromEntries(REQUIRED_ROLES.map(r => [r, { email: e[key(r, "EMAIL")], pass: e[key(r, "PASS")] }]));
   users.am = amEmail && amPass ? { email: amEmail, pass: amPass } : null;
+  users.impl = implEmail && implPass ? { email: implEmail, pass: implPass } : null;
   return { baseUrl: e.QA_BASE_URL, orgName: e.QA_ORG_NAME, users };
 }
 

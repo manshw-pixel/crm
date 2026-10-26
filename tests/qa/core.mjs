@@ -6,8 +6,9 @@ const pad = n => String(n).padStart(2, "0");
 export const makeRunId = (d = new Date()) =>
   `qa-${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}`;
 
-// A scenario's own `skip` reason wins; otherwise AM scenarios skip when no AM user is configured.
-export const skipReason = (s, env) => s.skip ?? ((s.role === "am" && !env.users.am) ? "no AM user configured" : null);
+// A scenario's own `skip` reason wins; otherwise AM / impl scenarios skip when no such user is configured.
+export const skipReason = (s, env) => s.skip ?? ((s.role === "am" && !env.users.am) ? "no AM user configured"
+  : (s.role === "impl" && !env.users.impl) ? "no impl user configured" : null);
 
 // Thrown by a scenario to record itself "skipped" at runtime (e.g. a precondition the org
 // doesn't meet). No retry, no onFail; the message is the skip reason.
