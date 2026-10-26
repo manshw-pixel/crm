@@ -29,8 +29,17 @@ export const scenarios = [
       assert.equal(await page.getByRole("button", { name: "+ New account" }).count(), 0, "impl user sees + New account");
       await openAccount(page, name);
       await page.getByRole("heading", { level: 2, name, exact: true }).waitFor({ timeout: 15000 });
-      for (const label of ["✎ Edit account", "Edit contact", "Delete contact", "Edit task", "Edit activity"])
+      for (const label of ["✎ Edit account", "+ Log activity"])
         assert.equal(await page.getByRole("button", { name: label }).count(), 0, `impl user sees "${label}"`);
+      // Per-row buttons can only be proven absent where rows exist: the section title carries the row count.
+      const sections = [["Open tasks", "Edit task"], ["Contacts", "Edit contact"], ["Contacts", "Delete contact"], ["Activity timeline", "Edit activity"]];
+      const empty = new Set();
+      for (const [title, label] of sections) {
+        const t = await page.getByText(new RegExp(`^${title} \(\d+\)$`)).first().textContent();
+        if (+/\d+/.exec(t)[0] === 0) { empty.add(title); continue; }
+        assert.equal(await page.getByRole("button", { name: label }).count(), 0, `impl user sees "${label}"`);
+      }
       assert.equal(await page.locator("[data-more-actions]").count(), 0, "impl user sees the more-actions menu");
+      if (empty.size) throw new SkipScenario(`fixture account has no rows in: ${[...empty].join(", ")} -- their edit buttons were not proven absent (other checks passed)`);
     } },
 ];

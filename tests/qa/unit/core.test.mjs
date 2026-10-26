@@ -113,3 +113,9 @@ test("redactResult scrubs error, errors[] and reason", async () => {
   assert.ok(!JSON.stringify(r).includes("s3cret!"));
   assert.deepEqual(r.errors, ["a [redacted]", "b"]);
 });
+
+test("skipReason: impl scenarios skip without an impl user", () => {
+  assert.equal(skipReason({ role: "impl" }, { users: { impl: null } }), "no impl user configured");
+  assert.equal(skipReason({ role: "impl" }, { users: { impl: { email: "i", pass: "p" } } }), null);
+  assert.equal(skipReason({ role: "impl", skip: "x" }, { users: { impl: null } }), "x");
+});
