@@ -7,6 +7,7 @@ import { waitForSaved } from "../reset.mjs";
 
 const F = "11-implementation";
 // Rows seeded (as admin, through the UI) on the fixture account for the impl scenario to look at.
+// Locators are substring (non-exact) matches: a contact name shares its element with a "·" line, and long task titles wrap.
 const seeded = thisRunId => ({ contact: `QA ${thisRunId} Impl Contact`, task: `QA ${thisRunId} impl task`, activity: `QA ${thisRunId} impl call` });
 
 export const scenarios = [
@@ -26,7 +27,7 @@ export const scenarios = [
     run: async ({ page, runId, thisRunId }) => {
       const name = `QA ${runId} ${EXPECTED.adminOwned}`, rows = seeded(thisRunId);
       await openAccount(page, name);
-      const has = t => page.getByText(t, { exact: true }).count();
+      const has = t => page.getByText(t).count();
       if (!await has(rows.contact)) {
         await page.locator("[data-more-actions]").click();
         await page.getByRole("menuitem", { name: "+ Contact" }).click();
@@ -48,7 +49,7 @@ export const scenarios = [
         await page.getByRole("button", { name: "Log", exact: true }).click();
         await waitForSaved(page);
       }
-      for (const t of Object.values(rows)) await page.getByText(t, { exact: true }).first().waitFor({ timeout: 10000 });
+      for (const t of Object.values(rows)) await page.getByText(t).first().waitFor({ timeout: 10000 });
     } },
 
   // Needs a QA user already set to impl_user by the org admin; this scenario never creates users or changes roles.
@@ -64,7 +65,7 @@ export const scenarios = [
       await openAccount(page, name);
       // Each section must show the seeded row (so absence below is not vacuous).
       for (const [kind, text] of Object.entries(rows))
-        await page.getByText(text, { exact: true }).first().waitFor({ timeout: 15000 }).catch(() => { throw new Error(`seeded ${kind} "${text}" not visible to the impl user (did ${F}/seed-impl-rows run first?)`); });
+        await page.getByText(text).first().waitFor({ timeout: 15000 }).catch(() => { throw new Error(`seeded ${kind} "${text}" not visible to the impl user (did ${F}/seed-impl-rows run first?)`); });
       for (const label of ["✎ Edit account", "+ Log activity", "+ Add task", "Edit contact", "Delete contact", "Edit task", "Edit activity"])
         assert.equal(await page.getByRole("button", { name: label }).count(), 0, `impl user sees "${label}"`);
       assert.equal(await page.locator("[data-more-actions]").count(), 0, "impl user sees the more-actions menu");
