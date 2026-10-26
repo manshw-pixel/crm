@@ -1562,7 +1562,7 @@ create policy project_tasks_delete on public.project_tasks for delete to authent
 -- QA fix 2026-10-26: a stage change by an implementer also writes a system activity on the
 -- account (src/lib/reducer.js SET_PROJECT_STAGE / SIGNOFF_TASK), which activities_insert
 -- refused for impl roles. This permissive INSERT-only policy (OR'd with activities_insert)
--- admits exactly that row: system:true, on an account where the caller implements a project
+-- admits exactly that row: system:true, type 'note', on an account where the caller implements a project
 -- in this org, or any account for an impl_lead. Insert only: merge_row reaching ON CONFLICT
 -- on an existing activity still needs activities_update, which keeps impl roles out, so an
 -- implementer cannot edit or overwrite activities. For a brand-new id merge_row's proposed
@@ -1573,6 +1573,7 @@ create policy activities_impl_system_insert on public.activities for insert to a
   with check ((select public.is_active()) and org_id = (select public.current_org())
               and (select public.impl_role()) is not null
               and data->>'system' = 'true'
+              and data->>'type' = 'note'      -- what withStage() writes for a stage change
               and coalesce(data->>'accountId', '') <> ''
               and ((select public.is_impl_manager())
                    or exists (select 1 from public.projects p where p.org_id = activities.org_id
@@ -1635,6 +1636,12 @@ begin
   old_stage := od->>'stage';
   mgr := public.is_impl_manager();
   acct := coalesce(od->>'accountId', new.data->>'accountId');
+  -- Projects never move accounts (review of PR #98): a re-pointed project would let its
+  -- implementer log system activities on any account (activities_impl_system_insert).
+  if tg_op = 'UPDATE' and coalesce(new.data->>'accountId', '') <> coalesce(od->>'accountId', '')
+     and not public.is_admin() then
+    raise exception 'A project cannot be moved to another account';
+  end if;
 
   if coalesce(new.data->>'implementerId', '') <> coalesce(od->>'implementerId', '') and not mgr then
     raise exception 'Only an implementation lead or admin can assign the implementer';

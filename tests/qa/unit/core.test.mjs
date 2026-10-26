@@ -35,6 +35,7 @@ test("flaky keeps attempt 1's error and screenshot; pass/fail unchanged", async 
   assert.deepEqual(r[1].firstArtifacts, { screenshot: "wobbly-1.png" });
   assert.equal(r[1].error, undefined);
   assert.deepEqual(r[2].artifacts, { screenshot: "bad-2.png" });
+  assert.deepEqual(r[2].firstArtifacts, { screenshot: "bad-1.png" });
   assert.deepEqual(calls, [["wobbly", 1], ["bad", 1], ["bad", 2]]);
 });
 

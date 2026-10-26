@@ -61,6 +61,7 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
     }
     if (lastErr) {
       const r = { id: s.id, feature: s.feature, title: s.title, status: "fail", attempts: 2, ms: Date.now() - t0, error: String(lastErr.message || lastErr), artifacts };
+      if (firstArtifacts && errs.length === 2) r.firstArtifacts = firstArtifacts;
       // Both attempts failed differently: keep each, since attempt 1's error is often the real cause.
       if (errs.length === 2 && errs[0] !== errs[1]) r.errors = errs;
       results.push(r);
