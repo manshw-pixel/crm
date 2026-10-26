@@ -1,5 +1,5 @@
 import { test, assert } from "./framework.mjs";
-import { launchPersistent, seedAccount } from "./harness.mjs";
+import { launchPersistent, launch, seedAccount, rootText } from "./harness.mjs";
 
 // The implementation tables and settings keys must survive a fetchAll round trip, and the
 // new write path (merge_row, with appends for history/timeLog) must reach the stateful store.
@@ -86,5 +86,28 @@ test("DELETE_ACCOUNT removes the account's projects and tasks from the store", a
       return { projects: d.projects.length, tasks: d.project_tasks.length };
     });
     assert(db.projects === 0 && db.tasks === 0, `cascade reached the store, got ${JSON.stringify(db)}`);
+  } finally { await browser.close(); }
+});
+
+const plain = pre => `${pre}window.__seedRows = { accounts: ${JSON.stringify([seedAccount({ name: "Loaded Co" })])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
+
+test("a missing projects table (SQL not re-run) loads the CRM with empty projects", async () => {
+  for (const err of [{ code: "42P01", message: 'relation "public.projects" does not exist' }, { code: "PGRST205", message: "Could not find the table in the schema cache" }]) {
+    const { page, browser } = await launch(plain(`window.__tableError = { projects: ${JSON.stringify(err)}, project_tasks: ${JSON.stringify(err)} };`));
+    try {
+      await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 1, null, { timeout: 8000 });
+      const s = await read(page);
+      assert(s.projects.length === 0 && s.tasks.length === 0, "projects and tasks empty");
+      assert(/Loaded Co/.test(await rootText(page)), "the CRM data rendered");
+    } finally { await browser.close(); }
+  }
+});
+
+test("any other error on the projects table fails the load like the other tables", async () => {
+  const { page, browser } = await launch(plain('window.__tableError = { projects: { code: "42501", message: "permission denied for table projects" } };'));
+  try {
+    await page.waitForFunction(() => /Fresh start/.test(document.getElementById("root").textContent), null, { timeout: 8000 });
+    const n = await page.evaluate(() => window.__store.getState().accounts.length);
+    assert(n === 0, `a hard error must not load partial data, got ${n} accounts`);
   } finally { await browser.close(); }
 });

@@ -17,6 +17,13 @@ const writeQueue = createWriteQueue({
   onChange: st => window.__onQueueChange && window.__onQueueChange(st),
 });
 
+// Only a MISSING table counts as empty (supabase-setup.sql not re-run yet); any other error throws.
+const missingTable = e => e.code === "42P01" || e.code === "PGRST205" || /does not exist|schema cache/i.test(e.message || "");
+function implRows(r) {
+  if (!r.error) return r.data.map(x => x.data);
+  if (missingTable(r.error)) return [];
+  throw r.error;
+}
 const accountNoBackfilled = new Set();
 async function fetchAll() {
   const res = await Promise.all([
@@ -47,8 +54,8 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
-    projects: res[7].error ? [] : res[7].data.map(x => x.data),
-    projectTasks: res[8].error ? [] : res[8].data.map(x => x.data),
+    projects: implRows(res[7]),
+    projectTasks: implRows(res[8]),
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
       segments: saved.segments || [], customFields: saved.customFields || [],
