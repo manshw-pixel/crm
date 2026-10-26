@@ -17,7 +17,7 @@ const PLAN_HOURS = 4, LOG_HOURS = 2;
 
 // Opens this run's project from the Implementation board: a card of the fixture account, in one of `stages`, whose detail
 // shows the run's marker (every text item of the handover is filled with it). Fails loudly when none is found.
-async function openRunProject(page, runId, thisRunId, stages, hint) {
+async function openRunProject(page, runId, thisRunId, stages, hint, soft = false) {
   await nav(page, "Implementation").click();
   await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
   const name = fixtureName(runId);
@@ -33,6 +33,7 @@ async function openRunProject(page, runId, thisRunId, stages, hint) {
       await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
     }
   }
+  if (soft) return null;
   throw new Error(`no ${stages.join("/")} project of "${name}" carrying this run's marker QA ${thisRunId} on the board (${hint})`);
 }
 const loggedOf = async row => {
@@ -106,9 +107,21 @@ export const scenarios = [
   // Each fails (never skips) when the previous one's project is missing; the only skip is an unconfigured impl user.
   { id: `${F}/handover-required`, feature: F, title: "Handover refuses a missing required item, then queues the project", role: "csm",
     run: async ({ page, runId, thisRunId }) => {
+      // Retry-safe: if an earlier attempt already queued this run's project, do not create a second one.
+      const existing = await openRunProject(page, runId, thisRunId, ["queued", "planning", "in_progress", "csm_review", "live"], "", true);
+      if (existing) {
+        const st = await existing.getAttribute("data-stage");
+        assert.ok(["queued", "planning", "in_progress", "csm_review", "live"].includes(st), `existing project is in stage ${st}, expected Queued or later`);
+        return;
+      }
+      // The csm defaults to "My book"; the fixture account is admin-owned, so widen the scope first.
+      await nav(page, "Accounts").click();
+      await page.locator("[data-scope-toggle] button").filter({ hasText: /^All$/ }).click();
       await openAccount(page, fixtureName(runId));
       const rows = page.locator("[data-project-row]");
+      await page.getByText(/^Projects \(\d+\)$/).first().waitFor({ timeout: 15000 });
       const before = await rows.count();
+      const idsBefore = await rows.evaluateAll(rs => rs.map(r => r.getAttribute("data-project-row")));
       await page.locator("[data-new-project]").click();
       const form = page.locator("[data-handover-form]");
       await form.waitFor({ timeout: 15000 });
@@ -134,6 +147,7 @@ export const scenarios = [
       // 1) nothing filled: refused, naming the first required item.
       await submit();
       await errBox.waitFor({ timeout: 10000 });
+      await page.waitForFunction(l => document.querySelector("[data-handover-error]")?.textContent.includes(l), req[0].label, { timeout: 10000 });
       assert.ok((await errBox.innerText()).includes(req[0].label), `empty submit error "${await errBox.innerText()}" does not name "${req[0].label}"`);
       // 2) everything required (and every text item) filled except the last required item: refused, naming exactly that one.
       const last = req.at(-1);
@@ -147,9 +161,12 @@ export const scenarios = [
       await form.waitFor({ state: "detached", timeout: 15000 });
       await waitForSaved(page);
       assert.equal(await rows.count(), before + 1, "Projects card did not gain the new project");
-      const queued = page.locator('[data-project-row][data-stage="queued"]');
-      assert.ok(await queued.count() >= 1, "no Queued project row after submitting the handover");
-      assert.ok((await queued.last().innerText()).includes("Queued"), "the new project row does not read Queued");
+      const idsAfter = await rows.evaluateAll(rs => rs.map(r => r.getAttribute("data-project-row")));
+      const newIds = idsAfter.filter(id => !idsBefore.includes(id));
+      assert.equal(newIds.length, 1, `expected exactly one new project row, got ${newIds.length}`);
+      const fresh = page.locator(`[data-project-row="${newIds[0]}"]`);
+      assert.equal(await fresh.getAttribute("data-stage"), "queued", "the new project is not Queued");
+      assert.ok((await fresh.innerText()).includes("Queued"), "the new project row does not read Queued");
     } },
 
   { id: `${F}/assign-and-plan`, feature: F, title: "Admin assigns the project (to Planning), adds a task and starts it", role: "admin",
@@ -160,7 +177,8 @@ export const scenarios = [
         if (!env?.users?.impl || !implName) throw new SkipScenario("no impl user configured");
         await detail.locator('[data-stage-action="assign"]').click();
         const row = page.locator("[data-assign-row]").filter({ hasText: implName });
-        if (!await row.count()) throw new SkipScenario(`impl user "${implName}" is not listed in the assign dialog (disabled or not an implementer)`);
+        await page.locator("[data-assign-row], :text('No active implementers')").first().waitFor({ timeout: 15000 });
+        if (!await row.count()) throw new Error(`impl user "${implName}" is configured but not listed in the assign dialog (disabled, or not role impl_user/impl_lead?)`);
         await row.first().getByRole("button", { name: "Assign", exact: true }).click();
         await page.locator('[data-project-detail][data-stage="planning"]').waitFor({ timeout: 15000 });
         await waitForSaved(page);
@@ -184,7 +202,7 @@ export const scenarios = [
         await page.locator('[data-project-detail][data-stage="in_progress"]').waitFor({ timeout: 15000 });
         await waitForSaved(page);
       }
-      assert.equal((await detail.locator("[data-project-stage]").innerText()).trim(), "In progress");
+      assert.equal((await detail.locator("[data-project-stage]").innerText()).trim(), "In progress", "project stage text is not In progress after Start");
     } },
 
   { id: `${F}/log-time`, feature: F, title: "Impl user logs hours on the task; sign-off stays disabled until it is done", role: "impl",
@@ -198,15 +216,19 @@ export const scenarios = [
       assert.equal(await review.isDisabled(), true, "'Send for sign-off' is enabled although the task is not done");
       assert.equal(await task.first().locator("[data-task-status]").inputValue(), "todo", "task is not still To do");
       const before = await loggedOf(task.first());
-      await task.first().locator("[data-task-log-hours]").fill(String(LOG_HOURS));
-      await task.first().locator("[data-task-log]").click();
+      // Retry-safe: an earlier attempt may already have logged the hours.
+      const target = before >= LOG_HOURS ? before : before + LOG_HOURS;
+      if (before < LOG_HOURS) {
+        await task.first().locator("[data-task-log-hours]").fill(String(LOG_HOURS));
+        await task.first().locator("[data-task-log]").click();
+      }
       await page.waitForFunction(([t, want]) => {
         const r = [...document.querySelectorAll("[data-task-row]")].find(e => e.textContent.includes(t));
         const m = r && /^(\d+(?:\.\d+)?)h \//.exec(r.querySelector("[data-task-logged]")?.textContent.trim() || "");
         return !!m && +m[1] === want;
-      }, [planTask(thisRunId), before + LOG_HOURS], { timeout: 15000 });
+      }, [planTask(thisRunId), target], { timeout: 15000 });
       await waitForSaved(page);
-      assert.equal(await loggedOf(task.first()), before + LOG_HOURS);
+      assert.equal(await loggedOf(task.first()), target, "logged hours do not match");
       assert.equal(await review.isDisabled(), true, "'Send for sign-off' became enabled after logging time");
     } },
 ];
