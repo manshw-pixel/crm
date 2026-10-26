@@ -314,3 +314,28 @@ test("impl_lead saves plan templates via the RPC; impl_user and a CSM cannot; ot
     else await sql(`delete from settings where org_id = $1`, [ORG_A]); // the RPC created the row: leave none, as found
   }
 });
+
+test("impl roles insert only system activities on their project's account; never edit one", async () => {
+  const lead = await implLead(); const other = await otherImpl();
+  const cleanActs = () => sql(`delete from public.activities where id like 'im-%'`);
+  try {
+    const impl = await world();
+    await seed("accounts", "im-acc2", { name: "ElseCo", csm: "Plain User", arr: 50 });
+    const sys = (accountId) => ({ accountId, type: "Note", date: "2026-10-26", summary: "Implementation project moved", system: true });
+    ok(await merge(impl.client, "activities", "im-a1", sys("im-acc")), "implementer system activity on own project's account");
+    assert(await stillExists("activities", "im-a1"), "implementer system activity did not land");
+    const plain = await merge(impl.client, "activities", "im-a2", { ...sys("im-acc"), system: false });
+    assert(plain.error && !(await stillExists("activities", "im-a2")), "implementer created a non-system activity");
+    const away = await merge(impl.client, "activities", "im-a3", sys("im-acc2"));
+    assert(away.error && !(await stillExists("activities", "im-a3")), "implementer logged a system activity on another account");
+    const foreign = await merge(other.client, "activities", "im-a4", sys("im-acc"));
+    assert(foreign.error && !(await stillExists("activities", "im-a4")), "another impl_user logged on a project not theirs");
+    await seed("activities", "im-a5", { accountId: "im-acc", type: "Call", summary: "orig" });
+    const edit = await merge(impl.client, "activities", "im-a5", { summary: "hacked", system: true, accountId: "im-acc" });
+    assert(edit.error, "implementer edited an existing activity");
+    assert((await valueOf("activities", "im-a5")).summary === "orig", "activity changed despite the error");
+    ok(await merge(lead.client, "activities", "im-a6", sys("im-acc2")), "impl_lead system activity");
+    assert(await stillExists("activities", "im-a6"), "impl_lead system activity did not land");
+    ok(await merge(sessions.user, "activities", "im-a7", { accountId: "im-acc", type: "Call", summary: "csm" }), "control: CSM activity");
+  } finally { await cleanActs(); await clean(); }
+});

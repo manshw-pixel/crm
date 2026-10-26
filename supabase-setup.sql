@@ -1559,6 +1559,26 @@ create policy project_tasks_delete on public.project_tasks for delete to authent
                              and p.id = project_tasks.data->>'projectId'
                              and p.data->>'stage' in ('live', 'cancelled'))));
 
+-- QA fix 2026-10-26: a stage change by an implementer also writes a system activity on the
+-- account (src/lib/reducer.js SET_PROJECT_STAGE / SIGNOFF_TASK), which activities_insert
+-- refused for impl roles. This permissive INSERT-only policy (OR'd with activities_insert)
+-- admits exactly that row: system:true, on an account where the caller implements a project
+-- in this org, or any account for an impl_lead. Insert only: merge_row reaching ON CONFLICT
+-- on an existing activity still needs activities_update, which keeps impl roles out, so an
+-- implementer cannot edit or overwrite activities. For a brand-new id merge_row's proposed
+-- row is the full activity, so WITH CHECK judges the whole row. Invoker subquery: projects
+-- RLS applies to it as the caller.
+drop policy if exists activities_impl_system_insert on public.activities;
+create policy activities_impl_system_insert on public.activities for insert to authenticated
+  with check ((select public.is_active()) and org_id = (select public.current_org())
+              and (select public.impl_role()) is not null
+              and data->>'system' = 'true'
+              and coalesce(data->>'accountId', '') <> ''
+              and ((select public.is_impl_manager())
+                   or exists (select 1 from public.projects p where p.org_id = activities.org_id
+                              and p.data->>'accountId' = activities.data->>'accountId'
+                              and p.data->>'implementerId' = auth.uid()::text)));
+
 -- Is the caller the CSM (by display name, read live) of this account? Names, not ids: the
 -- account's csm field is free text kept in sync by renameEverywhere().
 create or replace function public.is_account_csm(p_org uuid, p_account text)

@@ -71,7 +71,15 @@ async function implSendForSignoff(page, runId, thisRunId) {
     .catch(() => { throw new Error("'Send for sign-off' stayed disabled although the only task is Done"); });
   await detail.locator('[data-stage-action="review"]').click();
   await page.locator('[data-project-detail][data-stage="csm_review"]').waitFor({ timeout: 15000 });
+  await implSaved(page, "Send for sign-off");
+}
+// After an impl user's stage change: the whole write (project AND its system activity) must persist. waitForSaved fails on
+// the queue's "error"; the toast/header checks also catch a refusal the queue already rolled back (an RLS-denied
+// activity once did exactly that, and the retry -- which no-ops in CSM review -- hid it).
+async function implSaved(page, what) {
   await waitForSaved(page);
+  assert.equal(await page.getByText(/Save failed/).count(), 0, `${what}: a "Save failed" toast is showing -- a write was refused`);
+  assert.equal(await page.getByText("Not saved", { exact: true }).count(), 0, `${what}: the header reads "Not saved"`);
 }
 
 export const scenarios = [
