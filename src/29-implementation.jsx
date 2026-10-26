@@ -56,7 +56,7 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
   );
 }
 
-function ProjectsCard({ account, st, dispatch, user, open, setOpen }) {
+function ProjectsCard({ account, st, dispatch, user, open, setOpen, openProject }) {
   const projects = (st.projects || []).filter(p => p.accountId === account.id);
   const canCreate = !isImplRole(user);
   return (
@@ -65,7 +65,9 @@ function ProjectsCard({ account, st, dispatch, user, open, setOpen }) {
       {open && canCreate && <div className="mb-3"><HandoverForm key={account.id} account={account} st={st} dispatch={dispatch} user={user} onDone={() => setOpen(false)} /></div>}
       {projects.length === 0 && <div className="text-sm text-slate-500">No implementation projects.</div>}
       {projects.map(p => (
-        <div key={p.id} data-project-row={p.id} data-stage={p.stage} data-type={p.type} className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+        <div key={p.id} data-project-row={p.id} data-stage={p.stage} data-type={p.type} role={openProject ? "button" : undefined} tabIndex={openProject ? 0 : undefined}
+          onClick={openProject ? () => openProject(p.id) : undefined} onKeyDown={openProject ? e => { if (e.key === "Enter") openProject(p.id); } : undefined}
+          className={`flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0 ${openProject ? "cursor-pointer hover:bg-slate-50" : ""}`}>
           <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{IMPL_TYPE_LABEL[p.type] || p.type}</span>
           <span className="flex-1 font-medium">{STAGE_LABEL[p.stage] || p.stage}</span>
           {p.targetGoLive && <span className="text-xs text-slate-500">go-live {fmtDate(p.targetGoLive)}</span>}
@@ -75,31 +77,70 @@ function ProjectsCard({ account, st, dispatch, user, open, setOpen }) {
   );
 }
 
-function ImplementationPage({ st, dispatch, user }) {
+var BOARD_COLUMNS = ["queued", "planning", "in_progress", "csm_review", "live"];
+var BOARD_COLLAPSED = ["on_hold", "cancelled"];
+
+function BoardCard({ p, st, onOpen }) {
+  const acct = (st.accounts || []).find(a => a.id === p.accountId);
+  const tasks = (st.projectTasks || []).filter(t => t.projectId === p.id);
+  const done = tasks.filter(t => t.status === "done").length;
+  return (
+    <button data-board-project={p.id} onClick={() => onOpen(p.id)} className="nm-btn mb-2 block w-full p-2 text-left text-xs">
+      <div className="text-sm font-semibold text-slate-800">{acct ? acct.name : "Unknown account"}</div>
+      <div className="text-slate-500">{IMPL_TYPE_LABEL[p.type] || p.type} · {p.implementerId ? teamName(st, p.implementerId) : "Unassigned"}</div>
+      <div className="text-slate-500">{p.targetGoLive ? `go-live ${fmtDate(p.targetGoLive)} · ` : ""}{done}/{tasks.length} tasks</div>
+    </button>
+  );
+}
+
+function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
   const [tab, setTab] = useState("Board");
-  const projects = st.projects || [];
+  const [localId, setLocalId] = useState(null);
+  const selId = setProjectId ? projectId : localId;
+  const select = setProjectId || setLocalId;
+  const [who, setWho] = useState("");
+  const [type, setType] = useState("");
+  const projects = (st.projects || []).filter(p => (!who || (who === "_mine" ? p.implementerId === user.id : p.implementerId === who)) && (!type || p.type === type));
   const acctName = id => ((st.accounts || []).find(a => a.id === id) || {}).name || "Unknown account";
-  const myTasks = (st.projectTasks || []).filter(t => t.ownerId === user.id && t.status !== "done");
+  const myTasks = (st.projectTasks || []).filter(t => t.ownerId === user.id && t.status !== "done")
+    .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
+  const impls = implementersOf(st);
+  if (selId) return <Card title="Implementation project"><ProjectDetail st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
+  const column = s => {
+    const rows = projects.filter(p => p.stage === s);
+    return rows.map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} />);
+  };
   return (
     <Card title="Implementation projects">
       <div className="mb-3 flex gap-2" role="tablist">
         {["Board", "Workload", "My tasks"].map(t => <button key={t} role="tab" aria-selected={tab === t} data-impl-tab={t}
           className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === t ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(t)}>{t}</button>)}
       </div>
-      {tab === "Board" && (projects.length === 0 ? <div className="text-sm text-slate-500">No projects yet.</div>
-        : STAGES.map(s => {
-          const rows = projects.filter(p => p.stage === s);
-          if (!rows.length) return null;
-          return <div key={s} data-board-stage={s} className="mb-3">
-            <div className="text-xs font-bold uppercase text-slate-500">{STAGE_LABEL[s]} ({rows.length})</div>
-            {rows.map(p => <div key={p.id} data-board-project={p.id} className="flex gap-3 py-1 text-sm">
-              <span className="flex-1 font-medium">{acctName(p.accountId)}</span>
-              <span className="text-xs text-slate-500">{IMPL_TYPE_LABEL[p.type] || p.type}</span></div>)}
-          </div>;
-        }))}
+      {tab === "Board" && <>
+        <div className="mb-3 flex flex-wrap gap-2">
+          <Select data-board-filter-who aria-label="Implementer filter" value={who} onChange={e => setWho(e.target.value)}
+            options={["", "_mine", ...impls.map(u => u.id)]} labels={{ "": "All implementers", _mine: "Mine", ...Object.fromEntries(impls.map(u => [u.id, u.name])) }} />
+          <Select data-board-filter-type aria-label="Type filter" value={type} onChange={e => setType(e.target.value)}
+            options={["", "onboarding", "expansion"]} labels={{ "": "All types", ...IMPL_TYPE_LABEL }} />
+        </div>
+        <div className="flex gap-3 overflow-x-auto pb-2">
+          {BOARD_COLUMNS.map(s => <div key={s} data-board-column={s} className="w-56 shrink-0">
+            <div className="mb-2 text-xs font-bold uppercase text-slate-500">{STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</div>
+            {column(s)}
+          </div>)}
+        </div>
+        {BOARD_COLLAPSED.map(s => <details key={s} data-board-column={s} data-board-collapsed className="mt-2">
+          <summary className="cursor-pointer text-xs font-bold uppercase text-slate-500">{STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</summary>
+          <div className="mt-2 grid grid-cols-1 gap-x-3 sm:grid-cols-3">{column(s)}</div>
+        </details>)}
+      </>}
       {tab === "Workload" && <div className="text-sm text-slate-500">Workload view — coming soon.</div>}
       {tab === "My tasks" && (myTasks.length === 0 ? <div className="text-sm text-slate-500">No open tasks assigned to you.</div>
-        : myTasks.map(t => <div key={t.id} className="py-1 text-sm">{t.title}</div>))}
+        : myTasks.map(t => <button key={t.id} data-my-task={t.id} onClick={() => select(t.projectId)}
+          className="flex w-full gap-3 border-b border-slate-100 py-1.5 text-left text-sm last:border-0">
+          <span className="flex-1 font-medium">{t.title}</span>
+          <span className="text-xs text-slate-500">{acctName(t.accountId)}</span>
+          <span className="text-xs text-slate-500">{t.due ? `due ${fmtDate(t.due)}` : "no due date"}</span></button>))}
     </Card>
   );
 }

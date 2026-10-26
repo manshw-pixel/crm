@@ -29,7 +29,7 @@ const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
     <span className="text-sm font-semibold text-slate-700">{value}</span>
   </span>
 );
-function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject }) {
   const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -329,7 +329,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
         onConfirm={() => confirmOpp.run()}
         onClose={() => setConfirmOpp(null)} />}
-      <ProjectsCard account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} />
+      <ProjectsCard account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
       <DocumentsCard a={a} dispatch={dispatch} user={user} readOnly={ro} />
       {(() => {
         const events = [

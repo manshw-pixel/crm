@@ -143,6 +143,7 @@ function App({ user, onBackToClients }) {
   const [loadFailed, setLoadFailed] = useState(false);
   const [view, setView] = useState(() => isImplRole(user) ? "Implementation" : "Dashboard");
   const [acctId, setAcctId] = useState(null);
+  const [implProjectId, setImplProjectId] = useState(null); // project detail open on the Implementation page
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingForm, setPendingForm] = useState(null); // form to auto-open on next AccountDetail mount (from palette)
@@ -504,11 +505,11 @@ function App({ user, onBackToClients }) {
       </div>
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
-        {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} />}
+        {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} projectId={implProjectId} setProjectId={setImplProjectId} />}
         {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
         {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
         {view === "Accounts" && (acctId
-          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
+          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={id => { setImplProjectId(id); setView("Implementation"); }} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
         {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
