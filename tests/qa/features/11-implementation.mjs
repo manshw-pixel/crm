@@ -4,6 +4,7 @@ import { openAccount, searchCount, isoPlus } from "./_accounts.mjs";
 import { EXPECTED } from "../fixtures/expected.mjs";
 import { SkipScenario } from "../core.mjs";
 import { waitForSaved } from "../reset.mjs";
+import { signIn } from "../session.mjs";
 
 const F = "11-implementation";
 // Rows seeded (as admin, through the UI) on the fixture account for the impl scenario to look at.
@@ -41,6 +42,31 @@ const loggedOf = async row => {
   assert.ok(m, "task row shows no logged-hours figure");
   return Number(m[1]);
 };
+
+// ---- PR 3 helpers (sign-off, go-live, workload, dashboard). They continue the PR 2 project of this run. ----
+// The fixture account is owned by the QA admin (fixtures/accounts.csv Orchid Bank = {ADMIN}), and only the account's CSM or an
+// admin may sign off (src/30-project-detail.jsx `reviewer`). The csm user is NOT this account's CSM, so the reviewer here is admin.
+const RETURN_NOTE = thisRunId => `QA ${thisRunId} please fix the plan task`;
+const ALL_STAGES = ["in_progress", "csm_review", "live"];
+// Runs fn(reviewerPage) as the QA admin in its own signed-in context (the scenario's own page is the impl user's).
+async function asAdmin(ctx, fn) {
+  const admin = await signIn(ctx.context.browser(), ctx.env, "admin");
+  try { return await fn(admin.page); } finally { await admin.close(); }
+}
+// Impl side: mark the run's plan task Done and Send for sign-off. No-op when the project is already in CSM review or Live.
+async function implSendForSignoff(page, runId, thisRunId) {
+  const detail = await openRunProject(page, runId, thisRunId, ALL_STAGES, "did the earlier 11-implementation scenarios run?");
+  if (await detail.getAttribute("data-stage") !== "in_progress") return;
+  const task = detail.locator("[data-task-row]").filter({ hasText: planTask(thisRunId) });
+  await task.first().waitFor({ timeout: 15000 }).catch(() => { throw new Error(`plan task "${planTask(thisRunId)}" not found in the project (did ${F}/assign-and-plan run first?)`); });
+  const status = task.first().locator("[data-task-status]");
+  if (await status.inputValue() !== "done") { await status.selectOption("done"); await waitForSaved(page); }
+  await page.waitForFunction(() => { const b = document.querySelector('[data-stage-action="review"]'); return !!b && !b.disabled; }, null, { timeout: 15000 })
+    .catch(() => { throw new Error("'Send for sign-off' stayed disabled although the only task is Done"); });
+  await detail.locator('[data-stage-action="review"]').click();
+  await page.locator('[data-project-detail][data-stage="csm_review"]').waitFor({ timeout: 15000 });
+  await waitForSaved(page);
+}
 
 export const scenarios = [
   // Read-only: inspects the role dropdown options of an existing user row; nothing is changed or saved.
@@ -230,5 +256,103 @@ export const scenarios = [
       await waitForSaved(page);
       assert.equal(await loggedOf(task.first()), target, "logged hours do not match");
       assert.equal(await review.isDisabled(), true, "'Send for sign-off' became enabled after logging time");
+    } },
+
+  // PR 3. Return and go-live share the run's project: Done + Send for sign-off (impl) -> Send back (reviewer) -> again -> Sign off.
+  { id: `${F}/signoff-return`, feature: F, title: "Impl sends for sign-off; the reviewer sends it back with a note", role: "impl",
+    run: async ctx => {
+      const { page, runId, thisRunId, env } = ctx;
+      if (!env?.users?.impl) throw new SkipScenario("no impl user configured");
+      const note = RETURN_NOTE(thisRunId);
+      const probe = await openRunProject(page, runId, thisRunId, ALL_STAGES, "", true);
+      if (!probe) throw new Error(`no in-progress/CSM-review/live project of the run on the board (did ${F}/log-time run first?)`);
+      const stage0 = await probe.getAttribute("data-stage");
+      // Retry-safe: Live means an earlier run went through the return; In progress with a returned task means this step is done.
+      if (stage0 === "live") return;
+      if (stage0 === "in_progress" && await probe.locator("[data-task-returned]").count()) {
+        assert.ok((await probe.locator("[data-task-returned]").first().innerText()).includes(note), "task is returned but not with this run's note");
+        return;
+      }
+      await implSendForSignoff(page, runId, thisRunId);
+      await asAdmin(ctx, async ap => {
+        const detail = await openRunProject(ap, runId, thisRunId, ["csm_review"], "the impl user's Send for sign-off did not reach CSM review");
+        const task = detail.locator("[data-task-row]").filter({ hasText: planTask(thisRunId) }).first();
+        await task.locator("[data-task-sendback]").click();
+        await task.locator("[data-sendback-note]").fill(note);
+        await task.locator("[data-sendback-confirm]").click();
+        await ap.locator('[data-project-detail][data-stage="in_progress"]').waitFor({ timeout: 15000 });
+        await waitForSaved(ap);
+        assert.equal((await detail.locator("[data-project-stage]").innerText()).trim(), "In progress", "project is not In progress after Send back");
+        assert.ok((await task.locator("[data-task-returned]").innerText()).includes(note), "the Send back note is not shown on the task");
+        assert.equal(await task.locator("[data-task-status]").inputValue(), "todo", "returned task is not back to To do");
+      });
+      // The implementer sees the note too.
+      const detail = await openRunProject(page, runId, thisRunId, ["in_progress"], "project is not In progress for the impl user after Send back");
+      await detail.locator("[data-task-returned]").first().waitFor({ timeout: 15000 });
+      assert.ok((await detail.locator("[data-task-returned]").first().innerText()).includes(note), "impl user does not see the return note");
+    } },
+
+  { id: `${F}/go-live`, feature: F, title: "Impl re-sends; the reviewer signs off; the project goes Live", role: "impl",
+    run: async ctx => {
+      const { page, runId, thisRunId, env } = ctx;
+      if (!env?.users?.impl) throw new SkipScenario("no impl user configured");
+      const probe = await openRunProject(page, runId, thisRunId, ALL_STAGES, "", true);
+      if (!probe) throw new Error(`no in-progress/CSM-review/live project of the run on the board (did ${F}/signoff-return run first?)`);
+      const stage0 = await probe.getAttribute("data-stage");
+      if (stage0 === "in_progress" && !await probe.locator("[data-task-returned]").count())
+        throw new Error(`project is In progress but the task was never sent back (did ${F}/signoff-return run first?)`);
+      if (stage0 !== "live") {
+        await implSendForSignoff(page, runId, thisRunId);
+        await asAdmin(ctx, async ap => {
+          const detail = await openRunProject(ap, runId, thisRunId, ["csm_review"], "the impl user's Send for sign-off did not reach CSM review");
+          const task = detail.locator("[data-task-row]").filter({ hasText: planTask(thisRunId) }).first();
+          await task.locator("[data-task-signoff]").click();
+          await ap.locator('[data-project-detail][data-stage="live"]').waitFor({ timeout: 15000 });
+          await waitForSaved(ap);
+        });
+      }
+      await asAdmin(ctx, async ap => {
+        const detail = await openRunProject(ap, runId, thisRunId, ["live"], "project is not in the Live column after sign-off");
+        assert.equal((await detail.locator("[data-project-stage]").innerText()).trim(), "Live", "project stage text is not Live");
+        await detail.locator("[data-task-signed]").first().waitFor({ timeout: 15000 });
+        await ap.locator("[data-project-back]").click();
+        await ap.locator("[data-board-column=live] [data-board-project]").filter({ hasText: fixtureName(runId) }).first().waitFor({ timeout: 15000 });
+      });
+    } },
+
+  { id: `${F}/workload-visible`, feature: F, title: "Admin's Workload tab lists the impl user with active count and hours", role: "admin",
+    run: async ({ page, env, implName }) => {
+      if (!env?.users?.impl || !implName) throw new SkipScenario("no impl user configured");
+      await nav(page, "Implementation").click();
+      await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
+      await page.locator('[data-impl-tab="Workload"]').click();
+      await page.locator("[data-workload-table]").waitFor({ timeout: 15000 });
+      const row = page.locator("[data-workload-row]").filter({ hasText: implName });
+      assert.equal(await row.count(), 1, `Workload lists ${await row.count()} rows for "${implName}", expected 1`);
+      for (const col of ["active", "remaining", "logged30"]) {
+        const txt = (await row.locator(`[data-col=${col}]`).innerText()).trim();
+        assert.match(txt, col === "active" ? /^\d+$/ : /^\d+(\.\d+)?h$/, `Workload ${col} cell is "${txt}"`);
+      }
+      // log-time logged 2h within the last 30 days.
+      const logged = parseFloat(await row.locator("[data-col=logged30]").innerText());
+      assert.ok(logged >= LOG_HOURS, `Logged 30d is ${logged}h, expected at least the ${LOG_HOURS}h logged by log-time`);
+    } },
+
+  { id: `${F}/dashboard-chart`, feature: F, title: "Dashboard Implementation projects card: 12 months, Q1-Q4, current period has a Completed project", role: "admin",
+    run: async ({ page }) => {
+      await nav(page, "Dashboard").click();
+      const card = page.locator("[data-impl-chart]");
+      await card.waitFor({ timeout: 20000 });
+      const labels = () => card.locator("[data-impl-period-label]").allInnerTexts().then(a => a.map(x => x.trim()));
+      const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+      assert.deepEqual(await labels(), MONTHS, "Month mode does not show Jan..Dec");
+      // The run's project went Live now, so the current month counts it as Completed.
+      const bar = card.locator(`[data-impl-bar="${MONTHS[new Date().getMonth()]}"]`);
+      assert.ok(+await bar.getAttribute("data-completed") >= 1, `current month shows ${await bar.getAttribute("data-completed")} Completed, expected at least 1 (did ${F}/go-live run?)`);
+      await page.locator("[data-impl-mode=quarter]").click();
+      await page.waitForFunction(() => document.querySelectorAll("[data-impl-period-label]").length === 4, null, { timeout: 10000 });
+      assert.deepEqual(await labels(), ["Q1", "Q2", "Q3", "Q4"], "Quarter mode does not show Q1..Q4");
+      const q = card.locator(`[data-impl-bar="Q${Math.floor(new Date().getMonth() / 3) + 1}"]`);
+      assert.ok(+await q.getAttribute("data-completed") >= 1, "current quarter shows no Completed project");
     } },
 ];
