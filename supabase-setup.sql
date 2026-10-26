@@ -41,7 +41,7 @@ on conflict (id) do nothing;
 create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   name text not null default 'CSM',
-  role text not null default 'user' check (role in ('admin','user','lead')),
+  role text not null default 'user' check (role in ('admin','user','lead','impl_lead','impl_user')),
   created_at timestamptz not null default now()
 );
 
@@ -57,7 +57,7 @@ alter table public.profiles
 -- Lead role (spec 2026-10-13 PR 3). create table if not exists never touches an existing
 -- constraint, so swap it idempotently for databases created before 'lead' existed.
 alter table public.profiles drop constraint if exists profiles_role_check;
-alter table public.profiles add constraint profiles_role_check check (role in ('admin','user','lead'));
+alter table public.profiles add constraint profiles_role_check check (role in ('admin','user','lead','impl_lead','impl_user'));
 
 -- org_id is NULL for a sign-up that matched no invite: such a user has a valid session and
 -- reads nothing (is_active() requires an org). platform_admin can only be set by SQL or by
@@ -90,7 +90,7 @@ update public.profiles set platform_admin = true,
 create table if not exists public.invites (
   email text not null,
   org_id uuid not null references public.orgs(id) on delete cascade,
-  role text not null check (role in ('admin','user','lead')),
+  role text not null check (role in ('admin','user','lead','impl_lead','impl_user')),
   created_by uuid references auth.users(id) on delete set null,
   created_at timestamptz not null default now(),
   accepted_at timestamptz,
@@ -98,7 +98,7 @@ create table if not exists public.invites (
 );
 alter table public.invites enable row level security;
 alter table public.invites drop constraint if exists invites_role_check;
-alter table public.invites add constraint invites_role_check check (role in ('admin','user','lead'));
+alter table public.invites add constraint invites_role_check check (role in ('admin','user','lead','impl_lead','impl_user'));
 -- At most ONE open invite per address across all orgs. Without this, handle_new_user had to
 -- pick among several orgs' invites, and any org admin could re-invite someone else's pending
 -- owner to capture their sign-up. Blocks invite_user, create_org and the invites_insert
@@ -182,6 +182,26 @@ begin
   end loop;
 end $$;
 
+-- Implementation projects (spec 2026-10-26). Same shape as the entity tables, but NOT in
+-- their loops: replace_all and the lead child loops must not touch them. Created here (not
+-- in their section at the end) so the realtime publication loop below can add them.
+create table if not exists public.projects (
+  org_id uuid not null default public.current_org() references public.orgs(id) on delete cascade,
+  id text not null,
+  data jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (org_id, id)
+);
+create table if not exists public.project_tasks (
+  org_id uuid not null default public.current_org() references public.orgs(id) on delete cascade,
+  id text not null,
+  data jsonb not null,
+  updated_at timestamptz not null default now(),
+  primary key (org_id, id)
+);
+alter table public.projects enable row level security;
+alter table public.project_tasks enable row level security;
+
 -- ---------- helper: is the current user an admin? ----------
 create or replace function public.is_admin()
 returns boolean language sql stable security definer set search_path = public as
@@ -208,6 +228,21 @@ $$ select exists (select 1 from accounts where org_id = p_org and id = p_account
 create or replace function public.my_name()
 returns text language sql stable security definer set search_path = public as
 $$ select name from profiles where id = auth.uid() $$;
+-- Implementation roles (spec 2026-10-26). impl_role() is the caller's role when it is an
+-- implementation role, else null; the CRM write policies require it null, which leaves impl
+-- users read-only on accounts and their children. Definer, so each re-checks is_active().
+create or replace function public.impl_role()
+returns text language sql stable security definer set search_path = public as
+$$ select role from profiles where id = auth.uid() and role in ('impl_lead','impl_user')
+          and not disabled and public.is_active() $$;
+create or replace function public.is_impl_manager()
+returns boolean language sql stable security definer set search_path = public as
+$$ select exists (select 1 from profiles where id = auth.uid() and role in ('admin','impl_lead') and not disabled)
+          and public.is_active() $$;
+revoke execute on function public.impl_role() from public, anon;
+revoke execute on function public.is_impl_manager() from public, anon;
+grant execute on function public.impl_role() to authenticated;
+grant execute on function public.is_impl_manager() to authenticated;
 -- Child-row ownership judged on the STORED row (falls back to p_data for a brand-new id).
 -- Needed because INSERT ... ON CONFLICT DO UPDATE also checks SELECT USING against the
 -- PROPOSED insert row, which in merge_row is only the patch and usually lacks accountId.
@@ -215,7 +250,7 @@ create or replace function public.lead_child_ok(p_tbl text, p_org uuid, p_id tex
 returns boolean language plpgsql stable security definer set search_path = public as $$
 declare d jsonb;
 begin
-  if p_tbl not in ('contacts','activities','tasks','opportunities') then return false; end if;
+  if p_tbl not in ('contacts','activities','tasks','opportunities','projects','project_tasks') then return false; end if;
   execute format('select data from public.%I where org_id = $1 and id = $2', p_tbl)
     into d using p_org, p_id;
   if d is null then d := p_data; end if;
@@ -429,9 +464,10 @@ begin
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
     execute format('create policy %1$s_select on public.%1$I for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()))', t);
     execute format('drop policy if exists %1$s_insert on public.%1$I', t);
-    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check ((select public.is_active()) and org_id = (select public.current_org()))', t);
+    -- (select public.impl_role()) is null: implementation roles are read-only here.
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check ((select public.is_active()) and org_id = (select public.current_org()) and (select public.impl_role()) is null)', t);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using ((select public.is_active()) and org_id = (select public.current_org())) with check ((select public.is_active()) and org_id = (select public.current_org()))', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using ((select public.is_active()) and org_id = (select public.current_org()) and (select public.impl_role()) is null) with check ((select public.is_active()) and org_id = (select public.current_org()) and (select public.impl_role()) is null)', t);
   end loop;
 end $$;
 
@@ -444,7 +480,7 @@ declare t text;
 begin
   foreach t in array array['contacts','activities','tasks','opportunities'] loop
     execute format('drop policy if exists %1$s_delete on public.%1$I', t);
-    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using ((select public.is_active()) and org_id = (select public.current_org()))', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using ((select public.is_active()) and org_id = (select public.current_org()) and (select public.impl_role()) is null)', t);
   end loop;
 end $$;
 
@@ -481,10 +517,11 @@ begin
     execute format('drop policy if exists %1$s_select on public.%1$I', t);
     execute format('create policy %1$s_select on public.%1$I for select to authenticated using (%2$s)', t, scoped);
     execute format('drop policy if exists %1$s_update on public.%1$I', t);
-    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (%2$s) with check (%3$s)', t, scoped, scoped_new);
+    -- Writes also exclude implementation roles (read-only on CRM data); SELECT does not.
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using (%2$s and (select public.impl_role()) is null) with check (%3$s and (select public.impl_role()) is null)', t, scoped, scoped_new);
     if t <> 'accounts' then
       execute format('drop policy if exists %1$s_delete on public.%1$I', t);
-      execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (%2$s)', t, scoped);
+      execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using (%2$s and (select public.impl_role()) is null)', t, scoped);
     end if;
   end loop;
 end $$;
@@ -523,7 +560,7 @@ returns void language plpgsql security invoker set search_path = public as $$
 begin
   -- Allow-list, not interpolation: `tbl` arrives from the browser. Anything else is a
   -- reachable path to profiles (role escalation) or to crafted SQL.
-  if tbl not in ('accounts','contacts','activities','tasks','opportunities','settings') then
+  if tbl not in ('accounts','contacts','activities','tasks','opportunities','settings','projects','project_tasks') then
     raise exception 'merge_row: table % is not writable through this function', tbl;
   end if;
 
@@ -782,7 +819,7 @@ grant execute on function public.log_error(text, text, text, text, jsonb, text, 
 do $$
 declare t text;
 begin
-  foreach t in array array['accounts','contacts','activities','tasks','opportunities','settings','profiles'] loop
+  foreach t in array array['accounts','contacts','activities','tasks','opportunities','settings','profiles','projects','project_tasks'] loop
     begin
       execute format('alter publication supabase_realtime add table public.%I', t);
     exception when duplicate_object then null;
@@ -1173,8 +1210,8 @@ begin
   if public.current_org() is null then
     raise exception 'invite_user: you are not in an org';
   end if;
-  if p_role is null or p_role not in ('admin','user','lead') then
-    raise exception 'invite_user: role must be admin, user or lead';
+  if p_role is null or p_role not in ('admin','user','lead','impl_lead','impl_user') then
+    raise exception 'invite_user: role must be admin, user, lead, impl_lead or impl_user';
   end if;
   if not public.valid_email(addr) then
     raise exception 'invite_user: % is not a valid email address', p_email;
@@ -1482,3 +1519,155 @@ create policy attachments_delete on storage.objects
                   and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
          and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])
               or public.lead_owns((select public.current_org()), (storage.foldername(name))[1])));
+
+-- ---------- implementation projects (spec 2026-10-26) ----------
+-- Tables are created next to the entity tables (above). Their own policies, not the entity
+-- loops: any active member of the org may read, create and edit (the triggers below decide
+-- WHICH edits); only an implementation lead or admin deletes. A restricted lead is scoped by
+-- data.accountId, judged on the STORED row via lead_child_ok because ON CONFLICT DO UPDATE
+-- checks SELECT USING against merge_row's proposed (patch-only) row.
+do $$
+declare t text;
+begin
+  foreach t in array array['projects','project_tasks'] loop
+    execute format('drop policy if exists %1$s_select on public.%1$I', t);
+    execute format('create policy %1$s_select on public.%1$I for select to authenticated using ((select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or public.lead_child_ok(%1$L, org_id, id, data)))', t);
+    execute format('drop policy if exists %1$s_insert on public.%1$I', t);
+    execute format('create policy %1$s_insert on public.%1$I for insert to authenticated with check ((select public.is_active()) and org_id = (select public.current_org()))', t);
+    execute format('drop policy if exists %1$s_update on public.%1$I', t);
+    execute format('create policy %1$s_update on public.%1$I for update to authenticated using ((select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or public.lead_child_ok(%1$L, org_id, id, data))) with check ((select public.is_active()) and org_id = (select public.current_org()) and (not (select public.lead_restricted()) or public.lead_owns(org_id, data->>''accountId'')))', t);
+    execute format('drop policy if exists %1$s_delete on public.%1$I', t);
+    execute format('create policy %1$s_delete on public.%1$I for delete to authenticated using ((select public.is_impl_manager()) and org_id = (select public.current_org()))', t);
+    -- A restricted lead creates projects/tasks only under their own accounts (same trigger as
+    -- the CRM child tables; the insert policy cannot judge a patch-only proposed row).
+    execute format('drop trigger if exists guard_child_account on public.%I', t);
+    execute format('create trigger guard_child_account before insert on public.%I for each row execute function public.guard_child_account()', t);
+  end loop;
+end $$;
+
+-- Is the caller the CSM (by display name, read live) of this account? Names, not ids: the
+-- account's csm field is free text kept in sync by renameEverywhere().
+create or replace function public.is_account_csm(p_org uuid, p_account text)
+returns boolean language sql stable security definer set search_path = public as
+$$ select public.is_active() and exists (
+     select 1 from accounts a join profiles p on p.id = auth.uid()
+      where a.org_id = p_org and a.id = p_account
+        and coalesce(a.data->>'csm', '') <> '' and a.data->>'csm' = p.name) $$;
+revoke execute on function public.is_account_csm(uuid, text) from public, anon;
+grant execute on function public.is_account_csm(uuid, text) to authenticated;
+
+-- Stage and assignment rules, mirroring canTransition in src/lib/implementation.js.
+-- BEFORE INSERT also fires for merge_row's upsert of an EXISTING id, where NEW is only the
+-- patch: that is an edit, so it is let through here and judged by the UPDATE firing, which
+-- sees the merged row against OLD.
+create or replace function public.guard_project()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  od jsonb;
+  old_stage text;
+  new_stage text := new.data->>'stage';
+  mgr boolean;
+  acct text;
+begin
+  if auth.uid() is null then return new; end if;   -- SQL editor / migrations
+  if not public.is_active() then raise exception 'Your access has been removed'; end if;
+  if tg_op = 'INSERT' then
+    if exists (select 1 from projects where org_id = new.org_id and id = new.id) then return new; end if;
+    od := '{}'::jsonb;
+  else
+    od := old.data;
+  end if;
+  old_stage := od->>'stage';
+  mgr := public.is_impl_manager();
+  acct := coalesce(od->>'accountId', new.data->>'accountId');
+
+  if coalesce(new.data->>'implementerId', '') <> coalesce(od->>'implementerId', '') and not mgr then
+    raise exception 'Only an implementation lead or admin can assign the implementer';
+  end if;
+  if old_stage = 'queued' and new_stage = 'planning' and not mgr then
+    raise exception 'Only an implementation lead or admin can start planning';
+  end if;
+  if new_stage = 'live' and old_stage is distinct from 'live' then
+    if not exists (select 1 from project_tasks where org_id = new.org_id and data->>'projectId' = new.id)
+       or exists (select 1 from project_tasks where org_id = new.org_id and data->>'projectId' = new.id
+                  and coalesce(data->>'signoff', '') <> 'signed') then
+      raise exception 'Every task must be signed off before a project goes live';
+    end if;
+  end if;
+
+  if tg_op = 'INSERT' then
+    if not mgr and coalesce(new_stage, '') not in ('handover', 'queued') then
+      raise exception 'A new project must start in Handover or Queued';
+    end if;
+    return new;
+  end if;
+
+  -- From Planning on, the project belongs to its implementer and the implementation leads.
+  -- The one exception: the account CSM closes CSM review (send back, or go live).
+  if coalesce(old_stage, 'handover') not in ('handover', 'queued') and new.data is distinct from od
+     and not mgr and coalesce(od->>'implementerId', '') <> auth.uid()::text then
+    if not (old_stage = 'csm_review' and new_stage in ('in_progress', 'live')
+            and public.is_account_csm(new.org_id, acct)) then
+      raise exception 'Only the implementer, an implementation lead or an admin can change this project';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke execute on function public.guard_project() from public, anon, authenticated;
+drop trigger if exists guard_project on public.projects;
+create trigger guard_project
+  before insert or update on public.projects
+  for each row execute function public.guard_project();
+
+-- Task rules: sign-off fields belong to the account CSM (or an admin); everything else to the
+-- implementer, an implementation lead or an admin. A CSM's "send back" also resets status to
+-- todo (applySignoff), so that status change rides with the verdict. Same upsert handling as
+-- guard_project above.
+create or replace function public.guard_project_task()
+returns trigger language plpgsql security definer set search_path = public as $$
+declare
+  od jsonb;
+  proj jsonb;
+  sign_keys text[] := array['signoff', 'signedBy', 'signedAt', 'signoffNote'];
+  sign_changed boolean;
+  other_changed boolean;
+begin
+  if auth.uid() is null then return new; end if;
+  if not public.is_active() then raise exception 'Your access has been removed'; end if;
+  if tg_op = 'INSERT' then
+    if exists (select 1 from project_tasks where org_id = new.org_id and id = new.id) then return new; end if;
+    od := '{}'::jsonb;
+  else
+    od := old.data;
+    if coalesce(new.data->>'projectId', '') <> coalesce(od->>'projectId', '') then
+      raise exception 'A task cannot move to another project';
+    end if;
+  end if;
+  select data into proj from projects where org_id = new.org_id and id = new.data->>'projectId';
+  if proj is null then raise exception 'A task must belong to an existing project'; end if;
+  if coalesce(new.data->>'accountId', '') <> coalesce(proj->>'accountId', '') then
+    raise exception 'A task''s account must match its project''s';
+  end if;
+
+  sign_changed := coalesce(new.data->>'signoff', 'pending') <> coalesce(od->>'signoff', 'pending')
+    or coalesce(new.data->>'signedBy', '') <> coalesce(od->>'signedBy', '')
+    or coalesce(new.data->>'signedAt', '') <> coalesce(od->>'signedAt', '')
+    or coalesce(new.data->>'signoffNote', '') <> coalesce(od->>'signoffNote', '');
+  if sign_changed and new.data->>'signoff' = 'returned' and new.data->>'status' = 'todo' then
+    sign_keys := sign_keys || array['status'];
+  end if;
+  other_changed := tg_op = 'INSERT' or (new.data - sign_keys) is distinct from (od - sign_keys);
+
+  if sign_changed and not (public.is_admin() or public.is_account_csm(new.org_id, proj->>'accountId')) then
+    raise exception 'Only the account CSM or an admin can sign off a task';
+  end if;
+  if other_changed and not (public.is_impl_manager() or coalesce(proj->>'implementerId', '') = auth.uid()::text) then
+    raise exception 'Only the implementer, an implementation lead or an admin can change this task';
+  end if;
+  return new;
+end $$;
+revoke execute on function public.guard_project_task() from public, anon, authenticated;
+drop trigger if exists guard_project_task on public.project_tasks;
+create trigger guard_project_task
+  before insert or update on public.project_tasks
+  for each row execute function public.guard_project_task();
