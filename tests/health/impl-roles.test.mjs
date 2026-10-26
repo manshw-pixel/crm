@@ -83,7 +83,7 @@ test("control: a normal user DOES see the controls the impl roles must not", asy
     assert(/Edit account/.test(txt) && /Add task/.test(txt), "precondition: controls absent for a user");
     assert(await page.locator('[title="Edit contact"]').count() === 1, "precondition: edit contact absent");
     const titles = await navTitles(page);
-    assert(!titles.includes("Implementation"), "Implementation shown to a normal role: " + titles.join("|"));
+    assert(titles.includes("Implementation"), "Implementation missing for a normal role (PR 2 adds it for every role): " + titles.join("|"));
   } finally { await browser.close(); }
 });
 

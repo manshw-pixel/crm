@@ -11,10 +11,10 @@ const NAV_ICONS = {
   Implementation: <NavIcon><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></NavIcon>,
   Finance: <NavIcon><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /><line x1="6" y1="15" x2="10" y2="15" /></NavIcon>,
 };
-// Sidebar views per role. Implementation roles get only the placeholder Implementation view and
+// Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
-  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"]);
+  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance", "Implementation"]);
 /* --------------------------- command palette --------------------------- */
 /* case-insensitive subsequence match: "nrw" matches "Northwind" */
 function subseqMatch(q, text) {
@@ -504,7 +504,7 @@ function App({ user, onBackToClients }) {
       </div>
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
-        {view === "Implementation" && isImplRole(user) && <Card title="Implementation projects"><div className="text-sm text-slate-500">Implementation projects — coming soon.</div></Card>}
+        {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} />}
         {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
         {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
         {view === "Accounts" && (acctId

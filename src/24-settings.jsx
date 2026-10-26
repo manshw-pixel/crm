@@ -342,7 +342,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
     <div className="grid gap-4 lg:grid-cols-2">
       <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
         {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users"],
-          ...(user.role === "admin" ? [["Billing", "set-billing"], ["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
+          ...(user.role === "admin" ? [["Implementation", "set-implementation"], ["Billing", "set-billing"], ["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
           <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
       </nav>
       <Card title="Appearance" id="set-appearance">
@@ -415,6 +415,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
       <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
       <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
       <div id="set-custom-fields" className="scroll-mt-4"><CustomFieldsCard st={st} dispatch={dispatch} /></div>
+      {user.role === "admin" && <div id="set-implementation" className="scroll-mt-4"><ImplChecklistSettingsCard st={st} dispatch={dispatch} /></div>}
       <div id="set-users" className="scroll-mt-4"><UsersCard me={user} /></div>
       {user.role === "admin" && <div id="set-billing" className="scroll-mt-4"><BillingSettingsCard user={user} /></div>}
       {user.role === "admin" && <div id="set-errors" className="scroll-mt-4"><ErrorLogCard /></div>}
