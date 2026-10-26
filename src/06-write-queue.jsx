@@ -23,8 +23,12 @@ async function fetchAll() {
     ...ENTITY_TABLES.map(t => sb.from(t).select("data")),
     sb.from("settings").select("data"),
     sb.from("profiles").select("id,name,role,disabled,finance"),
+    // implementation tables are read LAST so res[0..6] keep their indexes
+    ...IMPL_TABLES.map(t => sb.from(t).select("data")),
   ]);
-  const bad = res.find(r => r.error);
+  // The implementation tables are tolerated missing: until supabase-setup.sql is re-run they
+  // do not exist, and that must not stop the CRM itself from loading.
+  const bad = res.slice(0, 7).find(r => r.error);
   if (bad) throw bad.error;
   const [ac, co, act, ta, op, se] = res.slice(0, 6).map(r => r.data.map(x => x.data));
   ac.forEach(a => { if (!a.currency) a.currency = "USD"; });
@@ -43,8 +47,11 @@ async function fetchAll() {
   return {
     accounts: ac, contacts: co, activities: act, tasks: ta, opportunities: op,
     team: res[6].data || [],
+    projects: res[7].error ? [] : res[7].data.map(x => x.data),
+    projectTasks: res[8].error ? [] : res[8].data.map(x => x.data),
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
-      segments: saved.segments || [], customFields: saved.customFields || [] },
+      segments: saved.segments || [], customFields: saved.customFields || [],
+      implChecklist: saved.implChecklist || DEFAULT_IMPL_CHECKLIST, implPlanTemplates: saved.implPlanTemplates || [], implCapacity: saved.implCapacity || {} },
   };
 }

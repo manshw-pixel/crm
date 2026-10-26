@@ -63,5 +63,5 @@ function seedData() {
   return { accounts, contacts, activities, tasks, opportunities, team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } };
 }
 
-const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
+const emptyData = () => ({ accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], projects: [], projectTasks: [], settings: { weights: { ...DEFAULT_WEIGHTS }, recencyMix: mergeSettings({}).recencyMix, valueMix: { ...DEFAULT_VALUE_MIX }, rates: { ...DEFAULT_RATES }, integrations: { processed: {}, log: [] }, segments: [] } });
 

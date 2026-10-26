@@ -71,3 +71,16 @@ const signOut = async () => {
 const ORG_LIMITS = { maxAccounts: null, loaded: false };
 let CURRENT_ORG = null;
 
+
+// Default implementation handover checklist (settings.implChecklist overrides it). Admins edit it
+// under Settings -> Implementation; each project keeps a copy of the template it was created with.
+const DEFAULT_IMPL_CHECKLIST = [
+  { id: "order_form", label: "Signed order form attached", kind: "check", required: true },
+  { id: "go_live_target", label: "Go-live target date", kind: "date", required: true },
+  { id: "customer_contact", label: "Customer project contact", kind: "text", required: true },
+  { id: "modules_scope", label: "Modules / scope purchased", kind: "text", required: true },
+  { id: "licences", label: "Licences sold", kind: "text", required: false },
+  { id: "commitments", label: "Special commitments made in the sale", kind: "text", required: false },
+  { id: "integrations", label: "Integrations required", kind: "text", required: false },
+  { id: "kickoff", label: "Kickoff call scheduled", kind: "check", required: false },
+];
