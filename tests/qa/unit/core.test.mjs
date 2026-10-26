@@ -21,6 +21,23 @@ test("pass, fail, and pass-on-retry is flaky", async () => {
   assert.deepEqual(summarise(r).byFeature["01-x"], { pass: 1, fail: 1, flaky: 1, skipped: 0 });
 });
 
+test("flaky keeps attempt 1's error and screenshot; pass/fail unchanged", async () => {
+  let n = 0;
+  const calls = [];
+  const r = await runScenarios([
+    sc("ok", async () => {}),
+    sc("wobbly", async () => { if (n++ === 0) throw new Error("first"); }),
+    sc("bad", async () => { throw new Error("boom"); }),
+  ], ctx, { onFail: async (s, c, e, attempt) => { calls.push([s.title, attempt]); return { screenshot: `${s.title}-${attempt}.png` }; } });
+  assert.deepEqual(r.map(x => x.status), ["pass", "flaky", "fail"]);
+  assert.equal(r[0].firstError, undefined);
+  assert.equal(r[1].firstError, "first");
+  assert.deepEqual(r[1].firstArtifacts, { screenshot: "wobbly-1.png" });
+  assert.equal(r[1].error, undefined);
+  assert.deepEqual(r[2].artifacts, { screenshot: "bad-2.png" });
+  assert.deepEqual(calls, [["wobbly", 1], ["bad", 1], ["bad", 2]]);
+});
+
 test("GuardError stops the run with no retry", async () => {
   let ran = 0;
   await assert.rejects(runScenarios([

@@ -23,14 +23,17 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
       continue;
     }
     const t0 = Date.now();
-    let lastErr, artifacts;
+    let lastErr, artifacts, firstArtifacts;
     const errs = [];
     for (let attempt = 1; attempt <= 2; attempt++) {
       let ctx;
       try {
         ctx = await makeCtx(s);
         await s.run(ctx);
-        results.push({ id: s.id, feature: s.feature, title: s.title, status: attempt === 1 ? "pass" : "flaky", attempts: attempt, ms: Date.now() - t0 });
+        const r = { id: s.id, feature: s.feature, title: s.title, status: attempt === 1 ? "pass" : "flaky", attempts: attempt, ms: Date.now() - t0 };
+        // Flaky: keep attempt 1's error (and screenshot) so the cause isn't lost when the retry passes.
+        if (attempt === 2 && errs.length) { r.firstError = errs[0]; if (firstArtifacts) r.firstArtifacts = firstArtifacts; }
+        results.push(r);
         lastErr = null;
         break;
       } catch (err) {
@@ -48,7 +51,10 @@ export async function runScenarios(scenarios, makeCtx, { onFail, skip } = {}) {
         }
         lastErr = err;
         errs.push(String(err?.message || err));
-        if (attempt === 2 && onFail) artifacts = await onFail(s, ctx, err, attempt).catch(() => undefined);
+        if (onFail) {
+          const a = await onFail(s, ctx, err, attempt).catch(() => undefined);
+          if (attempt === 1) firstArtifacts = a; else artifacts = a;
+        }
       } finally {
         await ctx?.close?.().catch(() => {});
       }
@@ -88,6 +94,7 @@ export const latestSeedRunId = history => [...(history || [])].reverse().find(h 
 export function redactResult(r, clean) {
   if (r.error) r.error = clean(r.error);
   if (r.errors) r.errors = r.errors.map(clean);
+  if (r.firstError) r.firstError = clean(r.firstError);
   if (r.reason) r.reason = clean(r.reason);
   return r;
 }
