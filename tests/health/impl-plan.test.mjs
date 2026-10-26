@@ -145,7 +145,15 @@ test("impl assign: reassigning moves open tasks owned by the old implementer or 
     await page.waitForSelector('[data-project-detail="p3"][data-stage="planning"]');
     s = await state(page);
     assert(own("q1") === "u2", "queued task owner not backfilled: " + own("q1"));
-    assert(await page.locator("[data-save-template]").count() === 0, "impl_lead offered Save as template");
+    // Task 9a: an impl_lead saves templates, and the save goes through the definer RPC
+    await page.click("[data-save-template]");
+    await page.fill("[data-template-name]", "Lead plan");
+    await page.click("[data-template-save]");
+    await page.waitForFunction(() => (window.__rpcCalls || []).some(c => c.fn === "save_impl_plan_templates"));
+    const call = await page.evaluate(() => window.__rpcCalls.find(c => c.fn === "save_impl_plan_templates"));
+    assert(call.args.items.length === 1 && call.args.items[0].name === "Lead plan" && call.args.items[0].tasks.length === 1
+      && call.args.items[0].tasks[0].title === "Queued task", "rpc args " + JSON.stringify(call.args));
+    assert(!(await page.evaluate(() => window.__rpcCalls.some(c => c.fn === "merge_row" && c.args.tbl === "settings"))), "templates also merged into settings");
     // leaving the Implementation view and coming back shows the Board
     await page.click('button[title="Accounts"]');
     await page.click('button[title="Implementation"]');

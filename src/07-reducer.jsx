@@ -3,6 +3,7 @@
 function persist(action, next, prev) {
   persistOps(action, next, prev).forEach(op => op.kind === "delete"
     ? writeQueue.enqueueDelete({ table: op.table, column: op.column, value: op.value })
+    : op.kind === "rpc" ? writeQueue.enqueue({ kind: "rpc", table: op.table, fn: op.fn, args: op.args })
     : writeQueue.enqueue({ table: op.table, rowId: op.rowId, patch: op.patch, appends: op.appends }));
 }
 

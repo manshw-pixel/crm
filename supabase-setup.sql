@@ -1570,6 +1570,26 @@ $$ select public.is_active() and exists (
 revoke execute on function public.is_account_csm(uuid, text) from public, anon;
 grant execute on function public.is_account_csm(uuid, text) to authenticated;
 
+-- Plan templates (Task 9a, ruling 2026-10-26): an implementation lead may save them, but
+-- settings_write is admin-only. This definer writes ONLY settings.data->'implPlanTemplates'
+-- for the caller's org. Definer bypasses RLS, so every gate is checked here explicitly.
+create or replace function public.save_impl_plan_templates(items jsonb)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_active() and public.is_impl_manager()) then
+    raise exception 'not allowed' using errcode = '42501';
+  end if;
+  if items is null or jsonb_typeof(items) <> 'array' then
+    raise exception 'items must be a JSON array' using errcode = '22023';
+  end if;
+  insert into public.settings (org_id, data) values (public.current_org(), jsonb_build_object('implPlanTemplates', items))
+  on conflict (org_id) do update
+    set data = coalesce(public.settings.data, '{}'::jsonb) || jsonb_build_object('implPlanTemplates', items),
+        updated_at = now();
+end $$;
+revoke execute on function public.save_impl_plan_templates(jsonb) from public, anon;
+grant execute on function public.save_impl_plan_templates(jsonb) to authenticated;
+
 -- Stage and assignment rules, mirroring canTransition in src/lib/implementation.js.
 -- BEFORE INSERT also fires for merge_row's upsert of an EXISTING id, where NEW is only the
 -- patch: that is an edit, so it is let through here and judged by the UPDATE firing, which

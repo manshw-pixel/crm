@@ -157,7 +157,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
             options={["", ...templates.map(x => x.name)]} labels={{ "": "Start from template…" }} />
           <Btn data-template-apply disabled={!tplPick || applying} onClick={applyTemplate}>Apply</Btn>
         </div>}
-        {user.role === "admin" && tasks.length > 0 && (tplName === null
+        {manager && tasks.length > 0 && (tplName === null
           ? <div className="mt-2"><Btn data-save-template onClick={() => setTplName("")}>Save as template</Btn></div>
           : <div className="mt-2 flex gap-2">
             <Input data-template-name placeholder="Template name" aria-label="Template name" className="!w-56" value={tplName} onChange={e => setTplName(e.target.value)} />
