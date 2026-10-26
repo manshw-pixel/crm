@@ -89,6 +89,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
     const tpl = templates.find(x => x.name === tplPick); if (!tpl || applying) return;
     setApplying(true);
     tpl.tasks.forEach((t, i) => addTask(t.title, t.estHours, null, i + 1));
+    setApplying(false);
   };
   const resume = (() => { const h = (project.history || []).slice().reverse().find(e => e.to === "on_hold"); return h ? h.from : null; })();
   const done = tasks.filter(t => t.status === "done").length;

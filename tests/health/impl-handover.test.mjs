@@ -144,3 +144,27 @@ test("settings: the last checklist item cannot be removed", async () => {
     assert(await page.locator('[data-impl-item] [aria-label="Remove item"]').isDisabled(), "last item removable");
   } finally { await browser.close(); }
 });
+
+test("handover: the Start onboarding toast does nothing once another account is shown", async () => {
+  const BETA = seedAccount({ id: "a2", name: "Betaco", csm: "Test User" });
+  const two = seed("user").replace("[" + JSON.stringify(ACCT) + "]", "[" + JSON.stringify(ACCT) + "," + JSON.stringify(BETA) + "]");
+  assert(two.includes("Betaco"), "seed must include the second account");
+  const { page, browser } = await launch(two);
+  try {
+    await openAcct(page);
+    await page.locator("select").filter({ hasText: "Discovery" }).last().selectOption("Won");
+    await page.getByRole("button", { name: "Book it" }).click();
+    const btn = page.locator("[data-toast-action]");
+    await btn.waitFor({ timeout: 5000 });
+    // palette switch keeps the same AccountDetail instance (the case where a stale action could open the wrong form)
+    await page.keyboard.press("Control+k");
+    await page.keyboard.type("betaco");
+    const opt = page.getByRole("option", { name: /Betaco/ }).first();
+    await opt.waitFor({ timeout: 5000 }).then(() => opt.click()).catch(async () => { await page.getByText("Betaco").first().click(); });
+    await page.waitForFunction(() => document.querySelector("#root").textContent.includes("← BackBetaco"));
+    await page.locator("[data-new-project]").waitFor({ timeout: 5000 });
+    await btn.click();
+    await page.waitForTimeout(400);
+    assert(await page.locator("[data-handover-form]").count() === 0, "form opened on a different account");
+  } finally { await browser.close(); }
+});

@@ -28,7 +28,7 @@ async function openRunProject(page, runId, thisRunId, stages, hint, soft = false
       await cards.nth(i).click();
       const detail = page.locator("[data-project-detail]");
       await detail.waitFor({ timeout: 15000 });
-      if (await detail.getByText(`QA ${thisRunId}`).count()) return detail;
+      if (await detail.getByText(new RegExp(`^QA ${thisRunId} (?!${EXPECTED.adminOwned}$)`)).count()) return detail; // a handover value, not the account name in the header
       await page.locator("[data-project-back]").click();
       await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
     }

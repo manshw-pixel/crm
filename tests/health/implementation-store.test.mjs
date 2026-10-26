@@ -89,6 +89,20 @@ test("DELETE_ACCOUNT removes the account's projects and tasks from the store", a
   } finally { await browser.close(); }
 });
 
+test("BULK_DELETE (the QA reset path) removes the accounts' projects and tasks from the store", async () => {
+  const { page, browser } = await launchPersistent(seed);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().projects.length === 1);
+    const db = await page.evaluate(async () => {
+      window.__store.dispatch({ type: "BULK_DELETE", ids: ["a1"] });
+      await new Promise(r => setTimeout(r, 300));
+      const d = window.__dump(), s = window.__store.getState();
+      return { projects: d.projects.length, tasks: d.project_tasks.length, stP: s.projects.length, stT: s.projectTasks.length };
+    });
+    assert(db.projects === 0 && db.tasks === 0 && db.stP === 0 && db.stT === 0, `bulk cascade, got ${JSON.stringify(db)}`);
+  } finally { await browser.close(); }
+});
+
 const plain = pre => `${pre}window.__seedRows = { accounts: ${JSON.stringify([seedAccount({ name: "Loaded Co" })])}.map(d => ({ id: d.id, data: d })), contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
 
 test("a missing projects table (SQL not re-run) loads the CRM with empty projects", async () => {
