@@ -145,3 +145,10 @@ test("stageAt replays history; null before creation", () => {
   assert.equal(stageAt(p, "2026-12-31"), "queued");
   assert.equal(stageAt({}, "2026-01-01"), null);
 });
+
+test("applySignoff: an unknown verdict throws instead of signing", () => {
+  const ts = [{ id: "a", signoff: "pending" }];
+  assert.throws(() => applySignoff(ts, "a", "approved", "", admin, "2026-10-26"), /verdict must be/);
+  assert.throws(() => applySignoff(ts, "a", undefined, "", admin, "2026-10-26"), /verdict must be/);
+  assert.equal(applySignoff(ts, "a", "signed", "", admin, "2026-10-26").tasks[0].signoff, "signed");
+});

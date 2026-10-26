@@ -85,6 +85,7 @@ export function canTransition(project, tasks, to, actor, account) {
 
 /* CSM verdict on one task. Other tasks are untouched, so a return keeps already-signed tasks signed. */
 export function applySignoff(tasks, taskId, verdict, note, actor, now) {
+  if (verdict !== "signed" && verdict !== "returned") throw new Error(`applySignoff: verdict must be "signed" or "returned", got ${verdict}`);
   const out = tasks.map(t => {
     if (t.id !== taskId) return t;
     if (verdict === "returned") return { ...t, status: "todo", signoff: "returned", signoffNote: note };

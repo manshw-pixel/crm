@@ -1507,13 +1507,13 @@ create policy attachments_read on storage.objects
 drop policy if exists attachments_insert on storage.objects;
 create policy attachments_insert on storage.objects
   for insert to authenticated
-  with check (bucket_id = 'attachments' and (select public.is_active())
+  with check (bucket_id = 'attachments' and (select public.is_active()) and (select public.impl_role()) is null
               and (storage.foldername(name))[1] = (select public.current_org())::text
               and (not (select public.lead_restricted()) or public.lead_owns((select public.current_org()), (storage.foldername(name))[2])));
 drop policy if exists attachments_delete on storage.objects;
 create policy attachments_delete on storage.objects
   for delete to authenticated
-  using (bucket_id = 'attachments' and (select public.is_active())
+  using (bucket_id = 'attachments' and (select public.is_active()) and (select public.impl_role()) is null
          and ((storage.foldername(name))[1] = (select public.current_org())::text
               or ((select public.current_org()) = '00000000-0000-0000-0000-000000000001'
                   and (storage.foldername(name))[1] !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'))
@@ -1552,7 +1552,12 @@ create policy project_tasks_delete on public.project_tasks for delete to authent
          and ((select public.is_impl_manager())
               or exists (select 1 from public.projects p where p.org_id = project_tasks.org_id
                          and p.id = project_tasks.data->>'projectId'
-                         and p.data->>'implementerId' = auth.uid()::text)));
+                         and p.data->>'implementerId' = auth.uid()::text))
+         -- a live or cancelled project's tasks are history: only an admin removes them
+         and ((select public.is_admin())
+              or not exists (select 1 from public.projects p where p.org_id = project_tasks.org_id
+                             and p.id = project_tasks.data->>'projectId'
+                             and p.data->>'stage' in ('live', 'cancelled'))));
 
 -- Is the caller the CSM (by display name, read live) of this account? Names, not ids: the
 -- account's csm field is free text kept in sync by renameEverywhere().
@@ -1577,6 +1582,7 @@ declare
   new_stage text := new.data->>'stage';
   mgr boolean;
   acct text;
+  resume text;
 begin
   if auth.uid() is null then return new; end if;   -- SQL editor / migrations
   if not public.is_active() then raise exception 'Your access has been removed'; end if;
@@ -1617,6 +1623,30 @@ begin
       raise exception 'A new project must start in Handover or Queued';
     end if;
     return new;
+  end if;
+
+  -- Stage moves canTransition also polices (src/lib/implementation.js).
+  if new_stage is distinct from old_stage then
+    if old_stage in ('live', 'cancelled') then
+      raise exception 'A live or cancelled project cannot be moved';
+    end if;
+    if new_stage = 'cancelled' and not mgr then
+      raise exception 'Only an implementation lead or admin can cancel a project';
+    end if;
+    if old_stage = 'on_hold' and new_stage is distinct from 'cancelled' then
+      select e->>'from' into resume
+        from jsonb_array_elements(case when jsonb_typeof(od->'history') = 'array' then od->'history' else '[]'::jsonb end)
+             with ordinality as h(e, i)
+       where e->>'to' = 'on_hold' order by i desc limit 1;
+      if resume is null or new_stage is distinct from resume then
+        raise exception 'A held project resumes only to the stage it was held from';
+      end if;
+    end if;
+    -- Closing CSM review (send back, or go live) is the account CSM's call, or an admin's.
+    if old_stage = 'csm_review' and new_stage in ('in_progress', 'live')
+       and not (public.is_admin() or public.is_account_csm(new.org_id, acct)) then
+      raise exception 'Only the account CSM or an admin can close CSM review';
+    end if;
   end if;
 
   -- From Planning on, the project belongs to its implementer and the implementation leads.

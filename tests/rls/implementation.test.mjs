@@ -210,3 +210,77 @@ test("go-live only from CSM review", async () => {
     ok(await merge(sessions.admin, "projects", "im-p", { stage: "live" }), "admin csm_review -> live");
   } finally { await clean(); }
 });
+
+// ---- final review fix wave ----
+test("cancel is a lead's call; live and cancelled projects never move", async () => {
+  const lead = await implLead();
+  try {
+    const impl = await world("in_progress");
+    errMatch(await merge(impl.client, "projects", "im-p", { stage: "cancelled" }), /cancel a project/, "implementer cancelled");
+    ok(await merge(lead.client, "projects", "im-p", { stage: "cancelled" }), "impl_lead cancels");
+    errMatch(await merge(sessions.admin, "projects", "im-p", { stage: "in_progress" }), /cannot be moved/, "admin revived a cancelled project");
+    await sql(`update projects set data = data || '{"stage":"live"}' where org_id = $1 and id = 'im-p'`, [ORG_A]);
+    errMatch(await merge(lead.client, "projects", "im-p", { stage: "in_progress" }), /cannot be moved/, "impl_lead moved a live project");
+    assert((await valueOf("projects", "im-p")).stage === "live", "live project moved despite the error");
+  } finally { await clean(); }
+});
+
+test("a held project resumes only to the stage it was held from", async () => {
+  try {
+    const impl = await world("on_hold");
+    await sql(`update projects set data = data || $2 where org_id = $1 and id = 'im-p'`, [ORG_A,
+      { history: [{ from: "queued", to: "planning" }, { from: "in_progress", to: "on_hold" }] }]);
+    errMatch(await merge(impl.client, "projects", "im-p", { stage: "planning" }), /resumes only/, "resumed to the wrong stage");
+    ok(await merge(impl.client, "projects", "im-p", { stage: "in_progress" }), "implementer resumes to in_progress");
+  } finally { await clean(); }
+});
+
+test("only the account CSM or an admin closes CSM review", async () => {
+  const lead = await implLead();
+  try {
+    const impl = await world("csm_review");
+    errMatch(await merge(impl.client, "projects", "im-p", { stage: "in_progress" }), /close CSM review/, "implementer sent back");
+    errMatch(await merge(lead.client, "projects", "im-p", { stage: "in_progress" }), /close CSM review/, "impl_lead sent back");
+    ok(await merge(sessions.user, "projects", "im-p", { stage: "in_progress" }), "account CSM sends back");
+  } finally { await clean(); }
+});
+
+test("tasks of a live project: only an admin deletes them", async () => {
+  try {
+    const impl = await world("live");
+    await seed("project_tasks", "im-t", { projectId: "im-p", accountId: "im-acc", title: "A", signoff: "signed" });
+    await impl.client.from("project_tasks").delete().eq("id", "im-t");   // a denied delete raises nothing
+    assert(await stillExists("project_tasks", "im-t"), "implementer deleted a live project's task");
+    const { error } = await sessions.admin.from("project_tasks").delete().eq("id", "im-t");
+    assert(!error && !(await stillExists("project_tasks", "im-t")), "control: admin delete failed: " + error?.message);
+  } finally { await clean(); }
+});
+
+test("impl roles cannot upload or delete attachments, or submit a PO; a CSM can", async () => {
+  const impl = await implementer();
+  const txt = () => new Blob(["x"], { type: "text/plain" });
+  const seeded = `${ORG_A}/im-acc/seeded.txt`, mine = `${ORG_A}/im-acc/impl.txt`, csmFile = `${ORG_A}/im-acc/csm.txt`;
+  try {
+    await world();
+    const s = await sessions.admin.storage.from("attachments").upload(seeded, txt(), { upsert: true });
+    assert(!s.error, "seed upload: " + s.error?.message);
+    const up = await impl.client.storage.from("attachments").upload(mine, txt());
+    assert(up.error, "impl_user uploaded an attachment");
+    await impl.client.storage.from("attachments").remove([seeded]);
+    const left = ((await sessions.admin.storage.from("attachments").list(`${ORG_A}/im-acc`)).data || []).map(f => f.name);
+    assert(left.includes("seeded.txt"), "impl_user deleted an attachment: " + JSON.stringify(left));
+    const cu = await sessions.user.storage.from("attachments").upload(csmFile, txt());
+    assert(!cu.error, "control: CSM upload failed: " + cu.error?.message);
+    const base = { account_id: "im-acc", account_name: "ImplCo", po_date: "2026-10-01", po_value: 10, currency: "INR", years: 1,
+      billing_cycle: "annual", billing_start: "2026-01-01", status: "submitted", file_path: `${ORG_A}/im-acc/po.pdf` };
+    const bad = await impl.client.from("purchase_orders").insert({ ...base, po_number: "IMPO-1", submitted_by: impl.id });
+    assert(bad.error, "impl_user submitted a PO");
+    const [u] = await sql(`select id from profiles where org_id = $1 and name = 'Plain User'`, [ORG_A]);
+    const good = await sessions.user.from("purchase_orders").insert({ ...base, po_number: "IMPO-2", submitted_by: u.id });
+    assert(!good.error, "control: CSM PO submit failed: " + good.error?.message);
+  } finally {
+    await sessions.admin.storage.from("attachments").remove([seeded, mine, csmFile]);
+    await sql(`delete from purchase_orders where po_number like 'IMPO-%'`);
+    await clean();
+  }
+});

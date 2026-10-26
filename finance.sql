@@ -96,6 +96,7 @@ drop policy if exists purchase_orders_insert on public.purchase_orders;
 create policy purchase_orders_insert on public.purchase_orders for insert to authenticated
   with check ((select public.is_active()) and org_id = (select public.current_org()) and status = 'submitted'
               and submitted_by = auth.uid() and reviewed_by is null
+              and (select public.impl_role()) is null   -- implementation roles are read-only
               and (not (select public.lead_restricted()) or public.lead_owns(org_id, account_id)));
 -- Edit / resubmit: only while submitted or rejected, and the row must come out as 'submitted'
 -- with the review fields cleared. Approve/reject/cancel are the definer RPCs below.
