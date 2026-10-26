@@ -13,11 +13,11 @@ function ToastProvider({ children }) {
     clearTimeout(timers.current[id]); delete timers.current[id];
     setToasts(ts => ts.filter(t => t.id !== id));
   }, []);
-  const pushToast = useCallback(({ text, tone = "info", undo }) => {
+  const pushToast = useCallback(({ text, tone = "info", undo, action }) => {
     const id = uid();
     // errors never auto-dismiss: a failed write may not have reached the team
-    setToasts(ts => [...ts, { id, text, tone, undo }].slice(-3));
-    if (tone !== "error") timers.current[id] = setTimeout(() => dismiss(id), undo ? 10000 : 5000);
+    setToasts(ts => [...ts, { id, text, tone, undo, action }].slice(-3));
+    if (tone !== "error") timers.current[id] = setTimeout(() => dismiss(id), undo || action ? 10000 : 5000);
     return id;
   }, [dismiss]);
   useEffect(() => () => Object.values(timers.current).forEach(clearTimeout), []);
@@ -34,6 +34,8 @@ function ToastProvider({ children }) {
             <span className="flex-1 whitespace-pre-line">{t.text}</span>
             {t.undo && <button data-toast-undo className="font-bold text-indigo-600 hover:underline"
               onClick={() => { t.undo(); dismiss(t.id); }}>Undo</button>}
+            {t.action && <button data-toast-action className="font-bold text-indigo-600 hover:underline"
+              onClick={() => { t.action.run(); dismiss(t.id); }}>{t.action.label}</button>}
             <button aria-label="Dismiss notification" className="text-slate-400 hover:text-slate-700"
               onClick={() => dismiss(t.id)}>✕</button>
           </div>

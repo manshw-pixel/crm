@@ -29,15 +29,17 @@ const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
     <span className="text-sm font-semibold text-slate-700">{value}</span>
   </span>
 );
-function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject }) {
   const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
+  const [handoverOpen, setHandoverOpen] = useState(false);
+  const shownId = useRef(id); shownId.current = id; // the toast action can outlive this account's page
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
-  useEffect(() => setTab("overview"), [id]);
+  useEffect(() => { setTab("overview"); setHandoverOpen(false); }, [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm && !ro) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
@@ -295,6 +297,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                     // it back to the current stage until the change is actually confirmed.
                     setConfirmOpp({ kind: "won", opp: o, run: () => {
                       dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                      toast({ text: `${o.type} won for ${a.name}.`, tone: "success", action: { label: "Start onboarding", run: () => { if (shownId.current === a.id) setHandoverOpen(true); } } });
                       dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
                         entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
                       dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
@@ -327,6 +330,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
         onConfirm={() => confirmOpp.run()}
         onClose={() => setConfirmOpp(null)} />}
+      <ProjectsCard account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
       <DocumentsCard a={a} dispatch={dispatch} user={user} readOnly={ro} />
       {(() => {
         const events = [
