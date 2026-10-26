@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STAGES, STAGE_LABEL, OPEN_STAGES, projectType, canTransition, applySignoff, historyEntry,
-  loggedHours, workload, stageAt } from "../../src/lib/implementation.js";
+  loggedHours, workload, stageAt, chartCounts } from "../../src/lib/implementation.js";
 
 const lead = { id: "L", role: "impl_lead", name: "Lead" };
 const admin = { id: "A", role: "admin", name: "Adm" };
@@ -151,4 +151,33 @@ test("applySignoff: an unknown verdict throws instead of signing", () => {
   assert.throws(() => applySignoff(ts, "a", "approved", "", admin, "2026-10-26"), /verdict must be/);
   assert.throws(() => applySignoff(ts, "a", undefined, "", admin, "2026-10-26"), /verdict must be/);
   assert.equal(applySignoff(ts, "a", "signed", "", admin, "2026-10-26").tasks[0].signoff, "signed");
+});
+
+const h = (at, from, to) => ({ at, by: "x", from, to, note: "" });
+test("chartCounts month: created in May is not counted Jan-Apr; live in a month counts only there", () => {
+  const p = proj({ accountId: "a1", history: [h("2026-05-10T10:00:00Z", "handover", "queued"), h("2026-06-02", "queued", "planning"),
+    h("2026-08-31T23:00:00Z", "csm_review", "live")] });
+  const r = chartCounts([p], 2026, "month", () => "Gold", "All");
+  assert.deepEqual(r.periods, ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]);
+  assert.deepEqual(r.series.active, [0, 0, 0, 0, 1, 1, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(r.series.completed, [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0]);
+  assert.deepEqual(r.series.onHold, Array(12).fill(0));
+});
+
+test("chartCounts quarter: live in Q2 completes only in Q2; on hold at end; cancelled excluded; tier filter + byTier", () => {
+  const live = proj({ id: "L", accountId: "a1", history: [h("2026-01-05", "handover", "queued"), h("2026-05-01", "csm_review", "live")] });
+  const held = proj({ id: "H", accountId: "a2", history: [h("2026-02-01", "handover", "queued"), h("2026-09-30T22:00:00Z", "planning", "on_hold")] });
+  const canc = proj({ id: "C", accountId: "a1", history: [h("2026-01-01", "handover", "queued"), h("2026-03-15", "queued", "cancelled")] });
+  const tierOf = id => id === "a1" ? "Gold" : "Silver";
+  const r = chartCounts([live, held, canc], 2026, "quarter", tierOf, "All");
+  assert.deepEqual(r.periods, ["Q1", "Q2", "Q3", "Q4"]);
+  assert.deepEqual(r.series.active, [2, 1, 0, 0]);
+  assert.deepEqual(r.series.completed, [0, 1, 0, 0]);
+  assert.deepEqual(r.series.onHold, [0, 0, 1, 1]);
+  assert.deepEqual(r.byTier.Gold, { active: [1, 0, 0, 0], completed: [0, 1, 0, 0], onHold: [0, 0, 0, 0] });
+  assert.deepEqual(r.byTier.Silver, { active: [1, 1, 0, 0], completed: [0, 0, 0, 0], onHold: [0, 0, 1, 1] });
+  const g = chartCounts([live, held, canc], 2026, "quarter", tierOf, "Gold");
+  assert.deepEqual(g.series.active, [1, 0, 0, 0]);
+  assert.deepEqual(g.series.onHold, [0, 0, 0, 0]);
+  assert.deepEqual(Object.keys(g.byTier).sort(), ["Gold", "Silver"]);
 });

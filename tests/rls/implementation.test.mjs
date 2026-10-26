@@ -310,6 +310,7 @@ test("impl_lead saves plan templates via the RPC; impl_user and a CSM cannot; ot
     assert((await merge(lead.client, "settings", "1", { rates: { INR: 1 } })).error, "impl_lead merged settings via merge_row");
     assert((await sql(`select data from settings where org_id = $1`, [ORG_A]))[0].data.rates.INR === 77, "impl_lead's settings merge landed");
   } finally {
-    await sql(`update settings set data = $2 where org_id = $1`, [ORG_A, orig ? orig.data : {}]);
+    if (orig) await sql(`update settings set data = $2 where org_id = $1`, [ORG_A, orig.data]);
+    else await sql(`delete from settings where org_id = $1`, [ORG_A]); // the RPC created the row: leave none, as found
   }
 });
