@@ -144,6 +144,7 @@ function App({ user, onBackToClients }) {
   const [view, setView] = useState(() => isImplRole(user) ? "Implementation" : "Dashboard");
   const [acctId, setAcctId] = useState(null);
   const [implProjectId, setImplProjectId] = useState(null); // project detail open on the Implementation page
+  useEffect(() => { if (view !== "Implementation") setImplProjectId(null); }, [view]); // returning shows the Board
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingForm, setPendingForm] = useState(null); // form to auto-open on next AccountDetail mount (from palette)

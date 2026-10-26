@@ -124,3 +124,31 @@ test("impl detail: an impl_user who is not the implementer sees no edit controls
     await page.waitForSelector('[data-project-detail="p1"]');
   } finally { await browser.close(); }
 });
+
+test("impl assign: reassigning moves open tasks owned by the old implementer or nobody; others' and done tasks stay", async () => {
+  const { page, browser } = await launch(seed("impl_lead", "Lena", [proj("p1", "a1", "in_progress", "u2"), proj("p3", "a2", "queued", null)],
+    [task("t1", "p1", "u2", "Old owner", 3), task("t2", "p1", null, "No owner", 3), task("t3", "p1", "u1", "Lena's own", 3),
+      task("t4", "p1", "u2", "Finished", 3, "done"), task("q1", "p3", null, "Queued task", 2)]));
+  try {
+    await openImpl(page);
+    await openProject(page, "p1");
+    await page.click("[data-stage-action=reassign]");
+    await page.click('[data-assign-row="u3"] button');
+    await page.waitForFunction(() => window.__store.getState().projects.find(p => p.id === "p1").implementerId === "u3");
+    let s = await state(page);
+    const own = id => s.tasks.find(t => t.id === id).ownerId;
+    assert([own("t1"), own("t2"), own("t3"), own("t4")].join("|") === "u3|u3|u1|u2", "owners " + [own("t1"), own("t2"), own("t3"), own("t4")].join("|"));
+    await page.click("[data-project-back]");
+    await openProject(page, "p3");
+    await page.click("[data-stage-action=assign]");
+    await page.click('[data-assign-row="u2"] button');
+    await page.waitForSelector('[data-project-detail="p3"][data-stage="planning"]');
+    s = await state(page);
+    assert(own("q1") === "u2", "queued task owner not backfilled: " + own("q1"));
+    assert(await page.locator("[data-save-template]").count() === 0, "impl_lead offered Save as template");
+    // leaving the Implementation view and coming back shows the Board
+    await page.click('button[title="Accounts"]');
+    await page.click('button[title="Implementation"]');
+    await page.waitForSelector("[data-board-column]");
+  } finally { await browser.close(); }
+});

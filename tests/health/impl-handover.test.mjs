@@ -120,9 +120,11 @@ test("handover: switching account (palette, same AccountDetail) closes the open 
     await page.locator('[data-checklist-item="customer_contact"] input').fill("Typed for Acme");
     await page.keyboard.press("Control+k");
     await page.keyboard.type("betamax");
-    await page.waitForTimeout(200);
-    await page.getByRole("option", { name: /Betamax/ }).first().click().catch(async () => { await page.getByText("Betamax").first().click(); });
+    const opt = page.getByRole("option", { name: /Betamax/ }).first();
+    await opt.waitFor({ timeout: 5000 }).then(() => opt.click()).catch(async () => { await page.getByText("Betamax").first().click(); });
     await page.waitForFunction(() => document.querySelector("#root").textContent.includes("← BackBetamax"));
+    // wait on the condition: the Projects card can render a commit after the header under suite load
+    await page.locator("[data-new-project]").waitFor({ timeout: 5000 }).catch(() => {});
     assert(await page.locator("[data-new-project]").count() === 1, "precondition: Projects card rendered on B");
     assert(await page.locator("[data-handover-form]").count() === 0, "handover form still open on the other account");
   } finally { await browser.close(); }

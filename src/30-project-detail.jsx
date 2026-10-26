@@ -40,6 +40,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
   const [logHours, setLogHours] = useState({});
   const [tplName, setTplName] = useState(null);
   const [tplPick, setTplPick] = useState("");
+  const [applying, setApplying] = useState(false);
   if (!project) return <div className="text-sm text-slate-500">Project not found. <Btn data-project-back onClick={onBack}>← Back</Btn></div>;
   const account = (st.accounts || []).find(a => a.id === project.accountId) || null;
   const tasks = (st.projectTasks || []).filter(t => t.projectId === project.id).sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -54,7 +55,11 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
     action={action} label={label} onGo={onGo || (() => move(to))} />;
 
   const assign = id => {
+    const prev = project.implementerId || null;
     dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { implementerId: id } });
+    // open tasks follow the implementer, unless deliberately owned by someone else
+    tasks.filter(t => t.status !== "done" && (!t.ownerId || t.ownerId === prev) && t.ownerId !== id)
+      .forEach(t => dispatch({ type: "EDIT_PROJECT_TASK", id: t.id, patch: { ownerId: id } }));
     if (project.stage === "queued") move("planning", `Assigned to ${teamName(st, id)}`);
     setAssignOpen(false);
   };
@@ -81,7 +86,8 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
     setTplName(null);
   };
   const applyTemplate = () => {
-    const tpl = templates.find(x => x.name === tplPick); if (!tpl) return;
+    const tpl = templates.find(x => x.name === tplPick); if (!tpl || applying) return;
+    setApplying(true);
     tpl.tasks.forEach((t, i) => addTask(t.title, t.estHours, null, i + 1));
   };
   const resume = (() => { const h = (project.history || []).slice().reverse().find(e => e.to === "on_hold"); return h ? h.from : null; })();
@@ -148,7 +154,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
         {canEdit && project.stage === "planning" && tasks.length === 0 && templates.length > 0 && <div className="mt-2 flex gap-2">
           <Select data-template-pick aria-label="Plan template" value={tplPick} onChange={e => setTplPick(e.target.value)}
             options={["", ...templates.map(x => x.name)]} labels={{ "": "Start from template…" }} />
-          <Btn data-template-apply disabled={!tplPick} onClick={applyTemplate}>Apply</Btn>
+          <Btn data-template-apply disabled={!tplPick || applying} onClick={applyTemplate}>Apply</Btn>
         </div>}
         {user.role === "admin" && tasks.length > 0 && (tplName === null
           ? <div className="mt-2"><Btn data-save-template onClick={() => setTplName("")}>Save as template</Btn></div>
