@@ -28,7 +28,7 @@ This feature puts that stretch inside the CRM:
 ## Non-goals (this build)
 
 - Email alerts for project events. The bell covers them in-app. Email can come later through the existing alert pipeline.
-- Gantt charts or task dependencies. Tasks are an ordered list.
+- Gantt charts or task dependencies. (The dashboard status chart below is in scope.) Tasks are an ordered list.
 - Time-sheet approval and billing hours. Logged hours are for workload only.
 - Customer-facing portal or a client-visible project plan.
 - Automatically creating the project when an opportunity is marked Won. The app suggests it, and a person confirms.
@@ -102,6 +102,16 @@ The assign dialog on a Queued project lists implementers sorted by load, with th
   - **My tasks:** open project tasks owned by me, with due dates.
 - **Project detail:** a header (account, stage, type, implementer, dates, stage action button), a read-only checklist panel (editable while in Handover), the ordered task list with inline status, hours and sign-off controls, and the history list.
 - **Account detail:** a "Projects" card listing current and past projects, with stage badges and a **New project** button.
+- **Dashboard card: "Implementation projects" (user request 2026-10-26).** A chart on the existing Dashboard showing how many projects were **Active, Completed, On hold and Dormant** in each period, January to December of a chosen year.
+  - **Toggles:** Month or Quarter (Q1 to Q4), and a year picker.
+  - **Tier:** a tier filter (All, or one tier) above the chart. Under the chart, a small table of tier × status counts for the selected period (by default the latest period with data), so tiers can be compared.
+  - **Definitions (my calls):**
+    - *Active*: the project was in Queued, Planning, In progress or CSM review at the end of the period.
+    - *Completed*: the project went Live during the period. This counts the flow in that period, not a running total.
+    - *On hold*: the project was On hold at the end of the period.
+    - *Dormant*: the project was open (Planning or In progress), not on hold, and had no task status change, time logged or stage change in the 30 days before the end of the period. A dormant project is counted only as Dormant, never also as Active, so the bars add up.
+  - A project's state at any past date is rebuilt from its `history` list, the same ledger-replay approach the ARR cards use. Cancelled projects are left out.
+  - **Who sees it:** everyone who sees the Dashboard. Restricted Leads see their own accounts' projects only. The card goes in PR 3, and the counting logic goes in `src/lib/implementation.js` with golden unit tests.
 - **Bell:** derived alerts (no new store, matching the bell design). Alerts go to: a lead when a project reaches Queued; an implementer when assigned; the CSM when a project reaches CSM review; an implementer when a task is returned. Each uses the bell's existing time-window rule.
 
 ## Data **(my call)**
@@ -122,7 +132,7 @@ The assign dialog on a Queued project lists implementers sorted by load, with th
 Three PRs, each additive, each with live QA scenarios in `tests/qa/features/`, as the workflow rule requires:
 1. **Roles and data:** the SQL (tables, new role values, guards, RLS incl. read-only CRM access for implementation roles), store, reducer and write-queue wiring, the Team screen role options, sidebar narrowing, RLS tests in CI. The user re-runs `supabase-setup.sql` once this merges.
 2. **Handover, board and plan:** checklist template settings, New project and the Won toast, Board, project detail, tasks, time logging, plan templates, the account Projects card.
-3. **Sign-off and workload:** CSM review flow, send back, Live, the Workload tab and capacity, the assign dialog sorted by load, bell alerts.
+3. **Sign-off, workload and dashboard:** CSM review flow, send back, Live, the Workload tab and capacity, the assign dialog sorted by load, bell alerts, the Dashboard projects chart.
 
 ## Settled after the reviewer's read (my calls)
 
