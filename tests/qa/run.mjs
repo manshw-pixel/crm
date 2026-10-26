@@ -103,9 +103,9 @@ try {
   results = await runScenarios(scenarios,
     async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId: seedRunId, thisRunId: runId, csmName, adminName, implName }),
     { skip: s => skipReason(s, env),
-      onFail: async (s, ctx) => {
+      onFail: async (s, ctx, _err, attempt) => {
         if (!ctx?.page) return undefined;
-        const file = `${s.id.replaceAll("/", "__")}.png`;
+        const file = `${s.id.replaceAll("/", "__")}${attempt === 1 ? "__attempt1" : ""}.png`;
         await ctx.page.screenshot({ path: fileURLToPath(new URL(file, shots)), fullPage: true });
         return { screenshot: file };
       } });

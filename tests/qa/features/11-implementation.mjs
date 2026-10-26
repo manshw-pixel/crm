@@ -69,9 +69,34 @@ async function implSendForSignoff(page, runId, thisRunId) {
   if (await status.inputValue() !== "done") { await status.selectOption("done"); await waitForSaved(page); }
   await page.waitForFunction(() => { const b = document.querySelector('[data-stage-action="review"]'); return !!b && !b.disabled; }, null, { timeout: 15000 })
     .catch(() => { throw new Error("'Send for sign-off' stayed disabled although the only task is Done"); });
+  await watchSaveFailed(page);
   await detail.locator('[data-stage-action="review"]').click();
   await page.locator('[data-project-detail][data-stage="csm_review"]').waitFor({ timeout: 15000 });
+  await implSaved(page, "Send for sign-off");
+}
+// After an impl user's stage change: the whole write (project AND its system activity) must persist. waitForSaved fails on
+// the queue's "error"; the toast/header checks also catch a refusal the queue already rolled back (an RLS-denied
+// activity once did exactly that, and the retry -- which no-ops in CSM review -- hid it).
+// Call watchSaveFailed just before the action: it records only "Save failed" toasts added after it (toasts from earlier
+// actions are ignored), so a toast that was shown and dismissed is still caught.
+async function watchSaveFailed(page) {
+  await page.evaluate(() => {
+    window.__qaSaveFailed = [];
+    window.__qaToastObs?.disconnect();
+    window.__qaToastObs = new MutationObserver(ms => ms.forEach(m => m.addedNodes.forEach(n => {
+      const t = n.nodeType === 1 && (n.matches("[data-toast]") ? [n] : [...n.querySelectorAll("[data-toast]")]);
+      (t || []).forEach(e => { if (/Save failed/.test(e.textContent)) window.__qaSaveFailed.push(e.textContent); });
+    })));
+    window.__qaToastObs.observe(document.body, { childList: true, subtree: true });
+  });
+}
+async function implSaved(page, what) {
   await waitForSaved(page);
+  // Bounded grace window: a refusal's toast can land just after the queue settles.
+  await page.waitForFunction(() => (window.__qaSaveFailed || []).length > 0, null, { timeout: 2000, polling: 100 }).catch(() => {});
+  const failed = await page.evaluate(() => { window.__qaToastObs?.disconnect(); return window.__qaSaveFailed || []; });
+  assert.equal(failed.length, 0, `${what}: a write was refused -- ${failed[0]}`);
+  assert.equal(await page.getByText("Not saved", { exact: true }).count(), 0, `${what}: the header reads "Not saved"`);
 }
 
 export const scenarios = [
