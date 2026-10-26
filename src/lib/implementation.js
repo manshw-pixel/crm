@@ -137,3 +137,36 @@ export function stageAt(project, isoDate) {
   for (const e of project.history || []) if (day(e.at) <= day(isoDate)) stage = e.to; else break;
   return stage;
 }
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const pad = n => String(n).padStart(2, "0");
+const lastDay = (year, month1) => `${year}-${pad(month1)}-${pad(new Date(Date.UTC(year, month1, 0)).getUTCDate())}`;
+
+/* Dashboard chart counts for a year. Active / On hold = stage at the end of each period (history
+   replay); Completed = projects that went Live inside the period (flow, not a running total).
+   Projects cancelled at period end are left out. `series` honours tierFilter ("All"/null = every
+   tier); `byTier` always covers every tier, one array per status, so tiers can be compared. */
+export function chartCounts(projects, year, mode, tierOf, tierFilter) {
+  const ranges = mode === "quarter"
+    ? [1, 2, 3, 4].map(q => ({ label: "Q" + q, start: `${year}-${pad(q * 3 - 2)}-01`, end: lastDay(year, q * 3) }))
+    : MONTHS.map((label, i) => ({ label, start: `${year}-${pad(i + 1)}-01`, end: lastDay(year, i + 1) }));
+  const blank = () => ({ active: ranges.map(() => 0), completed: ranges.map(() => 0), onHold: ranges.map(() => 0) });
+  const series = blank(), byTier = {};
+  const all = !tierFilter || tierFilter === "All";
+  for (const p of projects || []) {
+    const tier = tierOf(p.accountId) || "—";
+    const bucket = byTier[tier] || (byTier[tier] = blank());
+    const targets = all || tier === tierFilter ? [series, bucket] : [bucket];
+    ranges.forEach((r, i) => {
+      const s = stageAt(p, r.end);
+      if (s === "cancelled") return;
+      const wentLive = (p.history || []).some(e => e.to === "live" && day(e.at) >= r.start && day(e.at) <= r.end);
+      for (const t of targets) {
+        if (OPEN_STAGES.includes(s)) t.active[i]++;
+        if (s === "on_hold") t.onHold[i]++;
+        if (wentLive) t.completed[i]++;
+      }
+    });
+  }
+  return { periods: ranges.map(r => r.label), series, byTier };
+}

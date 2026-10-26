@@ -11,6 +11,38 @@ const NAV_ICONS = {
   Implementation: <NavIcon><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></NavIcon>,
   Finance: <NavIcon><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /><line x1="6" y1="15" x2="10" y2="15" /></NavIcon>,
 };
+// Bell alerts for implementation projects, derived from project history (no store). Same 30-day
+// window as health drops, so they age out: a lead/admin when a project reaches Queued; the
+// implementer when assigned (Queued -> Planning); the account CSM when it reaches CSM review; the
+// implementer when a CSM sends it back (CSM review -> In progress), one per returned task.
+function implAlerts(projects, tasks, accounts, user) {
+  const lead = user.role === "admin" || user.role === "impl_lead";
+  const out = [];
+  for (const p of projects) {
+    const acct = accounts.find(a => a.id === p.accountId);
+    const name = acct ? acct.name : "Implementation project";
+    const mineImpl = !!p.implementerId && p.implementerId === user.id;
+    const csm = !!acct && !!acct.csm && acct.csm === user.name;
+    // returned tasks are tagged by the latest send-back only; earlier rounds were re-signed or re-returned
+    const lastReturn = (p.history || []).filter(e => e.from === "csm_review" && e.to === "in_progress").pop();
+    // assignment: assignedAt is stamped on assign and reassign; older projects fall back to the queued -> planning entry
+    const assignedOn = p.assignedAt || ((p.history || []).find(e => e.from === "queued" && e.to === "planning") || {}).at;
+    if (mineImpl && assignedOn && daysSince(assignedOn) <= 30 && daysSince(assignedOn) >= 0)
+      out.push({ id: `impl-assigned-${p.id}-${assignedOn}`, projectId: p.id, accountId: p.accountId, name, sub: "Project assigned to you", date: assignedOn, days: -daysSince(assignedOn) });
+    for (const e of p.history || []) {
+      if (!e.at || daysSince(e.at) > 30 || daysSince(e.at) < 0) continue;
+      const add = (kind, sub) => out.push({ id: `impl-${kind}-${p.id}-${e.at}`, projectId: p.id, accountId: p.accountId, name, sub, date: e.at, days: -daysSince(e.at) });
+      // creation edge only: a resume from On hold back to Queued is not a new arrival
+      if (lead && e.to === "queued" && (!e.from || e.from === "handover")) add("queued", "Project queued for implementation");
+      if (csm && e.to === "csm_review") add("review", "Project ready for sign-off");
+      if (mineImpl && e === lastReturn && (p.stage === "in_progress" || p.stage === "planning"))
+        tasks.filter(t => t.projectId === p.id && t.signoff === "returned").forEach(t =>
+          out.push({ id: `impl-returned-${t.id}-${e.at}`, projectId: p.id, accountId: p.accountId, name, sub: `Task returned: ${t.title}`, date: e.at, days: -daysSince(e.at) }));
+    }
+  }
+  return out;
+}
+
 // Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
@@ -382,6 +414,7 @@ function App({ user, onBackToClients }) {
       .filter(e => BAND_RANK[e.to] > BAND_RANK[e.from] && daysSince(e.date) <= 30)
       .map(e => ({ id: `health-${a.id}-${e.date}-${e.to}`, accountId: a.id, name: a.name,
         sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
+    ...implAlerts(st.projects || [], st.projectTasks || [], st.accounts || [], user),
   ].sort((x, y) => x.days - y.days);
   const alertIds = new Set(alerts.map(a => a.id));
   // Prune on write: ids for alerts that have aged out would otherwise accumulate in localStorage
@@ -470,14 +503,15 @@ function App({ user, onBackToClients }) {
             <div data-notif-panel style={{ "--bell-bottom": `${bellBottom}px` }}
               className="nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80">
               <div className="flex items-center justify-between px-2 py-1">
-                <span className="text-xs font-semibold text-slate-700">Renewals, contracts &amp; health</span>
+                <span className="text-xs font-semibold text-slate-700">Alerts</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
               </div>
               {shownAlerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">
                 {alerts.length === 0 ? "Nothing due soon. 🎉" : "All caught up. 🎉"}
               </div>}
               {shownAlerts.map(a => { const read = notifRead.has(a.id); return (
-                <button key={a.id} onClick={() => { markNotifRead(a.id); setNotifOpen(false); openAccount(a.accountId); }}
+                <button key={a.id} data-notif-item={a.id} onClick={() => { markNotifRead(a.id); setNotifOpen(false);
+                  if (a.projectId) { setImplProjectId(a.projectId); setView("Implementation"); } else openAccount(a.accountId); }}
                   className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
                   <span className="flex min-w-0 items-center gap-2">
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${read ? "bg-transparent" : "bg-indigo-500"}`} />

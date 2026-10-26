@@ -284,3 +284,33 @@ test("impl roles cannot upload or delete attachments, or submit a PO; a CSM can"
     await clean();
   }
 });
+
+// Task 9a: plan templates are saved through save_impl_plan_templates (definer), which an
+// impl_lead may call although settings_write is admin-only. It writes ONLY implPlanTemplates.
+test("impl_lead saves plan templates via the RPC; impl_user and a CSM cannot; other settings untouched", async () => {
+  const lead = await implLead(); const impl = await implementer();
+  const [orig] = await sql(`select data from settings where org_id = $1`, [ORG_A]);
+  const tplOf = async () => ((await sql(`select data from settings where org_id = $1`, [ORG_A]))[0].data || {}).implPlanTemplates;
+  try {
+    await sql(`update settings set data = coalesce(data, '{}'::jsonb) || '{"rates":{"INR":77},"implPlanTemplates":[]}'::jsonb where org_id = $1`, [ORG_A]);
+    const items = [{ name: "Std", tasks: [{ title: "Kickoff", estHours: 2 }] }];
+    ok(await lead.client.rpc("save_impl_plan_templates", { items }), "impl_lead save");
+    assert(JSON.stringify(await tplOf()) === JSON.stringify(items), "templates not stored: " + JSON.stringify(await tplOf()));
+    const [after] = await sql(`select data from settings where org_id = $1`, [ORG_A]);
+    assert(after.data.rates && after.data.rates.INR === 77, "other settings keys changed: " + JSON.stringify(after.data.rates));
+    const evil = [{ name: "Evil", tasks: [] }];
+    errMatch(await impl.client.rpc("save_impl_plan_templates", { items: evil }), /not allowed/, "impl_user save");
+    errMatch(await sessions.user.rpc("save_impl_plan_templates", { items: evil }), /not allowed/, "CSM save");
+    assert(JSON.stringify(await tplOf()) === JSON.stringify(items), "a denied caller changed templates");
+    errMatch(await lead.client.rpc("save_impl_plan_templates", { items: { name: "x" } }), /array/, "non-array items");
+    const adminItems = [...items, { name: "Admin", tasks: [] }];
+    ok(await sessions.admin.rpc("save_impl_plan_templates", { items: adminItems }), "admin save");
+    assert(JSON.stringify(await tplOf()) === JSON.stringify(adminItems), "admin templates not stored");
+    // the RPC is the only door: impl_lead still cannot merge other settings
+    assert((await merge(lead.client, "settings", "1", { rates: { INR: 1 } })).error, "impl_lead merged settings via merge_row");
+    assert((await sql(`select data from settings where org_id = $1`, [ORG_A]))[0].data.rates.INR === 77, "impl_lead's settings merge landed");
+  } finally {
+    if (orig) await sql(`update settings set data = $2 where org_id = $1`, [ORG_A, orig.data]);
+    else await sql(`delete from settings where org_id = $1`, [ORG_A]); // the RPC created the row: leave none, as found
+  }
+});

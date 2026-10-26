@@ -198,6 +198,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
       </AnalyticsSection>
       <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
+      <ImplProjectsCard projects={st.projects || []} accounts={st.accounts || []} />
       <FinanceCard goFinance={goFinance} />
     </div>
   );
@@ -266,6 +267,105 @@ function ArrBridgeCard({ b }) {
           </div>
         ))}
         {b.newLogos > 0 && <p data-bridge-note className="pt-1 text-[11px] text-slate-500">{b.newLogos - b.newLost} new customer(s) signed in the last 12 months{b.newLost ? `; ${b.newLost} more signed and already lost` : ""}. Their revenue is new business, not retention.</p>}
+      </div>
+    </Card>
+  );
+}
+
+
+/* Implementation projects per period: stacked Active / Completed / On hold bars for one year
+   (chartCounts in src/lib/implementation.js), plus a tier x status table for one period.
+   st.projects is already RLS-scoped, so a restricted lead sees only their accounts' projects. */
+var IMPL_STATUSES = [["active", "Active"], ["completed", "Completed"], ["onHold", "On hold"]];
+function ImplProjectsCard({ projects, accounts }) {
+  const today = iso(Date.now()); // UTC day; every "now" below derives from it
+  const thisYear = +today.slice(0, 4), thisMonth = +today.slice(5, 7) - 1;
+  const [year, setYear] = useState(thisYear);
+  const [mode, setMode] = useState("month");
+  const [tier, setTier] = useState("All");
+  const [pick, setPick] = useState(null); // tier-table period index; null = the default
+  const [hov, setHov] = useState(null);
+  const tierById = useMemo(() => Object.fromEntries(accounts.map(a => [a.id, a.tier || "—"])), [accounts]);
+  // chartCounts replays history to each period end, so a period still in the future would
+  // repeat today's stages as if they were known: blank those periods instead.
+  const data = useMemo(() => {
+    const d = chartCounts(projects, year, mode, id => tierById[id], tier);
+    const future = d.periods.map((_, i) => `${year}-${String(mode === "quarter" ? i * 3 + 1 : i + 1).padStart(2, "0")}-01` > today);
+    const blank = s => { IMPL_STATUSES.forEach(([k]) => { s[k] = s[k].map((v, i) => future[i] ? 0 : v); }); };
+    blank(d.series); Object.values(d.byTier).forEach(blank);
+    return d;
+  }, [projects, year, mode, tierById, tier, today]);
+  const years = [...new Set([thisYear, ...projects.flatMap(p => (p.history || []).map(e => +String(e.at).slice(0, 4)).filter(Boolean))])].sort((a, b) => b - a);
+  const tiers = [...new Set([...accounts.map(a => a.tier || "—"), ...Object.keys(data.byTier)])].sort();
+  const { periods, series } = data;
+  const totals = periods.map((_, i) => series.active[i] + series.completed[i] + series.onHold[i]);
+  // default table period: the latest with any data (every tier), else the current period
+  const any = i => Object.values(data.byTier).some(t => t.active[i] + t.completed[i] + t.onHold[i] > 0);
+  let latest = -1; periods.forEach((_, i) => { if (any(i)) latest = i; });
+  const nowIdx = year === thisYear ? (mode === "quarter" ? Math.floor(thisMonth / 3) : thisMonth) : periods.length - 1;
+  const sel = pick !== null && pick < periods.length ? pick : latest >= 0 ? latest : nowIdx;
+  const w = 520, h = 170, padL = 28, padR = 8, padT = 12, padB = 22;
+  const max = Math.max(...totals, 1);
+  const slot = (w - padL - padR) / periods.length;
+  const bw = Math.min(28, slot * 0.6);
+  const X = i => padL + (i + 0.5) * slot;
+  const H = v => (v / max) * (h - padT - padB);
+  const tipX = i => Math.min(Math.max(X(i) - 55, padL), w - padR - 110);
+  const shownTiers = tiers.filter(t => data.byTier[t]);
+  return (
+    <Card title="Implementation projects" className="!p-3" right={
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="flex gap-1" role="group" aria-label="Period">
+          {[["month", "Month"], ["quarter", "Quarter"]].map(([k, l]) => <button key={k} data-impl-mode={k} aria-pressed={mode === k}
+            className={`nm-btn px-2 py-1 text-xs font-bold ${mode === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => { setPick(null); setMode(k); }}>{l}</button>)}
+        </div>
+        <Select data-impl-year aria-label="Year" value={String(year)} onChange={e => { setPick(null); setYear(+e.target.value); }} options={years.map(String)} />
+        <Select data-impl-tier-filter aria-label="Tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", ...tiers]} labels={{ All: "All tiers" }} />
+      </div>}>
+      <div data-impl-chart>
+        <div className="mb-1 flex flex-wrap items-center gap-3 text-xs text-slate-600">
+          {IMPL_STATUSES.map(([k, l]) => <span key={k} className="flex items-center gap-1"><span className={`inline-block h-2 w-2 rounded-sm impl-key-${k}`} />{l}</span>)}
+          <span className="text-slate-500">Active / On hold at period end · Completed = went live in the period</span>
+        </div>
+        <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-2xl" role="img" aria-label={`Implementation projects by ${mode}, ${year}`} onMouseLeave={() => setHov(null)}>
+          <text x={padL - 4} y={padT + 3} textAnchor="end" fontSize="9" style={{ fill: "rgb(var(--slate-500))" }}>{max}</text>
+          <line x1={padL} x2={w - padR} y1={padT} y2={padT} style={{ stroke: "rgb(var(--slate-100))" }} />
+          <line x1={padL} x2={w - padR} y1={h - padB} y2={h - padB} style={{ stroke: "rgb(var(--slate-200))" }} />
+          {periods.map((p, i) => {
+            let y = h - padB;
+            const segs = IMPL_STATUSES.map(([k]) => {
+              const v = series[k][i]; if (!v) return null;
+              const bh = H(v); y -= bh;
+              // 2px surface gap between stacked segments
+              return <rect key={k} data-seg={k} className={`impl-seg-${k}`} x={X(i) - bw / 2} y={y + 1} width={bw} height={Math.max(bh - 2, 1)} rx="2"
+                opacity={hov === null || hov === i ? 1 : 0.45} />;
+            });
+            return (
+              <g key={p} data-impl-bar={p} data-active={series.active[i]} data-completed={series.completed[i]} data-on-hold={series.onHold[i]}
+                onMouseEnter={() => setHov(i)} onClick={() => setPick(i)} style={{ cursor: "pointer" }}>
+                <rect x={X(i) - slot / 2} y={padT} width={slot} height={h - padT - padB} fill="transparent" />
+                {segs}
+                <text data-impl-period-label x={X(i)} y={h - 8} textAnchor="middle" fontSize="9" fontWeight={i === sel ? 700 : 400} style={{ fill: "rgb(var(--slate-500))" }}>{p}</text>
+              </g>
+            );
+          })}
+          {hov !== null && <g pointerEvents="none">
+            <rect x={tipX(hov)} y={padT} width="110" height="50" rx="4" style={{ fill: "rgb(var(--slate-900))" }} opacity="0.9" />
+            <text x={tipX(hov) + 6} y={padT + 12} fontSize="9" fontWeight="700" style={{ fill: "rgb(var(--slate-100))" }}>{periods[hov]} {year} · {totals[hov]}</text>
+            {IMPL_STATUSES.map(([k, l], si) => <text key={k} x={tipX(hov) + 6} y={padT + 24 + si * 11} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{l}: {series[k][hov]}</text>)}
+          </g>}
+        </svg>
+        <div className="mt-2 text-xs text-slate-500">By tier · <span data-impl-tier-period className="font-bold text-slate-700">{periods[sel]}</span> {year} (click a bar to change)</div>
+        <table data-impl-tier-table className="mt-1 w-full max-w-2xl text-sm">
+          <thead><tr className="border-b border-slate-200 text-left text-xs font-bold uppercase text-slate-500">
+            <th className="py-1">Tier</th>{IMPL_STATUSES.map(([k, l]) => <th key={k} className="py-1 text-right">{l}</th>)}</tr></thead>
+          <tbody>{shownTiers.length === 0
+            ? <tr><td colSpan="4" className="py-1.5 text-slate-500">No implementation projects yet.</td></tr>
+            : shownTiers.map(t => { const b = data.byTier[t];
+              return <tr key={t} data-impl-tier-row={t} data-counts={IMPL_STATUSES.map(([k]) => b[k][sel]).join(",")} className="border-b border-slate-100 last:border-0">
+                <td className="py-1 font-medium text-slate-700">{t}</td>
+                {IMPL_STATUSES.map(([k]) => <td key={k} className="py-1 text-right tabular-nums text-slate-700">{b[k][sel]}</td>)}</tr>; })}</tbody>
+        </table>
       </div>
     </Card>
   );

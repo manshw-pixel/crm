@@ -11,6 +11,7 @@
 const writeQueue = createWriteQueue({
   send: op => op.kind === "delete"
     ? sb.from(op.table).delete().eq(op.column, op.value)
+    : op.kind === "rpc" ? sb.rpc(op.fn, op.args)
     : sb.rpc("merge_row", { tbl: op.table, row_id: op.rowId, patch: op.patch, appends: op.appends }),
   onRetry: (op, error) => reportError("retry", error, { table: op.table, rowId: op.rowId, attempt: op.attempts }),
   onGiveUp: (op, error) => { dbError(op.table, error); if (window.__refetch) window.__refetch(); },

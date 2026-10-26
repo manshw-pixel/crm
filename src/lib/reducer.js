@@ -132,12 +132,17 @@ export function persistOps(action, next, prev) {
     case "DELETE_PROJECT_TASK": del("project_tasks", "id", action.id); break;
     case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
     case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS":
-    case "SET_IMPL_CHECKLIST": case "SET_IMPL_PLAN_TEMPLATES": case "SET_IMPL_CAPACITY": {
+    case "SET_IMPL_CHECKLIST": case "SET_IMPL_CAPACITY": {
       // settings always writes (even an empty diff), exactly as before the move
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
       ops.push({ kind: "merge", table: "settings", rowId: "1", patch: { ...patch, ...sets }, appends });
       break;
     }
+    // Plan templates go through a definer RPC, not a settings merge: an impl_lead may save them,
+    // and settings_write (admin-only) would refuse the merge. The RPC writes only this key.
+    case "SET_IMPL_PLAN_TEMPLATES":
+      ops.push({ kind: "rpc", table: "settings", fn: "save_impl_plan_templates", args: { items: (next.settings && next.settings.implPlanTemplates) || [] } });
+      break;
   }
   return ops;
 }

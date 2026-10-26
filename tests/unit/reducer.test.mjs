@@ -376,7 +376,10 @@ test("project/task add, edit, delete write to projects and project_tasks; settin
   const s = impl({ type: "SET_IMPL_CAPACITY", map: { u1: 20 } });
   assert.deepEqual(merges(s.ops).map(o => [o.table, o.patch.implCapacity]), [["settings", { u1: 20 }]]);
   assert.deepEqual(impl({ type: "SET_IMPL_CHECKLIST", items: [] }).next.settings.implChecklist, []);
-  assert.deepEqual(impl({ type: "SET_IMPL_PLAN_TEMPLATES", items: [{ name: "x" }] }).next.settings.implPlanTemplates, [{ name: "x" }]);
+  const t = impl({ type: "SET_IMPL_PLAN_TEMPLATES", items: [{ name: "x" }] });
+  assert.deepEqual(t.next.settings.implPlanTemplates, [{ name: "x" }]);
+  // templates persist through the definer RPC (impl_lead may save them), never a settings merge
+  assert.deepEqual(t.ops, [{ kind: "rpc", table: "settings", fn: "save_impl_plan_templates", args: { items: [{ name: "x" }] } }]);
 });
 
 test("DELETE_ACCOUNT also removes that account's projects and tasks from state", () => {

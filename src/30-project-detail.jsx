@@ -41,6 +41,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
   const [tplName, setTplName] = useState(null);
   const [tplPick, setTplPick] = useState("");
   const [applying, setApplying] = useState(false);
+  const [sendBack, setSendBack] = useState(null); // { taskId, note } while a Send back note is being typed
   if (!project) return <div className="text-sm text-slate-500">Project not found. <Btn data-project-back onClick={onBack}>← Back</Btn></div>;
   const account = (st.accounts || []).find(a => a.id === project.accountId) || null;
   const tasks = (st.projectTasks || []).filter(t => t.projectId === project.id).sort((a, b) => (a.order || 0) - (b.order || 0));
@@ -56,7 +57,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
 
   const assign = id => {
     const prev = project.implementerId || null;
-    dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { implementerId: id } });
+    dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { implementerId: id, assignedAt: now() } });
     // open tasks follow the implementer, unless deliberately owned by someone else
     tasks.filter(t => t.status !== "done" && (!t.ownerId || t.ownerId === prev) && t.ownerId !== id)
       .forEach(t => dispatch({ type: "EDIT_PROJECT_TASK", id: t.id, patch: { ownerId: id } }));
@@ -91,6 +92,9 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
     tpl.tasks.forEach((t, i) => addTask(t.title, t.estHours, null, i + 1));
     setApplying(false);
   };
+  // sign-off: only the account's CSM (or an admin), only while in CSM review
+  const reviewer = project.stage === "csm_review" && (user.role === "admin" || (!!account && !!account.csm && user.name === account.csm));
+  const signoff = (t, verdict, note = "") => dispatch({ type: "SIGNOFF_TASK", taskId: t.id, verdict, note, actor, now: now() });
   const resume = (() => { const h = (project.history || []).slice().reverse().find(e => e.to === "on_hold"); return h ? h.from : null; })();
   const done = tasks.filter(t => t.status === "done").length;
 
@@ -144,6 +148,19 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
               <button data-task-delete title="Delete task" aria-label="Delete task" className="text-xs text-rose-600"
                 onClick={() => { if (window.confirm(`Delete "${t.title}"?`)) dispatch({ type: "DELETE_PROJECT_TASK", id: t.id }); }}>✕</button>
             </> : <span className="text-xs text-slate-600">{TASK_STATUS_LABEL[t.status] || t.status}</span>}
+            {t.signoff === "signed" && <span data-task-signed className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">Signed off{t.signedBy ? ` by ${t.signedBy}` : ""}</span>}
+            {reviewer && t.signoff !== "signed" && <>
+              <Btn data-task-signoff kind="primary" onClick={() => signoff(t, "signed")}>Sign off</Btn>
+              <Btn data-task-sendback onClick={() => setSendBack({ taskId: t.id, note: "" })}>Send back</Btn>
+            </>}
+            {reviewer && sendBack && sendBack.taskId === t.id && <form className="flex w-full gap-2" onSubmit={e => {
+              e.preventDefault(); const note = sendBack.note.trim(); if (!note) return;
+              signoff(t, "returned", note); setSendBack(null); }}>
+              <Input data-sendback-note placeholder="What needs fixing?" aria-label="Send back note" className="flex-1" value={sendBack.note}
+                onChange={e => setSendBack({ taskId: t.id, note: e.target.value })} />
+              <Btn data-sendback-confirm type="submit" disabled={!sendBack.note.trim()}>Send back</Btn><Btn onClick={() => setSendBack(null)}>Cancel</Btn>
+            </form>}
+            {t.signoff === "returned" && t.signoffNote && <div data-task-returned className="w-full text-xs text-rose-700">Returned by CSM: {t.signoffNote}</div>}
           </div>
         ))}
         {canEdit && <form className="mt-2 flex flex-wrap gap-2" onSubmit={submitTask}>
@@ -157,7 +174,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
             options={["", ...templates.map(x => x.name)]} labels={{ "": "Start from template…" }} />
           <Btn data-template-apply disabled={!tplPick || applying} onClick={applyTemplate}>Apply</Btn>
         </div>}
-        {user.role === "admin" && tasks.length > 0 && (tplName === null
+        {manager && tasks.length > 0 && (tplName === null
           ? <div className="mt-2"><Btn data-save-template onClick={() => setTplName("")}>Save as template</Btn></div>
           : <div className="mt-2 flex gap-2">
             <Input data-template-name placeholder="Template name" aria-label="Template name" className="!w-56" value={tplName} onChange={e => setTplName(e.target.value)} />

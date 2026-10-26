@@ -86,7 +86,7 @@ export const scenarios = [
       const panel = page.locator("[data-notif-panel]");
       await panel.waitFor({ timeout: 5000 });
       assert.equal(await bell.getAttribute("aria-expanded"), "true");
-      assert.match(await panel.innerText(), /Renewals, contracts & health/);
+      assert.match(await panel.innerText(), /Alerts/);
       await page.keyboard.press("Escape");
       await panel.waitFor({ state: "detached", timeout: 5000 });
       assert.equal(await bell.getAttribute("aria-expanded"), "false");
