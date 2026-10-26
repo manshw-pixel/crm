@@ -94,3 +94,34 @@ test("impl bell: queued to lead, assigned + returned to implementer, ready for s
     } finally { await browser.close(); }
   }
 });
+
+test("impl bell: reassign stamps assignedAt -> new implementer alerted today; resume to Queued is not 'queued'; returned clears in CSM review", async () => {
+  const old = [{ at: OLD, by: "Cara", from: "handover", to: "queued", note: "" }, { at: OLD, by: "Lena", from: "queued", to: "planning", note: "" }];
+  // lead reassigns p1 (u2 -> u1); p3 was resumed to Queued from On hold today (no queued alert)
+  const leadSeed = seed("impl_lead", "Lena", [proj("p1", "planning", "u2", old),
+    proj("p3", "queued", null, [...old.slice(0, 1), { at: NOW, by: "Lena", from: "on_hold", to: "queued", note: "" }])], []);
+  const { page, browser } = await launch(leadSeed);
+  try {
+    await page.waitForSelector("[data-bell]");
+    assert(!(await bellItems(page)).some(x => x.startsWith("impl-queued")), "resume raised a queued alert");
+    await page.keyboard.press("Escape");
+    await openImpl(page);
+    await openProject(page, "p1");
+    await page.click("[data-stage-action=reassign]");
+    await page.click('[data-assign-row="u1"] button');
+    await page.waitForSelector('[data-project-implementer]:has-text("Lena")');
+    const s = await state(page);
+    const p = s.projects.find(x => x.id === "p1");
+    assert(p.implementerId === "u1" && p.assignedAt && p.assignedAt.slice(0, 10) === NOW.slice(0, 10), "assignedAt " + JSON.stringify(p));
+    assert(p.history.length === 2, "reassign wrote history");
+    const items = await bellItems(page);
+    assert(items.some(x => x.startsWith(`impl-assigned-p1-${p.assignedAt}`)), "no assigned alert " + items.join(" | "));
+  } finally { await browser.close(); }
+  // returned task alert is gone once the project is back in CSM review
+  const back = [{ at: NOW, by: "Cara", from: "csm_review", to: "in_progress", note: "Fix" }, { at: NOW, by: "Ivy", from: "in_progress", to: "csm_review", note: "" }];
+  const r = await launch(seed("impl_user", "Ivy", [proj("p1", "csm_review", "u1", back)], [task("k1", "p1", "Kickoff", { signoff: "returned", signoffNote: "Fix", status: "done" })]));
+  try {
+    await r.page.waitForSelector("[data-bell]");
+    assert(!(await bellItems(r.page)).some(x => x.startsWith("impl-returned")), "returned alert still shown in CSM review");
+  } finally { await r.browser.close(); }
+});

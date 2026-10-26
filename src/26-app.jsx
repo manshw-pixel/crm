@@ -25,13 +25,17 @@ function implAlerts(projects, tasks, accounts, user) {
     const csm = !!acct && !!acct.csm && acct.csm === user.name;
     // returned tasks are tagged by the latest send-back only; earlier rounds were re-signed or re-returned
     const lastReturn = (p.history || []).filter(e => e.from === "csm_review" && e.to === "in_progress").pop();
+    // assignment: assignedAt is stamped on assign and reassign; older projects fall back to the queued -> planning entry
+    const assignedOn = p.assignedAt || ((p.history || []).find(e => e.from === "queued" && e.to === "planning") || {}).at;
+    if (mineImpl && assignedOn && daysSince(assignedOn) <= 30 && daysSince(assignedOn) >= 0)
+      out.push({ id: `impl-assigned-${p.id}-${assignedOn}`, projectId: p.id, accountId: p.accountId, name, sub: "Project assigned to you", date: assignedOn, days: -daysSince(assignedOn) });
     for (const e of p.history || []) {
       if (!e.at || daysSince(e.at) > 30 || daysSince(e.at) < 0) continue;
       const add = (kind, sub) => out.push({ id: `impl-${kind}-${p.id}-${e.at}`, projectId: p.id, accountId: p.accountId, name, sub, date: e.at, days: -daysSince(e.at) });
-      if (lead && e.to === "queued") add("queued", "Project queued for implementation");
-      if (mineImpl && e.from === "queued" && e.to === "planning") add("assigned", "Project assigned to you");
+      // creation edge only: a resume from On hold back to Queued is not a new arrival
+      if (lead && e.to === "queued" && (!e.from || e.from === "handover")) add("queued", "Project queued for implementation");
       if (csm && e.to === "csm_review") add("review", "Project ready for sign-off");
-      if (mineImpl && e === lastReturn)
+      if (mineImpl && e === lastReturn && (p.stage === "in_progress" || p.stage === "planning"))
         tasks.filter(t => t.projectId === p.id && t.signoff === "returned").forEach(t =>
           out.push({ id: `impl-returned-${t.id}-${e.at}`, projectId: p.id, accountId: p.accountId, name, sub: `Task returned: ${t.title}`, date: e.at, days: -daysSince(e.at) }));
     }
@@ -499,7 +503,7 @@ function App({ user, onBackToClients }) {
             <div data-notif-panel style={{ "--bell-bottom": `${bellBottom}px` }}
               className="nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80">
               <div className="flex items-center justify-between px-2 py-1">
-                <span className="text-xs font-semibold text-slate-700">Renewals, contracts &amp; health</span>
+                <span className="text-xs font-semibold text-slate-700">Alerts</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
               </div>
               {shownAlerts.length === 0 && <div className="px-2 py-2 text-sm text-slate-500">

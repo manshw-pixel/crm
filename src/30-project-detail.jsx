@@ -57,7 +57,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
 
   const assign = id => {
     const prev = project.implementerId || null;
-    dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { implementerId: id } });
+    dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { implementerId: id, assignedAt: now() } });
     // open tasks follow the implementer, unless deliberately owned by someone else
     tasks.filter(t => t.status !== "done" && (!t.ownerId || t.ownerId === prev) && t.ownerId !== id)
       .forEach(t => dispatch({ type: "EDIT_PROJECT_TASK", id: t.id, patch: { ownerId: id } }));
