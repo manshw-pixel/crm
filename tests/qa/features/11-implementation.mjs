@@ -20,8 +20,14 @@ const PLAN_HOURS = 4, LOG_HOURS = 2;
 // shows the run's marker (every text item of the handover is filled with it). Fails loudly when none is found.
 async function openRunProject(page, runId, thisRunId, stages, hint, soft = false) {
   await nav(page, "Implementation").click();
+  // The app keeps the open project across navigation: return to the Board first when a detail is showing.
+  const back = page.locator("[data-project-back]");
+  if (await back.count() && await back.first().isVisible()) await back.first().click();
   await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
   const name = fixtureName(runId);
+  // The columns render before the projects load on a fresh sign-in: wait for a card of the account in a wanted column.
+  await page.locator(stages.map(s => `[data-board-column=${s}] [data-board-project]`).join(", ")).filter({ hasText: name })
+    .first().waitFor({ timeout: 15000 }).catch(() => {});
   for (const stage of stages) {
     const cards = page.locator(`[data-board-column=${stage}] [data-board-project]`).filter({ hasText: name });
     const n = await cards.count();
@@ -286,7 +292,9 @@ export const scenarios = [
         assert.ok((await task.locator("[data-task-returned]").innerText()).includes(note), "the Send back note is not shown on the task");
         assert.equal(await task.locator("[data-task-status]").inputValue(), "todo", "returned task is not back to To do");
       });
-      // The implementer sees the note too.
+      // The implementer sees the note too. Reload: the impl page still holds the pre-Send-back state the admin changed.
+      await page.reload();
+      await nav(page, "Implementation").waitFor({ timeout: 20000 });
       const detail = await openRunProject(page, runId, thisRunId, ["in_progress"], "project is not In progress for the impl user after Send back");
       await detail.locator("[data-task-returned]").first().waitFor({ timeout: 15000 });
       assert.ok((await detail.locator("[data-task-returned]").first().innerText()).includes(note), "impl user does not see the return note");
@@ -296,6 +304,8 @@ export const scenarios = [
     run: async ctx => {
       const { page, runId, thisRunId, env } = ctx;
       if (!env?.users?.impl) throw new SkipScenario("no impl user configured");
+      await page.reload(); // pick up the reviewer's Send back made from the admin session
+      await nav(page, "Implementation").waitFor({ timeout: 20000 });
       const probe = await openRunProject(page, runId, thisRunId, ALL_STAGES, "", true);
       if (!probe) throw new Error(`no in-progress/CSM-review/live project of the run on the board (did ${F}/signoff-return run first?)`);
       const stage0 = await probe.getAttribute("data-stage");
@@ -343,7 +353,7 @@ export const scenarios = [
       await nav(page, "Dashboard").click();
       const card = page.locator("[data-impl-chart]");
       await card.waitFor({ timeout: 20000 });
-      const labels = () => card.locator("[data-impl-period-label]").allInnerTexts().then(a => a.map(x => x.trim()));
+      const labels = () => card.locator("[data-impl-period-label]").allTextContents().then(a => a.map(x => x.trim()));
       const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
       assert.deepEqual(await labels(), MONTHS, "Month mode does not show Jan..Dec");
       // The run's project went Live now, so the current month counts it as Completed.
