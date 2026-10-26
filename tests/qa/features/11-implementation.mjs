@@ -35,7 +35,7 @@ export const scenarios = [
       const sections = [["Open tasks", "Edit task"], ["Contacts", "Edit contact"], ["Contacts", "Delete contact"], ["Activity timeline", "Edit activity"]];
       const empty = new Set();
       for (const [title, label] of sections) {
-        const t = await page.getByText(new RegExp(`^${title} \(\d+\)$`)).first().textContent();
+        const t = await page.getByText(new RegExp(String.raw`^${title} \(\d+\)$`)).first().textContent();
         if (+/\d+/.exec(t)[0] === 0) { empty.add(title); continue; }
         assert.equal(await page.getByRole("button", { name: label }).count(), 0, `impl user sees "${label}"`);
       }
