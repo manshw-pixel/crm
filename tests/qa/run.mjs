@@ -85,6 +85,12 @@ try {
   browser = await chromium.launch({ channel: process.env.CRM_TEST_CHANNEL ?? "msedge" });
   const csmName = await readDisplayName(browser, "csm");
   const adminName = await readDisplayName(browser, "admin");
+  // Optional impl user: its name lets 11-implementation pick it in the assign dialog. A bad impl login must not abort the run.
+  let implName = null;
+  if (env.users.impl) {
+    try { implName = await readDisplayName(browser, "impl"); }
+    catch (e) { notes.push(`impl user could not sign in (${clean(String(e?.message || e)).slice(0, 120)}); impl scenarios will skip or fail`); }
+  }
   if (skipReset) notes.push(`skip-reset: using accounts seeded by ${seedRunId}`);
   else {
     const admin = await signIn(browser, env, "admin");
@@ -95,7 +101,7 @@ try {
     } finally { await admin.close(); }
   }
   results = await runScenarios(scenarios,
-    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId: seedRunId, thisRunId: runId, csmName, adminName }),
+    async s => ({ ...(await signIn(browser, env, s.role ?? "admin", s.viewport ? { viewport: s.viewport } : {})), runId: seedRunId, thisRunId: runId, csmName, adminName, implName }),
     { skip: s => skipReason(s, env),
       onFail: async (s, ctx) => {
         if (!ctx?.page) return undefined;
