@@ -34,7 +34,7 @@ begin
   end if;
 end $$;
 insert into public.orgs (id, name)
-values ('00000000-0000-0000-0000-000000000001', 'OneVio')   -- EDIT ME: your company name
+values ('00000000-0000-0000-0000-000000000001', 'My Company')   -- EDIT ME: your company name
 on conflict (id) do nothing;
 
 -- ---------- tables ----------
@@ -85,7 +85,7 @@ alter table public.profiles
 update public.profiles set platform_admin = true,
        org_id = coalesce(org_id, '00000000-0000-0000-0000-000000000001')
   where (not platform_admin or org_id is null)
-    and id = (select id from auth.users where lower(email) = lower('manshw@gmail.com'));   -- EDIT ME
+    and id = (select id from auth.users where lower(email) = lower('you@yourcompany.com'));   -- EDIT ME
 
 create table if not exists public.invites (
   email text not null,
