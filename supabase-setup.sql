@@ -1593,10 +1593,18 @@ begin
   if coalesce(new.data->>'implementerId', '') <> coalesce(od->>'implementerId', '') and not mgr then
     raise exception 'Only an implementation lead or admin can assign the implementer';
   end if;
+  -- Leaving Handover/Queued for any later stage (planning, or a skip ahead) is a lead's call.
+  if tg_op = 'UPDATE' and coalesce(old_stage, 'handover') in ('handover', 'queued')
+     and coalesce(new_stage, 'handover') not in ('handover', 'queued') and not mgr then
+    raise exception 'Only an implementation lead or admin can start planning';
+  end if;
   if old_stage = 'queued' and new_stage = 'planning' and not mgr then
     raise exception 'Only an implementation lead or admin can start planning';
   end if;
   if new_stage = 'live' and old_stage is distinct from 'live' then
+    if old_stage is distinct from 'csm_review' then
+      raise exception 'A project goes live only from CSM review';
+    end if;
     if not exists (select 1 from project_tasks where org_id = new.org_id and data->>'projectId' = new.id)
        or exists (select 1 from project_tasks where org_id = new.org_id and data->>'projectId' = new.id
                   and coalesce(data->>'signoff', '') <> 'signed') then

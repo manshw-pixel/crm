@@ -188,3 +188,25 @@ test("the implementer deletes tasks on their own project; another impl_user cann
     assert(!error && !(await stillExists("project_tasks", "im-t")), "control: implementer delete failed: " + error?.message);
   } finally { await clean(); }
 });
+
+test("only a lead moves a project out of Queued, even skipping ahead", async () => {
+  const lead = await implLead();
+  try {
+    const impl = await world("queued");
+    errMatch(await merge(sessions.user, "projects", "im-p", { stage: "in_progress" }), /start planning/, "CSM skipped queued -> in_progress");
+    errMatch(await merge(impl.client, "projects", "im-p", { stage: "csm_review" }), /start planning/, "implementer skipped queued -> csm_review");
+    assert((await valueOf("projects", "im-p")).stage === "queued", "stage moved despite the errors");
+    ok(await merge(lead.client, "projects", "im-p", { stage: "in_progress" }), "impl_lead queued -> in_progress");
+  } finally { await clean(); }
+});
+
+test("go-live only from CSM review", async () => {
+  try {
+    await world("in_progress");
+    await seed("project_tasks", "im-t", { projectId: "im-p", accountId: "im-acc", title: "A", status: "done", signoff: "signed" });
+    errMatch(await merge(sessions.admin, "projects", "im-p", { stage: "live" }), /only from CSM review/, "in_progress -> live skip");
+    assert((await valueOf("projects", "im-p")).stage === "in_progress", "stage moved despite the error");
+    await sql(`update projects set data = data || '{"stage":"csm_review"}' where org_id = $1 and id = 'im-p'`, [ORG_A]);
+    ok(await merge(sessions.admin, "projects", "im-p", { stage: "live" }), "admin csm_review -> live");
+  } finally { await clean(); }
+});
