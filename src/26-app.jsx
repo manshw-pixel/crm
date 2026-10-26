@@ -8,8 +8,13 @@ const NAV_ICONS = {
   Accounts: <NavIcon><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 0 0-3-3.87" /><path d="M16 3.13a4 4 0 0 1 0 7.75" /></NavIcon>,
   Renewals: <NavIcon><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></NavIcon>,
   Settings: <NavIcon><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></NavIcon>,
+  Implementation: <NavIcon><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></NavIcon>,
   Finance: <NavIcon><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /><line x1="6" y1="15" x2="10" y2="15" /></NavIcon>,
 };
+// Sidebar views per role. Implementation roles get only the placeholder Implementation view and
+// Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
+const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
+  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"]);
 /* --------------------------- command palette --------------------------- */
 /* case-insensitive subsequence match: "nrw" matches "Northwind" */
 function subseqMatch(q, text) {
@@ -29,7 +34,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   const [sel, setSel] = useState(0);
   useEffect(() => { if (open) { setQ(""); setSel(0); } }, [open]);
   if (!open) return null;
-  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"])
+  const views = viewsFor(user)
     .filter(v => subseqMatch(q, "go to " + v))
     .map(v => ({ type: "view", id: "v-" + v, label: `Go to ${v}`, run: () => go(v) }));
   const prefix = t => t.toLowerCase().startsWith(q.toLowerCase());
@@ -41,7 +46,7 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
   const list = [];
   rows.forEach((r, idx) => {
     list.push(r);
-    if (idx === 0 && r.type === "account") {
+    if (idx === 0 && r.type === "account" && !isImplRole(user)) {
       PALETTE_ACTIONS.filter(x => !(r.acct.churn && x.key === "renewal")).forEach(x =>
         list.push({ type: "action", id: r.id + "-" + x.key, label: "↳ " + x.label, run: () => go("Accounts", r.acct.id, x.key) }));
     }
@@ -131,12 +136,12 @@ function App({ user, onBackToClients }) {
       .catch(() => { if (!cancelled) ORG_LIMITS.loaded = true; }); // a failed read is treated as Unlimited, as before
     return () => { cancelled = true; };
   }, [user.org_id]);
-  const views = (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance"]);
+  const views = viewsFor(user);
   const [st, setSt] = useState(emptyData);
   const [loaded, setLoaded] = useState(false);
   // a failed first load falls back to rendering the (empty) views, as before the skeleton existed
   const [loadFailed, setLoadFailed] = useState(false);
-  const [view, setView] = useState("Dashboard");
+  const [view, setView] = useState(() => isImplRole(user) ? "Implementation" : "Dashboard");
   const [acctId, setAcctId] = useState(null);
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -246,7 +251,7 @@ function App({ user, onBackToClients }) {
   // by day anyway. The upsert makes a second write harmless, not merely tolerable.
   const healthRecorded = React.useRef(false);
   React.useEffect(() => {
-    if (!loaded || healthRecorded.current || !user || !scored.length) return;
+    if (!loaded || healthRecorded.current || !user || !scored.length || isImplRole(user)) return; // read-only roles never write baselines
     const payload = scored.map(a => ({ accountId: a.id, score: Math.round(a.score) }));
     if (typeof window !== "undefined") {
       // Test seam: the suite asserts on what was sent without a live database.
@@ -270,7 +275,7 @@ function App({ user, onBackToClients }) {
     } catch (e) { /* same reasoning */ }
   }, [loaded, user, scored.length]);
   useEffect(() => { // one aggregate snapshot per calendar month (whole book) for trend lines
-    if (!loaded || !scored.length) return;
+    if (!loaded || !scored.length || isImplRole(user)) return; // settings are not writable by impl roles
     const month = iso(Date.now()).slice(0, 7);
     const snaps = st.settings.snapshots || [];
     // re-take this month's snapshot once if it predates forecast recording
@@ -288,7 +293,7 @@ function App({ user, onBackToClients }) {
         atRisk90: s90(due90.filter(a => renewalStageOf(a) === "At risk")), due90Count: due90.length }].slice(-24) });
   }, [loaded, scored]);
   useEffect(() => { // auto-create renewal playbook tasks when an account is within 90d of renewal
-    if (!loaded) return;
+    if (!loaded || isImplRole(user)) return;
     const pb = playbookOf(st.settings);
     if (!pb.length) return;
     st.accounts.forEach(a => {
@@ -302,7 +307,7 @@ function App({ user, onBackToClients }) {
     });
   }, [loaded, st.accounts, st.settings.playbook]);
   useEffect(() => { // auto: detect health-band crossings, seed per-band playbook tasks
-    if (!loaded) return;
+    if (!loaded || isImplRole(user)) return;
     const today = iso(Date.now());
     const hpb = healthPlaybookOf(st.settings);
     scored.forEach(a => {
@@ -340,7 +345,7 @@ function App({ user, onBackToClients }) {
   // below lg the sidebar is an overlay drawer; at lg+ it is the fixed rail it always was
   const [mobileNav, setMobileNav] = useState(false);
   const myCount = scored.filter(a => a.csm === user.name).length;
-  const scope = user.role === "lead" ? "all" : scopeSel ?? (user.role === "admin" ? "all" : myCount > 0 ? "mine" : "all"); // admins default to the whole book
+  const scope = user.role === "lead" || isImplRole(user) ? "all" : scopeSel ?? (user.role === "admin" ? "all" : myCount > 0 ? "mine" : "all"); // admins default to the whole book
   const visible = scope === "mine" ? scored.filter(a => a.csm === user.name) : scored; // includes churned
   const active = visible.filter(a => !a.churn);
   const openAccount = (id, form) => { setView("Accounts"); setAcctId(id); if (form) setPendingForm(form); };
@@ -440,7 +445,7 @@ function App({ user, onBackToClients }) {
         <h1 className="text-xl font-bold tracking-tight text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
           : view}</h1>
-        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && <div data-scope-toggle className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
+        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className="nm-inset flex items-center gap-0.5 !rounded-lg p-0.5 lg:ml-3">
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
             <button key={k} onClick={() => setScopeSel(k)}
               className={`rounded-md px-3 py-1 text-xs font-semibold ${scope === k ? "bg-indigo-600 text-white shadow-sm" : "text-slate-600 hover:text-slate-900"}`}>{label}</button>
@@ -499,13 +504,14 @@ function App({ user, onBackToClients }) {
       </div>
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
-        {view === "Dashboard" && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
-        {view === "Tasks" && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
+        {view === "Implementation" && isImplRole(user) && <Card title="Implementation projects"><div className="text-sm text-slate-500">Implementation projects — coming soon.</div></Card>}
+        {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
+        {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
         {view === "Accounts" && (acctId
           ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
-        {view === "Renewals" && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
-        {view === "Finance" && <FinancePage st={st} user={user} openAccount={openAccount} />}
+        {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
+        {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
         {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} />}
         </>}
       </ViewBoundary>

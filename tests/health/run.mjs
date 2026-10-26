@@ -59,6 +59,7 @@ import "./client-console.test.mjs";
 import "./touchpoint-activity.test.mjs";
 import "./contacts.test.mjs";
 import "./implementation-store.test.mjs";
+import "./impl-roles.test.mjs";
 import "./signout.test.mjs";
 import "./mobile.test.mjs";
 import "./drive-permission.test.mjs";

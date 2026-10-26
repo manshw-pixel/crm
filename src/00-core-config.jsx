@@ -32,6 +32,8 @@ const SUPABASE_URL = "https://avrtiyfoxlvxwqdkrznd.supabase.co";
 const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImF2cnRpeWZveGx2eHdxZGtyem5kIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNTA1NjUsImV4cCI6MjA5ODcyNjU2NX0.D0rhXOgtn4Prfx_2opJHLhmsuCCEI3jTICw7DjfYX2Y";
 /* =========================================================================== */
 const CONFIGURED = SUPABASE_URL.startsWith("https://") && SUPABASE_ANON_KEY.length > 30;
+// Implementation roles are read-only on every CRM table (RLS: SELECT only); the UI mirrors that.
+const isImplRole = u => !!u && (u.role === "impl_lead" || u.role === "impl_user");
 // __sbFactory is the test seam: the E2E harness installs an in-memory Supabase mock here
 // before the app boots. It is never set in production, so the real client is what ships.
 // (This replaced a regex-over-source-text swap in harness.mjs, which could not survive

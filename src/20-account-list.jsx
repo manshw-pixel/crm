@@ -191,8 +191,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   );
   return (
     <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2">
-      {user.role !== "lead" && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
-      {user.role !== "lead" && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
+      {user.role !== "lead" && !isImplRole(user) && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
+      {user.role !== "lead" && !isImplRole(user) && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
       <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
       <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
         onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />
@@ -261,7 +261,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         {onlyChurned && <button className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600" onClick={() => setOnlyChurned(false)} title="Remove churned-only filter">churned only ✕</button>}
         {qbrDue && <button className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700" onClick={() => setQbrDue(false)} title="Remove QBR-due filter">QBR due ✕</button>}
       </div>
-      {selected.size > 0 && (
+      {selected.size > 0 && !isImplRole(user) && (
         <div data-bulkbar className="nm-sm mb-3 flex flex-wrap items-center gap-2 p-3">
           <span data-live="selection" aria-live="polite" className="text-sm font-bold text-slate-800">{selected.size} selected</span>
           {isAdminUser(user) && <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>}
@@ -280,15 +280,15 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <th className="w-8 px-2 py-1.5">
-              <input type="checkbox" data-select-all aria-label="Select all filtered accounts"
-                checked={allVisibleSelected} onChange={toggleAll} />
+              {!isImplRole(user) && <input type="checkbox" data-select-all aria-label="Select all filtered accounts"
+                checked={allVisibleSelected} onChange={toggleAll} />}
             </th>
             <Th k="accountNo">#</Th><Th k="name">Account</Th><Th k="tier">Tier</Th><Th k="arr">ARR</Th><Th k="industry">Industry</Th>
             <Th k="csm">CSM</Th><Th k="score">Health</Th><Th k="nrr">NRR</Th><Th k="grr">GRR</Th><Th k="movement">vs {rows[0]?._ret?.baselineKey || "Dec"}</Th><Th k="renewalDate">Renewal</Th>{qbrDue && <Th k="nextQbrDate">Next QBR</Th>}<Th k="billingCompletedDate">Billing</Th><th className="px-2 text-left text-[11px] font-bold uppercase tracking-widest text-slate-500">Flags</th>
           </tr></thead>
           <tbody>
             {rows.length === 0 && <tr><td colSpan={colCount} className="px-2 py-8 text-center text-sm text-slate-500">
-              {scored.length === 0 ? (user.role === "lead" ? "No accounts are assigned to you yet." : <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</>) : "No accounts match the current filters."}
+              {scored.length === 0 ? (user.role === "lead" ? "No accounts are assigned to you yet." : isImplRole(user) ? "No accounts yet." : <>No accounts yet — click <b>+ New account</b> to add your first, or load sample data from Settings.</>) : "No accounts match the current filters."}
             </td></tr>}
             {/* Spacers stand in for the rows that are not rendered, so the scrollbar and
                 every row's position match the FULL list. aria-hidden: they carry no
@@ -300,8 +300,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
               return (
                 <tr key={a.id} data-account-row ref={i === 0 ? win.rowRef : null} className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
-                    <input type="checkbox" data-select={a.id} aria-label={`Select ${a.name}`}
-                      checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />
+                    {!isImplRole(user) && <input type="checkbox" data-select={a.id} aria-label={`Select ${a.name}`}
+                      checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />}
                   </td>
                   <td className="px-2 py-1.5 text-xs text-slate-500">{subNo.get(a.id) || a.accountNo || "—"}</td>
                   {/* nowrap on the NAME cell only: it is the one cell long enough to wrap

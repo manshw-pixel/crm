@@ -460,14 +460,14 @@ function UsersCard({ me }) {
               <div className="text-xs text-slate-500">{u.email}</div>
             </span>
           )}
-          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : u.role === "lead" ? "bg-amber-50 text-amber-700" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
+          <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.role === "admin" ? "bg-indigo-50 text-indigo-600" : u.role === "lead" ? "bg-amber-50 text-amber-700" : isImplRole(u) ? "bg-teal-50 text-teal-700" : "bg-slate-100 text-slate-700"}`}>{u.role}</span>
           <button data-finance-toggle aria-pressed={u.finance ? "true" : "false"} title="Finance access: create, send and mark invoices"
             className={`rounded px-1.5 py-0.5 text-xs font-semibold ${u.finance ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
             onClick={() => setFinance(u, !u.finance)}>{u.finance ? "finance ✓" : "finance"}</button>
           {u.id !== me.id && (
             <select data-role-select={u.id} aria-label={`Role for ${u.name}`} value={u.role} onChange={e => setRole(u, e.target.value)}
               className="rounded border border-slate-200 bg-white px-1 py-0.5 text-xs text-slate-700">
-              {["user", "lead", "admin"].map(r => <option key={r} value={r}>{r}</option>)}
+              {["user", "lead", "admin", "impl_lead", "impl_user"].map(r => <option key={r} value={r}>{r}</option>)}
             </select>)}
           {u.id !== me.id && (u.disabled
             ? <button data-user-enable-btn className="text-xs text-emerald-600 hover:underline" onClick={() => applyDisabled(u, false)}>enable</button>
@@ -478,7 +478,7 @@ function UsersCard({ me }) {
         <Input placeholder="Name" value={v.name} onChange={e => setV({ ...v, name: e.target.value })} className="w-32" />
         <Input placeholder="Email" type="email" value={v.email} onChange={e => setV({ ...v, email: e.target.value })} className="w-52" />
         <Input placeholder="Temp password" type="text" value={v.pass} onChange={e => setV({ ...v, pass: e.target.value })} className="w-36" />
-        <Select value={v.role} onChange={e => setV({ ...v, role: e.target.value })} options={["user", "lead", "admin"]} />
+        <Select value={v.role} onChange={e => setV({ ...v, role: e.target.value })} options={["user", "lead", "admin", "impl_lead", "impl_user"]} />
         <Btn kind="primary" type="submit">{busy ? "Adding…" : "Add user"}</Btn>
       </form>
       {err && <div className="mt-2 rounded bg-rose-50 px-2 py-1 text-xs text-rose-600">{err}</div>}

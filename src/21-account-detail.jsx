@@ -34,12 +34,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
+  const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
   useEffect(() => setTab("overview"), [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
-  useEffect(() => { if (initialForm) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
+  useEffect(() => { if (initialForm && !ro) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
   const acts = st.activities.filter(x => x.accountId === id).sort((x, y) => y.date.localeCompare(x.date));
@@ -62,7 +63,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <h2 className="text-xl font-bold text-slate-900">{a.name}</h2>
         <span className="text-xs font-semibold text-slate-400">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
         <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
+        {!ro && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
           <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
           <Btn onClick={() => setForm("task")}>+ Add task</Btn>
           <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
@@ -95,7 +96,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               back();
             } },
           ]} />
-        </div>
+        </div>}
       </div>
       {/* Header card, in reading order: the numbers that matter, quiet profile facts,
           retention since the prior-year close, then small status pills. */}
@@ -154,7 +155,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </>; })()}
         {/* Status pills: small and flat so they read as state, not as buttons. */}
         <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-          {!a.churn && <select value={renewalStageOf(a)} title="Renewal stage"
+          {!a.churn && ro && <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>{renewalStageOf(a)}</span>}
+          {!a.churn && !ro && <select value={renewalStageOf(a)} title="Renewal stage"
             onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
             className={`cursor-pointer rounded-full border-0 px-2.5 py-0.5 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
             {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
@@ -188,7 +190,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </button>
         ))}
       </Card>}
-      {form && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
+      {form && !ro && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editContact" ? <AddContactForm key={form.item.id} acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -202,7 +204,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form && form.t === "editTask" ? <AddTaskForm acct={a} existing={form.item} team={team} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
       <div className="flex gap-2" role="tablist">
-        {[["overview", "Overview"], ["Invoices", "Invoices"], ["Purchase orders", "Purchase orders"]].map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
+        {[["overview", "Overview"], ["Invoices", "Invoices"], ["Purchase orders", "Purchase orders"]].filter(([k]) => !ro || k === "overview").map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
           className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(k)}>{label}</button>)}
       </div>
       {tab === "Invoices" && <Card title="Invoices"><AccountInvoices account={a} user={user} /></Card>}
@@ -212,7 +214,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <Card title="Health trend">
           {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); return (
             <div className={`mb-2 text-xs font-bold ${iu >= 45 ? "text-rose-500" : iu >= 30 ? "text-amber-600" : "text-slate-500"}`}>
-              Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? " — refresh via ✎ Update health" : ""}
+              Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? (ro ? " — inputs are stale" : " — refresh via ✎ Update health") : ""}
             </div>); })()}
           <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
           <div className="mt-2 space-y-0.5 text-xs text-slate-700">
@@ -237,12 +239,12 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {tasks.map(t => (
             <div key={t.id} className="border-b border-slate-100 py-1.5 last:border-0">
               <div className="flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+                {!ro && <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />}
                 <span className="flex-1">{t.title}</span>
                 <span className="text-xs text-slate-500">{t.owner}</span>
                 <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
                 <span className="text-xs text-slate-500">{t.priority}</span>
-                <button title="Edit task" aria-label="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>
+                {!ro && <button title="Edit task" aria-label="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>}
               </div>
               {t.details && <div className="ml-6 mt-1 whitespace-pre-wrap text-xs text-slate-600">{t.details}</div>}
               {t.attachments && t.attachments.length > 0 && <div className="ml-6 mt-1"><AttachmentLinks items={t.attachments} /></div>}
@@ -254,8 +256,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
               <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
                 <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span>
-                <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-indigo-600 hover:text-indigo-800" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>
-                <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-rose-600 hover:text-rose-800" onClick={() => setConfirmContact(c)}>🗑</button></div>
+                {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-indigo-600 hover:text-indigo-800" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
+                {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-rose-600 hover:text-rose-800" onClick={() => setConfirmContact(c)}>🗑</button>}</div>
               <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
             </div>
           ))}
@@ -270,7 +272,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
                 <span className="flex-1">{x.summary}</span>
                 <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
-                <button title="Edit activity" aria-label="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>
+                {!ro && <button title="Edit activity" aria-label="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>}
               </div>
               {x.details && <div className="ml-[76px] mt-1 whitespace-pre-wrap text-xs text-slate-600">{x.details}</div>}
               {x.attachments && x.attachments.length > 0 && <div className="ml-[76px] mt-1"><AttachmentLinks items={x.attachments} /></div>}
@@ -283,7 +285,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <div key={o.id} className={`flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0 ${["Won", "Lost"].includes(o.stage) ? "opacity-60" : ""}`}>
               <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
               <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
-              <Select value={o.stage} options={["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"]}
+              {ro ? <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{o.stage}</span> : <Select value={o.stage} options={["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"]}
                 disabled={!!a.churn} title={a.churn ? "Account is churned — reactivate it to work opportunities" : undefined}
                 className="!px-2 !py-0.5 text-xs disabled:opacity-50" onChange={e => {
                   const stage = e.target.value;
@@ -303,7 +305,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                   } else {
                     dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
                   }
-                }} />
+                }} />}
               <span className="text-xs text-slate-500">close {fmtDate(o.closeDate)}</span>
             </div>
           ))}
@@ -325,7 +327,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
         onConfirm={() => confirmOpp.run()}
         onClose={() => setConfirmOpp(null)} />}
-      <DocumentsCard a={a} dispatch={dispatch} user={user} />
+      <DocumentsCard a={a} dispatch={dispatch} user={user} readOnly={ro} />
       {(() => {
         const events = [
           ...(a.renewals || []).map(r => ({ id: r.id, date: r.completedOn, sort: r.completedOn, kind: "renewal", r })),
