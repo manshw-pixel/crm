@@ -41,7 +41,7 @@ function IntegrationsCard({ st, dispatch, user }) {
   const [busy, setBusy] = useState(false);
   // folders whose access lapsed (e.g. after a reload) and need one click to re-grant
   const [needsGrant, setNeedsGrant] = useState({ sales: false, finance: false });
-  const integ = st.settings.integrations || { processed: {}, log: [] };
+  const integ = { processed: {}, log: [], ...(st.settings.integrations || {}) };
   const [files, setFiles] = useState({ sales: null, finance: null }); // what is in each folder right now
   const refreshFiles = async (key, h) => {
     if (!h || await h.queryPermission({ mode: "read" }) !== "granted") return setFiles(s => ({ ...s, [key]: null }));
@@ -71,6 +71,13 @@ function IntegrationsCard({ st, dispatch, user }) {
     const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
       return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
     download("sales-accounts.csv", accountsCSVText(rows));
+  };
+  const onboardingTemplate = () => {
+    const head = accountsCSVText([]).split("\n")[0].split(",");
+    const ids = ((st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST).map(i => i.id);
+    const cols = [...head, "destination", ...ids];
+    const ex = cols.map(c => c === "name" ? "Example Co (delete this row)" : c === "destination" ? "onboarding" : "");
+    download("sales-onboarding.csv", [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n"));
   };
   const financeTemplate = () => {
     const esc = csvCell;
@@ -176,6 +183,13 @@ function IntegrationsCard({ st, dispatch, user }) {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Btn onClick={salesTemplate}>Export sales CSV</Btn>
         <Btn onClick={financeTemplate}>Export finance CSV</Btn>
+        <Btn data-onboarding-template onClick={onboardingTemplate}>Onboarding template</Btn>
+        <label className="flex items-center gap-1 text-xs text-slate-600">Sales rows go to
+          <select data-sales-default className="nm-inset rounded px-1 py-0.5 text-xs" value={integ.salesDefault || "accounts"}
+            onChange={e => dispatch({ type: "SET_INTEGRATIONS", integrations: { salesDefault: e.target.value } })}>
+            <option value="accounts">Accounts (straight to CSM)</option>
+            <option value="onboarding">Onboarding (implementation project)</option>
+          </select></label>
         <span className="text-xs text-slate-500">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
       </div>
       <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>

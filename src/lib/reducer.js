@@ -347,7 +347,7 @@ export function reducer(state, action) {
     case "SET_RECENCY_MIX": return { ...state, settings: { ...state.settings, recencyMix: action.mix } };
     case "SET_VALUE_MIX": return { ...state, settings: { ...state.settings, valueMix: action.mix } };
     case "SET_RATES": return { ...state, settings: { ...state.settings, rates: action.rates } };
-    case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: action.integrations } };
+    case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: { ...(state.settings.integrations || {}), ...action.integrations } } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
     case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };

@@ -25,6 +25,7 @@ window.showDirectoryPicker = async () => window.__handle;
 })();
 `;
 const HEAD = "name,destination,order_form,go_live_target,customer_contact,modules_scope";
+const NODEST = "name,order_form,go_live_target,customer_contact,modules_scope\nKestrel,yes,15-11-2026,Asha,Core\n";
 const FULL = `${HEAD}\nKestrel,onboarding,yes,15-11-2026,Asha,Core\n`;
 
 async function run(csv, fn) {
@@ -35,11 +36,11 @@ async function run(csv, fn) {
     await page.waitForSelector("[data-files='sales']", { timeout: 10000 });
     const sync = async (text, mtime) => {
       await page.evaluate(([t, m]) => { window.__csv = t; window.__mtime = m; }, [text, mtime]);
-      const count = () => page.evaluate(() => { const i = window.__store.getState().settings.integrations; return i ? i.log.length : 0; });
-      const before = await count();
+      const lastBefore = await page.evaluate(() => { const i = window.__store.getState().settings.integrations; const l = i && i.log[i.log.length - 1]; return l ? l.t + "|" + l.file + "|" + l.msg + "|" + i.log.length : ""; });
       await page.evaluate(() => [...document.querySelectorAll("button")].find(b => /Sync now/.test(b.textContent)).click());
       await page.waitForFunction(() => { const i = window.__store.getState().settings.integrations; return i && i.log.length > 0; }, null, { timeout: 10000 });
-      for (let i = 0; i < 100 && await count() <= before; i++) await page.waitForTimeout(100);
+      const last = () => page.evaluate(() => { const i = window.__store.getState().settings.integrations; const l = i && i.log[i.log.length - 1]; return l ? l.t + "|" + l.file + "|" + l.msg + "|" + i.log.length : ""; });
+      for (let i = 0; i < 100 && await last() === lastBefore; i++) await page.waitForTimeout(100);
       return page.evaluate(() => { const s = window.__store.getState(); const l = s.settings.integrations.log; return { projects: s.projects || [], accounts: s.accounts, log: l[l.length - 1].msg }; });
     };
     await fn(sync, page);
@@ -89,5 +90,34 @@ test("unknown destination imports the account only", async () => {
     assert(r.projects.length === 0, "no projects");
     assert(r.accounts.some(a => a.name === "Kestrel"), "account imported");
     assert(/unknown destination "crm"/.test(r.log), r.log);
+  });
+});
+
+test("default destination onboarding routes rows without a destination column", async () => {
+  await run("", async (sync, page) => {
+    await page.selectOption("[data-sales-default]", "onboarding");
+    const r = await sync(NODEST, 1);
+    assert(r.projects.length === 1, "one project, got " + r.projects.length);
+    await sync(NODEST, 2);
+    const d = await page.evaluate(() => window.__store.getState().settings.integrations.salesDefault);
+    assert(d === "onboarding", "salesDefault kept, got " + d);
+  });
+});
+
+test("onboarding template lists checklist ids", async () => {
+  await run("", async (sync, page) => {
+    await page.evaluate(() => {
+      window.__dl = null;
+      const orig = URL.createObjectURL;
+      URL.createObjectURL = b => { b.text().then(t => { window.__dlText = t; }); return orig.call(URL, b); };
+      HTMLAnchorElement.prototype.click = function () { window.__dl = this.download; };
+    });
+    await page.click("[data-onboarding-template]");
+    await page.waitForFunction(() => window.__dlText, null, { timeout: 5000 });
+    const { name, text } = await page.evaluate(() => ({ name: window.__dl, text: window.__dlText }));
+    const head = text.split("\n")[0];
+    assert(name === "sales-onboarding.csv", name);
+    for (const c of ["destination", "go_live_target", "customer_contact"]) assert(head.split(",").includes(c), c + " in " + head);
+    assert(/Example Co \(delete this row\)/.test(text) && /,onboarding,/.test(text), text);
   });
 });
