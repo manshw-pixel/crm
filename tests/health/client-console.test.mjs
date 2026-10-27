@@ -276,6 +276,19 @@ test("Mark all seen clears the new markers and stores the time", async () => {
   await browser.close();
 });
 
+test("Delete asks to confirm, then calls delete_demo_request and drops only that row", async () => {
+  const { page, browser } = await launch(seedDemos());
+  await page.waitForSelector('[data-demo-delete="d1"]', { timeout: 15000 });
+  await page.click('[data-demo-delete="d1"]');
+  assert(!(await page.evaluate(() => (window.__rpcCalls || []).some(c => c.fn === "delete_demo_request"))), "deleted before confirm");
+  await page.click('[data-demo-delete-confirm="d1"]');
+  await page.waitForSelector("text=Demo requests (1)");
+  const calls = await page.evaluate(() => window.__rpcCalls.filter(c => c.fn === "delete_demo_request"));
+  assert(calls.length === 1 && calls[0].args.p_id === "d1", JSON.stringify(calls));
+  assert(!(await page.$('[data-demo-row="d1"]')) && await page.$('[data-demo-row="d2"]'), "wrong row removed");
+  await browser.close();
+});
+
 test("Demo requests card shows the empty message", async () => {
   const { page, browser } = await launch(seedConsole());
   await page.waitForSelector("text=No demo requests yet. They arrive from the form on onevio.in.", { timeout: 15000 });

@@ -85,3 +85,21 @@ test("nobody reads demo_requests directly; only the platform admin can list", as
     assert(!error && data.some(r => r.email === a.p_email), `control: platform admin cannot list: ${error?.message}`);
   } finally { await clean(); }
 });
+
+test("only the platform admin can delete a demo request", async () => {
+  try {
+    await setSecret(SECRET);
+    const a = args(); await sessions.anon.rpc("submit_demo_request", a);
+    const [{ id }] = await sql(`select id from demo_requests where email = $1`, [a.p_email]);
+    for (const s of ["anon", "admin", "user"]) {
+      const r = await sessions[s].rpc("delete_demo_request", { p_id: id });
+      assert(r.error, `${s} could delete: ${JSON.stringify(r)}`);
+    }
+    assert(await count(a.p_email) === 1, "a refused delete removed the row");
+    const ok = await sessions.platform.rpc("delete_demo_request", { p_id: id });
+    assert(!ok.error && ok.data === true, `control: platform admin cannot delete: ${JSON.stringify(ok)}`);
+    assert(await count(a.p_email) === 0, "row still there after delete");
+    const again = await sessions.platform.rpc("delete_demo_request", { p_id: id });
+    assert(!again.error && again.data === false, `second delete: ${JSON.stringify(again)}`);
+  } finally { await clean(); }
+});

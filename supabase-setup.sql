@@ -1467,10 +1467,24 @@ begin
     from demo_requests d order by d.created_at desc limit 200;
 end $$;
 
+-- Platform admin removes a demo request (spam, test, or handled). Returns false if it was already gone.
+create or replace function public.delete_demo_request(p_id uuid)
+returns boolean
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not public.is_platform_admin() then raise exception 'delete_demo_request: platform admin only'; end if;
+  delete from demo_requests where id = p_id;
+  get diagnostics n = row_count;
+  return n > 0;
+end $$;
+
 revoke execute on function public.submit_demo_request(text, text, text, text, text, text, text) from public;
 revoke execute on function public.list_demo_requests() from public, anon;
+revoke execute on function public.delete_demo_request(uuid) from public, anon;
 grant execute on function public.submit_demo_request(text, text, text, text, text, text, text) to anon, authenticated;
 grant execute on function public.list_demo_requests() to authenticated;
+grant execute on function public.delete_demo_request(uuid) to authenticated;
 
 -- ---------- attachments (Supabase Storage) ----------
 -- Private bucket: every read goes through attachments_read below, so a disabled user, another
