@@ -355,6 +355,16 @@ export const scenarios = [
       });
     } },
 
+  // Read-only: the go-live above is a CSM sign-off, so the account header shows an Impl -> CSM handover pill beside Sales -> AM.
+  { id: `${F}/csm-handover-pill`, feature: F, title: "After sign-off the account shows an Impl → CSM handover date", role: "admin",
+    run: async ({ page, runId }) => {
+      await openAccount(page, fixtureName(runId));
+      const pills = page.locator("[data-csm-handover-pill]");
+      await pills.first().waitFor({ timeout: 15000 });
+      assert.match((await pills.first().innerText()).trim(), /^Impl → CSM \S/, "first handover pill text");
+      assert.ok(await page.locator("[data-transition-pill]").count() === 1, "Sales → AM pill missing beside the handover pill");
+    } },
+
   { id: `${F}/workload-visible`, feature: F, title: "Admin's Workload tab lists the impl user with active count and hours", role: "admin",
     run: async ({ page, env, implName }) => {
       if (!env?.users?.impl || !implName) throw new SkipScenario("no impl user configured");

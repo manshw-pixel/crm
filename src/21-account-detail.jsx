@@ -169,6 +169,11 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               predating the field, so it reads as absent data, not as a risk flag. */}
           <span data-transition-pill className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-500"}`}>
             {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Transition date not set"}</span>
+          {/* Implementation → CSM: derived from each project's CSM sign-off (csmHandovers), one pill per project. */}
+          {csmHandovers(a.id, st.projects).map(h => (
+            <span key={h.projectId} data-csm-handover-pill className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700"
+              title={`CSM sign-off${h.by ? ` by ${h.by}` : ""} (${h.type === "expansion" ? "expansion" : "onboarding"} project)`}>
+              {h.n === 1 ? `Impl → CSM ${fmtDate(h.date)}` : `Project ${h.n} → CSM ${fmtDate(h.date)}`}</span>))}
           {(() => { const s = qbrStatus(a); return s && (
             <span className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
               {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
