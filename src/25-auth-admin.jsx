@@ -160,6 +160,14 @@ function DemoRequestsCard() {
     return () => { live = false; stampSeen(); };
   }, []);
   const markSeen = () => { const t = stampSeen(); if (t) setSeen(t); };
+  const [confirmDel, setConfirmDel] = useState(null); // id of the row awaiting delete confirmation
+  const remove = async id => {
+    setErr("");
+    const { error } = await sb.rpc("delete_demo_request", { p_id: id });
+    if (error) return setErr(error.message);
+    setRows(rs => (rs || []).filter(r => r.id !== id));
+    setConfirmDel(null);
+  };
   const isNew = r => !seen || new Date(r.created_at) > new Date(seen);
   const list = rows || [];
   return (
@@ -173,6 +181,12 @@ function DemoRequestsCard() {
             {isNew(r) && <span className="h-2 w-2 shrink-0 rounded-full bg-indigo-500" aria-label="New" />}
             <span className="font-semibold">{r.name}</span><span className="text-slate-500">· {r.company}</span>
             <span className="ml-auto text-xs text-slate-500">{demoStamp(r.created_at)}</span>
+            {confirmDel === r.id
+              ? <span className="flex items-center gap-1 text-xs">
+                  <button type="button" data-demo-delete-confirm={r.id} className="font-bold text-rose-600 hover:underline" onClick={() => remove(r.id)}>Delete</button>
+                  <button type="button" className="text-slate-500 hover:underline" onClick={() => setConfirmDel(null)}>Cancel</button></span>
+              : <button type="button" data-demo-delete={r.id} aria-label={`Delete demo request from ${r.name}`}
+                  className="text-xs text-slate-400 hover:text-rose-600" onClick={() => setConfirmDel(r.id)}>Delete</button>}
           </div>
           <div className="text-xs text-slate-600"><span className="select-text">{r.email}</span> · team {r.team_size}</div>
           {r.message && <button type="button" aria-expanded={!!open[r.id]} data-demo-message={r.id}
