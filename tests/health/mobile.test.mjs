@@ -27,7 +27,7 @@ const layout = page => page.evaluate(() => {
   };
 });
 
-test("desktop (1280px): fixed sidebar, no menu button, 3-column stat row -- unchanged layout", async () => {
+test("desktop (1280px): fixed sidebar, no menu button, 5-column headline stat row", async () => {
   const { page, browser } = await launch(seed);
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.waitForSelector("main .grid");
@@ -35,7 +35,7 @@ test("desktop (1280px): fixed sidebar, no menu button, 3-column stat row -- unch
   assert(l.asideRight > 100, `sidebar should be on screen, right edge ${l.asideRight}`);
   assert(l.mainLeft >= l.asideRight - 1, `main should start where the rail ends: main ${l.mainLeft}, rail ${l.asideRight}`);
   assert(!l.toggleShown, "menu button must be hidden on desktop");
-  assert(l.statCols === 3, `stat row should be 3 columns, got ${l.statCols}`);
+  assert(l.statCols === 5, `headline stat row should be 5 columns, got ${l.statCols}`);
   assert(l.overflow <= 0, `no horizontal scroll, overflow ${l.overflow}`);
   await browser.close();
 });
