@@ -19,14 +19,14 @@ const state = page => page.evaluate(async () => { await new Promise(r => setTime
 const openImpl = async page => { await page.click('button[title="Implementation"]').catch(() => {}); await page.waitForSelector('[data-impl-tab="Board"]'); };
 const openProject = async (page, id) => { await page.click(`[data-board-project="${id}"]`); await page.waitForSelector(`[data-project-detail="${id}"]`); };
 
-test("impl board: a column per stage, on hold/cancelled collapsed last; lead assigns from Queued by load, card moves to Planning", async () => {
+test("impl board: a column per stage, handover drafts, on hold, cancelled collapsed last; lead assigns from Queued by load, card moves to Planning", async () => {
   // Ian (listed before Ivy in profiles) carries a heavy open task, so he sorts last; the lead herself is an implementer too
   const { page, browser } = await launch(seed("impl_lead", "Lena", [proj("p1", "a1", "queued", null), proj("p0", "a2", "planning", "u3")],
     [task("k0", "p0", "u3", "Heavy", 200)]));
   try {
     await openImpl(page);
     const cols = await page.locator("[data-board-column]").evaluateAll(els => els.map(e => e.dataset.boardColumn));
-    assert(cols.join("|") === "queued|planning|in_progress|csm_review|live|on_hold|cancelled", "columns " + cols.join("|"));
+    assert(cols.join("|") === "queued|planning|in_progress|csm_review|live|handover|on_hold|cancelled", "columns " + cols.join("|"));
     const collapsed = await page.locator("[data-board-collapsed]").evaluateAll(els => els.map(e => e.dataset.boardColumn + ":" + e.open));
     assert(collapsed.join("|") === "on_hold:false|cancelled:false", "collapsed " + collapsed.join("|"));
     assert(await page.locator('[data-board-column="queued"] [data-board-project="p1"]').count() === 1, "p1 not in Queued");
