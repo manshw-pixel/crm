@@ -151,7 +151,7 @@ test("RESTORE_SNAPSHOT undoes a bulk churn back to Active", async () => {
 test("select-all covers only the filtered rows", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3"); // Accounts view
+  await page.keyboard.press("4"); // Accounts view
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     const setVal = (el, v) => {
@@ -171,7 +171,7 @@ test("select-all covers only the filtered rows", async () => {
 test("selecting a parent does not select its sub-accounts", async () => {
   const { page, browser } = await launch(cascadeSeed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector('[data-select="p1"]');
   const res = await page.evaluate(async () => {
     document.querySelector('[data-select="p1"]').click();
@@ -187,7 +187,7 @@ test("selecting a parent does not select its sub-accounts", async () => {
 test("changing a filter clears the selection", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const gone = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -207,7 +207,7 @@ test("changing a filter clears the selection", async () => {
 test("bulk churn requires a reason before it will submit", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -224,7 +224,7 @@ test("bulk churn requires a reason before it will submit", async () => {
 test("bulk reassign shows an undo toast that restores the prior CSM", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -254,7 +254,7 @@ test("bulk reassign shows an undo toast that restores the prior CSM", async () =
 test("Escape closes the bulk dialog without closing the account view", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -276,7 +276,7 @@ test("Escape closes the bulk dialog without closing the account view", async () 
 test("a selected account that disappears from data is excluded from a subsequent bulk action", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -330,7 +330,7 @@ test("a selected account that disappears from data is excluded from a subsequent
 test("an account deleted while the bulk dialog is open is excluded at dispatch time", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -365,7 +365,7 @@ test("an account deleted while the bulk dialog is open is excluded at dispatch t
 test("applying a bulk action after every selected account vanished warns instead of closing silently", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -441,7 +441,7 @@ test("BULK_CHURN drops activities for accounts that no longer exist", async () =
 test("undoing a bulk churn removes the churn activities it created", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -471,7 +471,7 @@ test("undoing a bulk churn removes the churn activities it created", async () =>
 test("deleting a single account offers an undo that restores it with its children", async () => {
   const { page, browser } = await launch(cascadeSeed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     window.confirm = () => true; // the blocking confirm stays; auto-accept it

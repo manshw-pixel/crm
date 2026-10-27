@@ -29,7 +29,7 @@ const cellsOf = page => page.$$eval("[data-account-row]", rows => rows.map(r => 
 
 test("the accounts list shows NRR, GRR and a movement badge per account", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   const cells = await cellsOf(page);
   const grew = cells.find(c => c.name.includes("Grew"));
@@ -43,7 +43,7 @@ test("the accounts list shows NRR, GRR and a movement badge per account", async 
 
 test("an account started after the baseline shows a new badge, not a percentage", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   const cells = await cellsOf(page);
   const fresh = cells.find(c => c.name.includes("Fresh"));
@@ -54,7 +54,7 @@ test("an account started after the baseline shows a new badge, not a percentage"
 
 test("the NRR column sorts the book", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   await page.click("th[data-sort-key='nrr']");
   await new Promise(r => setTimeout(r, 150));
@@ -85,7 +85,7 @@ test("the NRR column sorts the book", async () => {
 
 test("the movement column header names the baseline", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   const header = await page.$eval("th[data-sort-key='movement']", th => th.innerText.trim());
   // the header cell is styled `uppercase`, so match case-insensitively
@@ -95,7 +95,7 @@ test("the movement column header names the baseline", async () => {
 
 test("the account detail view shows the full retention arithmetic", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   await page.click("[data-account-row]:has-text('Grew Co')");
   await page.waitForSelector("[data-retention-block]");
@@ -115,7 +115,7 @@ test("the account detail view shows the full retention arithmetic", async () => 
 
 test("a new account's detail view explains why there is no comparison", async () => {
   const { page, browser } = await launch(seedOf(BOOK));
-  await page.keyboard.press("3"); // the app opens on the dashboard; "3" is the Accounts view
+  await page.keyboard.press("4"); // the app opens on the dashboard; "4" is the Accounts view
   await page.waitForSelector("[data-account-row]");
   await page.click("[data-account-row]:has-text('Fresh Co')");
   await page.waitForSelector("[data-retention-block]");

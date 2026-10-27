@@ -27,7 +27,7 @@ const seed = `window.__seedRows = {
 test("SMOKE: a bulk delete persists, and Undo restores every collection across a reload", async () => {
   const { page, browser, reload } = await launchPersistent(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
 
   // select the parent and the unrelated account, delete both
@@ -90,7 +90,7 @@ test("SMOKE: a bulk delete persists, and Undo restores every collection across a
 test("SMOKE: a bulk churn and its undo both survive a reload", async () => {
   const { page, browser, reload } = await launchPersistent(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -118,7 +118,7 @@ test("SMOKE: a bulk churn and its undo both survive a reload", async () => {
 test("SMOKE: saved segments persist across a reload", async () => {
   const { page, browser, reload } = await launchPersistent(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-save-segment]");
   await page.evaluate(async () => {
     window.prompt = () => "Dana book";
@@ -166,7 +166,7 @@ test("SMOKE: pre-existing single-account flows still work and persist", async ()
 test("SMOKE: undoing a single-account delete survives a reload", async () => {
   const { page, browser, reload } = await launchPersistent(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const mid = await page.evaluate(async () => {
     window.confirm = () => true;

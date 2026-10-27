@@ -46,7 +46,7 @@ function implAlerts(projects, tasks, accounts, user) {
 // Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
-  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings")).concat(["Finance", "Implementation"]);
+  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings"));
 /* --------------------------- command palette --------------------------- */
 /* case-insensitive subsequence match: "nrw" matches "Northwind" */
 function subseqMatch(q, text) {
@@ -120,7 +120,7 @@ function SyncStatus() {
     title="Your last change could not be saved and was rolled back. Check your connection and try again.">
     Not saved</span>;
 }
-const VIEWS = ["Dashboard", "Tasks", "Accounts", "Renewals", "Settings"];
+const VIEWS = ["Dashboard", "Implementation", "Tasks", "Accounts", "Renewals", "Finance", "Settings"];
 // Catches render/lifecycle errors in the view area only, so a crash costs one screen
 // instead of the session. Does NOT catch errors in event handlers or async callbacks --
 // those already route through the try/catch blocks and the error toast.
