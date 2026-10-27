@@ -55,27 +55,26 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           : scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+      {/* Headline: size and direction of the book. */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Stat size="hero" label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts`} onClick={() => openAccounts()} />
         <Stat size="hero" label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} onClick={() => openAccounts({ risk: "Red" })} />
-        <Stat label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" onClick={() => openAccounts({ risk: "Red" })} />
-      </div>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
-        <Stat size="hero" label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
         <Stat size="hero" label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`existing customers: +${fmtMoney(bridge.expansion)} exp · −${fmtMoney(bridge.contraction)} contr`} onClick={() => openAccounts()} />
+        <Stat size="hero" label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
         <Stat size="hero" label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
           onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
       </div>
-      <ArrBridgeCard b={bridge} />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* Needs attention now: counts, then the lists behind them. */}
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
+        <Card title="Health distribution" className="!p-3 col-span-2 md:col-span-1"><DistBar counts={counts} /></Card>
+        <Stat size="sm" label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" onClick={() => openAccounts({ risk: "Red" })} />
         <Stat size="sm" label="QBRs due (30d)" value={qbrAccts.length}
           tone={qbrOverdue ? "text-rose-600" : qbrAccts.length ? "text-amber-600" : undefined}
           sub={qbrOverdue ? `${qbrOverdue} overdue` : "on schedule"} onClick={() => openAccounts({ qbrDue: true })} />
+        <Stat size="sm" label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={`${weekTasks.some(t => daysUntil(t.due) < 0) ? `${weekTasks.filter(t => daysUntil(t.due) < 0).length} overdue · ` : ""}${scope === "mine" ? "owned by you" : "whole team"}`} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
         <Stat size="sm" label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
           tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
           sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
-        <Stat size="sm" label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={`${weekTasks.some(t => daysUntil(t.due) < 0) ? `${weekTasks.filter(t => daysUntil(t.due) < 0).length} overdue · ` : ""}${scope === "mine" ? "owned by you" : "whole team"}`} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
-        <Card title="Health distribution" className="!p-3"><DistBar counts={counts} /></Card>
       </div>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         <Card title="Renewals due" className="!p-3">
@@ -105,6 +104,26 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           ))}
           </ScrollList>
         </Card>
+      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3" id="week-tasks">
+        <ScrollList label="Tasks due this week" className="max-h-40">
+        {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
+        {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
+          const a = scored.find(x => x.id === t.accountId);
+          return (
+            <div key={t.id} data-row className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b sm:flex-nowrap border-slate-100 py-1.5 last:border-0 text-sm">
+              <input type="checkbox" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+              <span className="min-w-0 flex-1 max-sm:basis-[calc(100%-2rem)]">{t.title}</span>
+              <button className="text-indigo-600 hover:underline text-xs" onClick={() => openAccount(t.accountId)}>{a?.name}</button>
+              <span className={`text-xs tabular-nums ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
+              <span className="w-14 text-xs text-slate-500">{t.priority}</span>
+            </div>
+          );
+        })}
+        </ScrollList>
+      </Card>
+      </div>
+      {/* Team and growth. */}
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
       <Card title="Team tasks by owner" className="!p-3">
         <ScrollList label="Team tasks by owner" className="max-h-40">
         {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
@@ -120,9 +139,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         ))}
         </ScrollList>
       </Card>
-      </div>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-      <Card title={`Expansion pipeline · ${fmtMoney(pipeTotal)}`} className="!p-3" right={<span className="text-xs font-semibold tabular-nums text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
+      <Card title={`Expansion pipeline · ${fmtMoney(pipeTotal)}`} className={`!p-3 ${snaps.length < 2 ? "lg:col-span-2" : ""}`} right={<span className="text-xs font-semibold tabular-nums text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
         <ScrollList label="Expansion pipeline">
         {openOpps.length === 0 && <div className="text-sm text-slate-500">No open opportunities — add them from an account page.</div>}
         {openOpps.map(o => (
@@ -143,25 +160,18 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           <TrendLine label="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
         </div>
       </Card>}
-      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className={`!p-3 ${snaps.length < 2 ? "lg:col-span-2" : ""}`} id="week-tasks">
-        <ScrollList label="Tasks due this week" className="max-h-40">
-        {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
-        {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
-          const a = scored.find(x => x.id === t.accountId);
-          return (
-            <div key={t.id} data-row className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b sm:flex-nowrap border-slate-100 py-1.5 last:border-0 text-sm">
-              <input type="checkbox" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-              <span className="min-w-0 flex-1 max-sm:basis-[calc(100%-2rem)]">{t.title}</span>
-              <button className="text-indigo-600 hover:underline text-xs" onClick={() => openAccount(t.accountId)}>{a?.name}</button>
-              <span className={`text-xs tabular-nums ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
-              <span className="w-14 text-xs text-slate-500">{t.priority}</span>
-            </div>
-          );
-        })}
-        </ScrollList>
-      </Card>
       </div>
       {snaps.length < 2 && <p data-trends-note className="-mt-1 text-xs text-slate-500">Trend lines appear once a second monthly snapshot exists (one is taken each month).</p>}
+      {/* Revenue movement and adoption. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <ArrBridgeCard b={bridge} />
+        <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
+      </div>
+      {/* Delivery and billing; a lone card (FinanceCard renders nothing without data) takes the full row. */}
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:[&>*:only-child]:col-span-2">
+        <ImplProjectsCard projects={st.projects || []} accounts={st.accounts || []} />
+        <FinanceCard goFinance={goFinance} />
+      </div>
       <AnalyticsSection user={user}>
       <AmBookCard book={amBook} openAccount={openAccount} />
       <Card title="Recently declined" className="!p-3">
@@ -197,9 +207,6 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <CohortGrid accounts={scope === "all" ? allAccounts : all} />
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
       </AnalyticsSection>
-      <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
-      <ImplProjectsCard projects={st.projects || []} accounts={st.accounts || []} />
-      <FinanceCard goFinance={goFinance} />
     </div>
   );
 }
@@ -327,6 +334,8 @@ function ImplProjectsCard({ projects, accounts }) {
           {IMPL_STATUSES.map(([k, l]) => <span key={k} className="flex items-center gap-1"><span className={`inline-block h-2 w-2 rounded-sm impl-key-${k}`} />{l}</span>)}
           <span className="text-slate-500">Active / On hold at period end · Completed = went live in the period</span>
         </div>
+        {/* Chart and tier table side by side on wide screens, so a full-width card has no empty half. */}
+        <div className="xl:grid xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)] xl:items-start xl:gap-6">
         <svg viewBox={`0 0 ${w} ${h}`} className="w-full max-w-2xl" role="img" aria-label={`Implementation projects by ${mode}, ${year}`} onMouseLeave={() => setHov(null)}>
           <text x={padL - 4} y={padT + 3} textAnchor="end" fontSize="9" style={{ fill: "rgb(var(--slate-500))" }}>{max}</text>
           <line x1={padL} x2={w - padR} y1={padT} y2={padT} style={{ stroke: "rgb(var(--slate-100))" }} />
@@ -355,6 +364,7 @@ function ImplProjectsCard({ projects, accounts }) {
             {IMPL_STATUSES.map(([k, l], si) => <text key={k} x={tipX(hov) + 6} y={padT + 24 + si * 11} fontSize="9" style={{ fill: "rgb(var(--slate-200))" }}>{l}: {series[k][hov]}</text>)}
           </g>}
         </svg>
+        <div>
         <div className="mt-2 text-xs text-slate-500">By tier · <span data-impl-tier-period className="font-bold text-slate-700">{periods[sel]}</span> {year} (click a bar to change)</div>
         <table data-impl-tier-table className="mt-1 w-full max-w-2xl text-sm">
           <thead><tr className="border-b border-slate-200 text-left text-xs font-bold uppercase text-slate-500">
@@ -366,6 +376,8 @@ function ImplProjectsCard({ projects, accounts }) {
                 <td className="py-1 font-medium text-slate-700">{t}</td>
                 {IMPL_STATUSES.map(([k]) => <td key={k} className="py-1 text-right tabular-nums text-slate-700">{b[k][sel]}</td>)}</tr>; })}</tbody>
         </table>
+        </div>
+        </div>
       </div>
     </Card>
   );
