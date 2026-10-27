@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STAGES, STAGE_LABEL, OPEN_STAGES, projectType, canTransition, applySignoff, historyEntry,
-  loggedHours, workload, stageAt, chartCounts } from "../../src/lib/implementation.js";
+  loggedHours, workload, stageAt, chartCounts, csmHandovers } from "../../src/lib/implementation.js";
 
 const lead = { id: "L", role: "impl_lead", name: "Lead" };
 const admin = { id: "A", role: "admin", name: "Adm" };
@@ -180,4 +180,21 @@ test("chartCounts quarter: live in Q2 completes only in Q2; on hold at end; canc
   assert.deepEqual(g.series.active, [1, 0, 0, 0]);
   assert.deepEqual(g.series.onHold, [0, 0, 0, 0]);
   assert.deepEqual(Object.keys(g.byTier).sort(), ["Gold", "Silver"]);
+});
+
+test("csmHandovers: one entry per signed-off project, oldest first, numbered", () => {
+  const live = (id, at, by = "Cara", accountId = "a1") => proj({ id, accountId, type: id === "p1" ? "onboarding" : "expansion", stage: "live",
+    history: [{ at: "2026-01-01T00:00:00Z", from: "handover", to: "queued" }, { at, by, from: "csm_review", to: "live" }] });
+  const projects = [
+    live("p2", "2026-06-10T09:00:00Z", "Dev"),
+    live("p1", "2026-03-05T09:00:00Z"),
+    live("px", "2026-02-01T09:00:00Z", "Cara", "other"),
+    proj({ id: "p3", stage: "csm_review", history: [{ at: "2026-07-01T00:00:00Z", from: "in_progress", to: "csm_review" }] }),
+  ];
+  assert.deepEqual(csmHandovers("a1", projects), [
+    { projectId: "p1", type: "onboarding", date: "2026-03-05", by: "Cara", n: 1 },
+    { projectId: "p2", type: "expansion", date: "2026-06-10", by: "Dev", n: 2 },
+  ]);
+  assert.deepEqual(csmHandovers("a1", []), []);
+  assert.deepEqual(csmHandovers("a1", undefined), []);
 });

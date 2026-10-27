@@ -170,3 +170,13 @@ export function chartCounts(projects, year, mode, tierOf, tierFilter) {
   }
   return { periods: ranges.map(r => r.label), series, byTier };
 }
+
+/* Implementation → CSM handovers for one account: the date each project's CSM sign-off took it
+   csm_review → live, oldest first. Separate from the manual Sales → AM transitionDate. */
+export function csmHandovers(accountId, projects) {
+  return (projects || []).filter(p => p.accountId === accountId)
+    .map(p => ({ p, e: (p.history || []).filter(e => e.from === "csm_review" && e.to === "live").pop() }))
+    .filter(x => x.e)
+    .sort((a, b) => String(a.e.at).localeCompare(String(b.e.at)))
+    .map((x, i) => ({ projectId: x.p.id, type: x.p.type, date: day(x.e.at), by: x.e.by || null, n: i + 1 }));
+}
