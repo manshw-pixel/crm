@@ -206,7 +206,7 @@ test("the error paths still return the coercion counters", async () => {
 test("the import banner reports unrecognized tiers", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__health);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const text = await page.evaluate(async () => {
     const file = new File(["name,tier\nHotel Co,Enterprise-Plus\n"], "a.csv", { type: "text/csv" });
@@ -240,7 +240,7 @@ const bannerClass = async (page, csv) => page.evaluate(async body => {
 test("a coercion tones the import banner amber, not success green", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__health);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const cls = await bannerClass(page, "name,tier\nHotel Co,Enterprise-Plus\n");
   assert(cls.includes("text-amber-700"), `coerced import should read as a warning, got class: ${cls}`);
@@ -251,7 +251,7 @@ test("a coercion tones the import banner amber, not success green", async () => 
 test("a clean import keeps the success green banner", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__health);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const cls = await bannerClass(page, "name,tier\nHotel Co,Enterprise\n");
   assert(cls.includes("text-emerald-700"), `a clean import should stay green, got class: ${cls}`);

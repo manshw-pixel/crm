@@ -32,7 +32,7 @@ test("SET_SEGMENTS persists a segment carrying all ten filter fields", async () 
 test("applying a segment sets every filter field", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-segment-select]");
   const res = await page.evaluate(async () => {
     window.__store.dispatch({ type: "SET_SEGMENTS", segments: [{ id: "s1", name: "Dana book", filter: {
@@ -54,7 +54,7 @@ test("applying a segment sets every filter field", async () => {
 test("a partial filter from a dashboard card preserves the typed search", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector('input[placeholder^="Search"]');
   const q = await page.evaluate(async () => {
     const box = document.querySelector('input[placeholder^="Search"]');
@@ -80,7 +80,7 @@ test("a partial filter from a dashboard card preserves the typed search", async 
 test("a dashboard card still clears the filters it cleared before segments existed", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector('input[placeholder^="Search"]');
   // qbrDue has no toggle in the list UI -- it is set only by the QBR dashboard card and
   // cleared by its pill, so the pill's presence is the observable for this filter.
@@ -103,7 +103,7 @@ test("a dashboard card still clears the filters it cleared before segments exist
 test("saving a view stores the current filters as a segment", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-save-segment]");
   const segs = await page.evaluate(async () => {
     window.prompt = () => "Dana book";
@@ -125,7 +125,7 @@ test("saving a view stores the current filters as a segment", async () => {
 test("cancelling the save-view prompt stores nothing", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-save-segment]");
   const segs = await page.evaluate(async () => {
     window.prompt = () => null; // user hit Cancel
@@ -140,7 +140,7 @@ test("cancelling the save-view prompt stores nothing", async () => {
 test("deleting the active segment removes it and clears the selection", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-segment-select]");
   const res = await page.evaluate(async () => {
     window.__store.dispatch({ type: "SET_SEGMENTS", segments: [{ id: "s1", name: "Dana book", filter: {
@@ -168,7 +168,7 @@ test("deleting the active segment removes it and clears the selection", async ()
 test("the segment dropdown shows segment names, not raw ids", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-segment-select]");
   const opts = await page.evaluate(async () => {
     window.__store.dispatch({ type: "SET_SEGMENTS", segments: [{ id: "seg-abc123", name: "Dana book", filter: {
@@ -192,7 +192,7 @@ const csmSeed = `window.__seedRows = { accounts: ${JSON.stringify([A, B])}.map(d
 test("a non-admin cannot save or delete segments, but can still apply them", async () => {
   const { page, browser } = await launch(csmSeed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-segment-select]");
   const res = await page.evaluate(async () => {
     window.__store.dispatch({ type: "SET_SEGMENTS", segments: [{ id: "s1", name: "Dana book", filter: {
@@ -220,7 +220,7 @@ test("a non-admin cannot save or delete segments, but can still apply them", asy
 test("an admin still sees the segment controls", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-segment-select]");
   const save = await page.evaluate(() => !!document.querySelector("[data-save-segment]"));
   assert(save, "an admin must still be able to save a view");

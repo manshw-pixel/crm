@@ -22,7 +22,7 @@ test("nav items expose labels and mark the current view", async () => {
 test("sortable account columns expose aria-sort", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(() => {
     const ths = [...document.querySelectorAll("thead th[aria-sort]")];
@@ -36,7 +36,7 @@ test("sortable account columns expose aria-sort", async () => {
 test("aria-sort follows the active column and direction", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     // `Th` is declared inside AccountList, so every render produces a new component
@@ -77,7 +77,7 @@ test("the command palette is a labelled modal dialog", async () => {
 test("every icon-only button carries an accessible name", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const bare = await page.evaluate(() => {
     // a button whose visible text is only a glyph is unreadable to a screen reader
@@ -98,7 +98,7 @@ test("every icon-only button carries an accessible name", async () => {
 test("every bulk dialog kind moves focus into the dialog on open", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const res = await page.evaluate(async () => {
     const out = {};
@@ -127,7 +127,7 @@ test("every bulk dialog kind moves focus into the dialog on open", async () => {
 test("Tab is trapped inside the bulk dialog", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   await page.evaluate(async () => {
     document.querySelector("[data-select-all]").click();
@@ -150,7 +150,7 @@ test("Tab is trapped inside the bulk dialog", async () => {
 test("every select in the account list has an accessible name", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2);
-  await page.keyboard.press("3");
+  await page.keyboard.press("4");
   await page.waitForSelector("[data-select-all]");
   const bare = await page.evaluate(() => [...document.querySelectorAll("select")]
     .filter(s => !s.getAttribute("aria-label") && !s.getAttribute("aria-labelledby") && !s.closest("label"))
