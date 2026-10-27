@@ -168,3 +168,57 @@ test("handover: the Start onboarding toast does nothing once another account is 
     assert(await page.locator("[data-handover-form]").count() === 0, "form opened on a different account");
   } finally { await browser.close(); }
 });
+
+// Integrations PR1 task 5: sales-feed drafts (stage handover) on the board, submitted from detail.
+const TPL = [
+  { id: "order_form", label: "Signed order form attached", kind: "check", required: true },
+  { id: "go_live_target", label: "Go-live target date", kind: "date", required: true },
+  { id: "customer_contact", label: "Customer project contact", kind: "text", required: true },
+  { id: "modules_scope", label: "Modules / scope purchased", kind: "text", required: true } ];
+const DRAFT = { id: "d1", accountId: "a1", type: "onboarding", stage: "handover", implementerId: null, createdBy: "Test User",
+  checklistTemplate: TPL, checklist: { order_form: true, go_live_target: "2027-03-01", modules_scope: "Core" }, targetGoLive: "2027-03-01",
+  startedAt: null, liveAt: null, history: [], holdReason: "", missing: ["Customer project contact"], source: "sales-feed" };
+const seedDraft = role => seed(role).replace("settings: [],", `settings: [], projects: ${JSON.stringify([DRAFT])}.map(d => ({ id: d.id, data: d })), project_tasks: [],`);
+const openDraft = async page => {
+  await page.click('button[title="Implementation"]');
+  const col = page.locator('[data-board-column="handover"]');
+  await col.waitFor({ timeout: 5000 });
+  await col.locator("summary").click();
+  await col.locator("[data-board-project]").click();
+  await page.waitForSelector('[data-project-detail][data-stage="handover"]');
+};
+
+test("handover drafts appear in a collapsed board group", async () => {
+  const { page, browser } = await launch(seedDraft("user"));
+  try {
+    await page.click('button[title="Implementation"]');
+    await page.locator('[data-board-column="handover"]').waitFor({ timeout: 5000 });
+    assert(await page.locator('[data-board-column="handover"] [data-board-project]').count() === 1, "draft not on board");
+    assert(/Handover drafts/.test(await page.locator('[data-board-column="handover"] summary').textContent()), "label");
+  } finally { await browser.close(); }
+});
+
+test("filling the missing item and submitting moves the draft to Queued", async () => {
+  const { page, browser } = await launch(seedDraft("user"));
+  try {
+    await openDraft(page);
+    const btn = page.locator("[data-submit-handover]");
+    await btn.click();
+    assert(/Customer project contact/.test(await page.locator("[data-submit-handover-reason]").textContent()), "refusal text");
+    await page.locator('[data-draft-checklist] [data-checklist-item="customer_contact"] input').fill("Jane");
+    await btn.click();
+    await page.waitForSelector('[data-project-detail][data-stage="queued"]', { timeout: 5000 });
+    const [p] = await projects(page);
+    const last = p.history[p.history.length - 1];
+    assert(last.from === "handover" && last.to === "queued", "history " + JSON.stringify(last));
+    assert(p.checklist.customer_contact === "Jane" && !(p.missing && p.missing.length), "checklist/missing " + JSON.stringify([p.checklist, p.missing]));
+  } finally { await browser.close(); }
+});
+
+test("an implementation user cannot submit a draft", async () => {
+  const { page, browser } = await launch(seedDraft("impl_user"));
+  try {
+    await openDraft(page);
+    assert(await page.locator("[data-submit-handover]").count() === 0, "submit shown to impl role");
+  } finally { await browser.close(); }
+});

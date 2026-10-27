@@ -41,6 +41,8 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
   const [tplName, setTplName] = useState(null);
   const [tplPick, setTplPick] = useState("");
   const [applying, setApplying] = useState(false);
+  const [draftVals, setDraftVals] = useState(null); // handover draft edits, null until touched
+  const [draftErr, setDraftErr] = useState("");
   const [sendBack, setSendBack] = useState(null); // { taskId, note } while a Send back note is being typed
   if (!project) return <div className="text-sm text-slate-500">Project not found. <Btn data-project-back onClick={onBack}>← Back</Btn></div>;
   const account = (st.accounts || []).find(a => a.id === project.accountId) || null;
@@ -184,7 +186,27 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
 
       <div className="mb-3">
         <div className="mb-1 text-xs font-bold uppercase text-slate-500">Handover checklist</div>
-        {(project.checklistTemplate || []).map(it => {
+        {project.stage === "handover" && canCreateHandover(user) ? (() => {
+          const template = project.checklistTemplate || [];
+          const values = draftVals || project.checklist || {};
+          const dateItem = template.find(it => it.kind === "date" && it.id === "go_live_target") || template.find(it => it.kind === "date");
+          const patchOf = () => ({ checklist: values, targetGoLive: (dateItem && values[dateItem.id]) || project.targetGoLive || null });
+          const submit = () => {
+            const r = canTransition({ ...project, checklist: values }, tasks, "queued", actor, account);
+            if (!r.ok) { setDraftErr(r.reason); return; }
+            setDraftErr("");
+            dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { ...patchOf(), missing: [] } });
+            move("queued", "Handover submitted");
+          };
+          return <div data-draft-checklist className="space-y-2">
+            <ChecklistFields template={template} values={values} set={(k, v) => setDraftVals({ ...values, [k]: v })} />
+            {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold text-rose-600">{draftErr}</div>}
+            <div className="flex gap-2">
+              <Btn data-save-draft onClick={() => dispatch({ type: "EDIT_PROJECT", id: project.id, patch: patchOf() })}>Save draft</Btn>
+              <Btn data-submit-handover kind="primary" onClick={submit}>Submit handover</Btn>
+            </div>
+          </div>;
+        })() : (project.checklistTemplate || []).map(it => {
           const v = (project.checklist || {})[it.id];
           return <div key={it.id} className="flex gap-2 text-sm text-slate-700"><span className="w-64">{it.label}</span>
             <span>{it.kind === "check" ? (v ? "✓" : "—") : (it.kind === "date" && v ? fmtDate(v) : v || "—")}</span></div>;
