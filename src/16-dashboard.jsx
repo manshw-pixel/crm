@@ -53,7 +53,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       {scored.length === 0 && <div className="nm-sm p-4 text-sm text-indigo-500">
         {user.role === "lead" ? "No accounts are assigned to you yet."
           : scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
-          : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">2</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
+          : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">4</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
       {/* Headline: size and direction of the book. */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">

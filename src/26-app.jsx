@@ -262,7 +262,7 @@ function App({ user, onBackToClients }) {
       if (paletteOpen) return; // palette modal owns the keyboard while open
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === "/") { e.preventDefault(); resetAccounts(); setTimeout(() => searchRef.current?.focus(), 50); }
-      const i = "12345".indexOf(e.key);
+      const i = "123456789".indexOf(e.key); // one key per sidebar item, in sidebar order
       if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else { setView(views[i]); setAcctId(null); } }
       if (e.key === "Escape") setAcctId(null);
     };
