@@ -190,7 +190,8 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
           const template = project.checklistTemplate || [];
           const values = draftVals || project.checklist || {};
           const dateItem = template.find(it => it.kind === "date" && it.id === "go_live_target") || template.find(it => it.kind === "date");
-          const patchOf = () => ({ checklist: values, targetGoLive: (dateItem && values[dateItem.id]) || project.targetGoLive || null });
+          const patchOf = () => ({ checklist: values, targetGoLive: (dateItem && values[dateItem.id]) || null,
+            missing: checklistFilled({ ...project, checklist: values }).map(m => m.label || m.id) });
           const submit = () => {
             const r = canTransition({ ...project, checklist: values }, tasks, "queued", actor, account);
             if (!r.ok) { setDraftErr(r.reason); return; }
@@ -199,7 +200,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
             move("queued", "Handover submitted");
           };
           return <div data-draft-checklist className="space-y-2">
-            <ChecklistFields template={template} values={values} set={(k, v) => setDraftVals({ ...values, [k]: v })} />
+            <ChecklistFields template={template} values={values} set={(k, v) => { setDraftErr(""); setDraftVals({ ...values, [k]: v }); }} />
             {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold text-rose-600">{draftErr}</div>}
             <div className="flex gap-2">
               <Btn data-save-draft onClick={() => dispatch({ type: "EDIT_PROJECT", id: project.id, patch: patchOf() })}>Save draft</Btn>

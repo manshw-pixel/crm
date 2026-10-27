@@ -113,7 +113,7 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
   const myTasks = (st.projectTasks || []).filter(t => t.ownerId === user.id && t.status !== "done")
     .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
   const impls = implementersOf(st);
-  if (selId) return <Card title="Implementation project"><ProjectDetail st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
+  if (selId) return <Card title="Implementation project"><ProjectDetail key={selId} st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
   const column = s => {
     const rows = projects.filter(p => p.stage === s);
     return rows.map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} />);
