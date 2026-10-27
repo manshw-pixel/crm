@@ -8,13 +8,13 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
   const reader = new FileReader();
   reader.onload = () => {
     const rows = parseCSV(String(reader.result));
-    if (rows.length < 2) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
+    if (rows.length < 2) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, rowAccounts: [], cells: [], err: "No data rows found — the first row must be a header (name, tier, arr, …)." });
     const norm = s => s.toLowerCase().replace(/[^a-z]/g, "");
     const ALIAS = { totallicenses: "licenses" };
     const header = rows[0].map(norm).map(h => ALIAS[h] || h);
     const has = key => header.indexOf(key) >= 0;
     const col = (r, key) => { const i = header.indexOf(key); return i >= 0 ? (r[i] || "").trim() : ""; };
-    if (!has("name")) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: 'The header row needs a "name" column (matching Export CSV format works).' });
+    if (!has("name")) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, rowAccounts: [], cells: [], err: 'The header row needs a "name" column (matching Export CSV format works).' });
     // dedupe: match on accountNo first, then case-insensitive name — matched rows update the existing account
     const byNo = new Map(accounts.filter(a => a.accountNo).map(a => [String(a.accountNo), a]));
     const byName = new Map(accounts.map(a => [a.name.toLowerCase(), a]));
@@ -23,16 +23,19 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
     const cfCols = customImportColumns(rows[0], customFields);
     const badCustomRows = [];
     const ops = [];
+    const rowAccounts = [], cells = [];
     const badDateRows = [], churnSkipped = [], badNumberRows = [];
     const DATE_COLS = ["startdate", "transitiondate", "renewaldate", "billingcompleteddate"];
     const allDates = rows.slice(1).flatMap(r => [...DATE_COLS.map(k => col(r, k)), ...cfCols.filter(c => c.def.type === "date").map(c => r[c.index] || "")]);
     const order = csvDateOrder(allDates);
-    if (!order) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, err: "Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported. Use one format (YYYY-MM-DD is safest) and save again." });
+    if (!order) return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, rowAccounts: [], cells: [], err: "Dates in this file mix DD-MM-YYYY and MM-DD-YYYY, so nothing was imported. Use one format (YYYY-MM-DD is safest) and save again." });
     // "dmy-assumed": numeric d-m-y dates present but none proved the order -- say so in the message
     const proven = allDates.some(v => { const m = CSV_DMY.exec(String(v).trim()); return m && (+m[1] > 12 || +m[2] > 12); });
     const dateOrder = proven ? order : allDates.some(v => CSV_DMY.test(String(v).trim())) ? "dmy-assumed" : "iso";
-    rows.slice(1).forEach(r => {
+    rows.slice(1).forEach((r, i) => {
       const name = col(r, "name");
+      cells[i] = Object.fromEntries(rows[0].map((h, j) => [h.trim().toLowerCase(), r[j] ?? ""]));
+      rowAccounts[i] = { row: i + 1, id: null, name };
       if (!name) { skipped++; return; }
       // blank -> undefined (field left alone); unreadable -> counted, reported, left alone.
       // This used to be parseFloat(...) || 0, which zeroed an existing account's ARR on a
@@ -110,6 +113,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
         if (Object.keys(cfChanged).length) patch.custom = buildCustomPatch(existing.custom, cfChanged);
         const moved = isAdminUser(user) && has("csm") && vals.csm && vals.csm !== (existing.csm || "");
         if (moved) patch.csmSince = iso(Date.now());
+        rowAccounts[i].id = existing.id;
         ops.push({ type: "EDIT_ACCOUNT", id: existing.id, patch, by: user?.name, source: "csv import" });
         if (moved) ops.push({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: existing.id, type: "note", date: iso(Date.now()),
           summary: csmChangeSummary(existing.csm, vals.csm, user.name), system: true } });
@@ -127,6 +131,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
           inputs: { ...DEFAULT_INPUTS, ...inputPatch, ...(hasVal ? clampInputs({ value: valPatch }) : {}) },
           history: [], inputsUpdatedAt: iso(Date.now()), ...(Object.keys(customEdits).length ? { custom: customEdits } : {}) };
         if (!isAdminUser(user)) { item.csm = user ? user.name : ""; delete item.csmSince; delete item.leadId; }
+        rowAccounts[i].id = item.id;
         ops.push({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
         if (no) byNo.set(String(no), item);
@@ -137,10 +142,10 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
     const adds = ops.filter(o => o.type === "ADD_ACCOUNT").length;
     const room = roomLeft(ORG_LIMITS.maxAccounts, accounts.length);
     if (adds > room)
-      return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0,
+      return done({ ok: 0, updated: 0, skipped: 0, badTier: 0, badStatus: 0, rowAccounts: [], cells: [],
         err: `${limitMessage("accounts", ORG_LIMITS.maxAccounts)} This file adds ${adds} new accounts; there is room for ${room}. Nothing was imported.` });
     ops.forEach(dispatch);
-    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder, badCustom, badCustomRows });
+    done({ ok, updated, skipped, badTier, badStatus, badDate, badValue, badNumber, badNumberRows, badCurrency, badDateRows, churnSkipped, dateOrder, badCustom, badCustomRows, rowAccounts, cells, order });
   };
   reader.readAsText(file);
 }

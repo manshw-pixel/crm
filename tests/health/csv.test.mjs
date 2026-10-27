@@ -111,6 +111,21 @@ test("import creates a new account and counts it as ok", async () => {
   await browser.close();
 });
 
+test("accounts CSV import reports the account id of each row", async () => {
+  const { page, browser } = await launch(seed);
+  await page.waitForFunction(() => window.__store && window.__health);
+  // row 3 has no name, so it is skipped (a bad-currency row would still import)
+  const { result, accounts } = await runImport(page, "name,currency\nAlpha Corp,USD\nBeta,USD\n,ZZZ\n");
+  const ra = result.rowAccounts, beta = accounts.find(a => a.name === "Beta");
+  assert(Array.isArray(ra) && ra.length === 3, `expected 3 rowAccounts, got ${JSON.stringify(ra)}`);
+  assert(ra[0].id === "a1" && ra[0].row === 1, `row 1 should map to a1: ${JSON.stringify(ra[0])}`);
+  assert(beta && ra[1].id === beta.id, `row 2 should map to the new Beta id: ${JSON.stringify(ra[1])}`);
+  assert(ra[2].id === null, `skipped row should have null id: ${JSON.stringify(ra[2])}`);
+  assert(result.cells[1].name === "Beta", `cells[1].name: ${JSON.stringify(result.cells)}`);
+  assert(result.order === "dmy" || result.order === "mdy" || result.order === "iso" || !!result.order, `order missing: ${result.order}`);
+  await browser.close();
+});
+
 test("import matches an existing accountNo and updates instead of duplicating", async () => {
   const { page, browser } = await launch(seed);
   await page.waitForFunction(() => window.__store && window.__health);
