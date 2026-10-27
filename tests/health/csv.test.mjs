@@ -120,6 +120,7 @@ test("accounts CSV import reports the account id of each row", async () => {
   assert(Array.isArray(ra) && ra.length === 3, `expected 3 rowAccounts, got ${JSON.stringify(ra)}`);
   assert(ra[0].id === "a1" && ra[0].row === 1, `row 1 should map to a1: ${JSON.stringify(ra[0])}`);
   assert(beta && ra[1].id === beta.id, `row 2 should map to the new Beta id: ${JSON.stringify(ra[1])}`);
+  assert(ra[0].created === false && ra[1].created === true && ra[2].created === false, `created flags: ${JSON.stringify(ra)}`);
   assert(ra[2].id === null, `skipped row should have null id: ${JSON.stringify(ra[2])}`);
   assert(result.cells[1].name === "Beta", `cells[1].name: ${JSON.stringify(result.cells)}`);
   assert(result.order === "dmy" || result.order === "mdy" || result.order === "iso" || !!result.order, `order missing: ${result.order}`);

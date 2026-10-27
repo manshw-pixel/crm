@@ -427,9 +427,9 @@ ${name},Mid,100000,INR,onboarding,yes,15-12-2030,QA Contact,Core
         assert.ok(!r.err, `sales sync reported an error: ${r.msg}`);
         await waitForSaved(page);
       };
-      if (await cards() === 0) await feed(1000);
+      if (await cards() === 0) await feed(Date.now());
       assert.equal(await cards(), 1, `expected exactly 1 project for "${name}" after the first feed`);
-      await feed(2000); // later timestamp: a new signature, so the file is processed again
+      await feed(Date.now() + 5000); // later timestamp: a new signature, so the file is processed again
       assert.equal(await cards(), 1, `re-feeding the same row created a second project for "${name}"`);
       await page.locator("[data-board-column=queued] [data-board-project]").filter({ hasText: name }).first().waitFor({ timeout: 5000 });
     } },

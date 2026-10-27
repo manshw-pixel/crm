@@ -35,7 +35,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
     rows.slice(1).forEach((r, i) => {
       const name = col(r, "name");
       cells[i] = Object.fromEntries(rows[0].map((h, j) => [h.trim().toLowerCase(), r[j] ?? ""]));
-      rowAccounts[i] = { row: i + 1, id: null, name };
+      rowAccounts[i] = { row: i + 1, id: null, name, created: false };
       if (!name) { skipped++; return; }
       // blank -> undefined (field left alone); unreadable -> counted, reported, left alone.
       // This used to be parseFloat(...) || 0, which zeroed an existing account's ARR on a
@@ -132,6 +132,7 @@ function importAccountsCSV(file, accounts, dispatch, done, user, customFields = 
           history: [], inputsUpdatedAt: iso(Date.now()), ...(Object.keys(customEdits).length ? { custom: customEdits } : {}) };
         if (!isAdminUser(user)) { item.csm = user ? user.name : ""; delete item.csmSince; delete item.leadId; }
         rowAccounts[i].id = item.id;
+        rowAccounts[i].created = true;
         ops.push({ type: "ADD_ACCOUNT", item });
         byName.set(name.toLowerCase(), item);
         if (no) byNo.set(String(no), item);

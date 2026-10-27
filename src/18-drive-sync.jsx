@@ -104,7 +104,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     const skip = why => { skipped++; reasons[why] = (reasons[why] || 0) + 1; };
     (r.rowAccounts || []).forEach((ra, i) => {
       if (!ra || !ra.name) return;
-      const dest = rowDestination(cells[i] && cells[i].destination, dflt);
+      const dest = rowDestination(cells[i] && cells[i].destination, ra.created ? dflt : "accounts");
       if (dest === "accounts") return;
       if (dest && dest.unknown !== undefined) return skip(`unknown destination "${dest.unknown}"`);
       const plan = planOnboardingRow({ accountId: ra.id, cells: cells[i] || {}, template, order: r.order,
@@ -206,6 +206,7 @@ function IntegrationsCard({ st, dispatch, user }) {
             <option value="accounts">Accounts (straight to CSM)</option>
             <option value="onboarding">Onboarding (implementation project)</option>
           </select></label>
+        <span className="text-xs text-slate-500">Onboarding applies to new accounts only. To start a project for an existing account, put onboarding in its destination column.</span>
         <span className="text-xs text-slate-500">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
       </div>
       <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>

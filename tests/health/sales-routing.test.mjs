@@ -38,7 +38,6 @@ async function run(csv, fn) {
       await page.evaluate(([t, m]) => { window.__csv = t; window.__mtime = m; }, [text, mtime]);
       const lastBefore = await page.evaluate(() => { const i = window.__store.getState().settings.integrations; const l = i && i.log[i.log.length - 1]; return l ? l.t + "|" + l.file + "|" + l.msg + "|" + i.log.length : ""; });
       await page.evaluate(() => [...document.querySelectorAll("button")].find(b => /Sync now/.test(b.textContent)).click());
-      await page.waitForFunction(() => { const i = window.__store.getState().settings.integrations; return i && i.log.length > 0; }, null, { timeout: 10000 });
       const last = () => page.evaluate(() => { const i = window.__store.getState().settings.integrations; const l = i && i.log[i.log.length - 1]; return l ? l.t + "|" + l.file + "|" + l.msg + "|" + i.log.length : ""; });
       for (let i = 0; i < 100 && await last() === lastBefore; i++) await page.waitForTimeout(100);
       return page.evaluate(() => { const s = window.__store.getState(); const l = s.settings.integrations.log; return { projects: s.projects || [], accounts: s.accounts, log: l[l.length - 1].msg }; });
@@ -101,6 +100,26 @@ test("default destination onboarding routes rows without a destination column", 
     await sync(NODEST, 2);
     const d = await page.evaluate(() => window.__store.getState().settings.integrations.salesDefault);
     assert(d === "onboarding", "salesDefault kept, got " + d);
+  });
+});
+
+test("default onboarding applies to new accounts only; explicit onboarding still works for existing", async () => {
+  await run("", async (sync, page) => {
+    await sync(`${HEAD}
+Kestrel,,yes,15-11-2026,Asha,Core
+`, 1);
+    await page.selectOption("[data-sales-default]", "onboarding");
+    let r = await sync(`${HEAD}
+Kestrel,,yes,15-11-2026,Asha,Core
+Orion,,yes,15-11-2026,Asha,Core
+`, 2);
+    const names = r.projects.map(p => r.accounts.find(a => a.id === p.accountId)?.name);
+    assert(r.projects.length === 1 && names[0] === "Orion", "only the new account gets a project, got " + JSON.stringify(names));
+    r = await sync(`${HEAD}
+Kestrel,onboarding,yes,15-11-2026,Asha,Core
+`, 3);
+    const k = r.accounts.find(a => a.name === "Kestrel");
+    assert(r.projects.some(p => p.accountId === k.id), "explicit onboarding opens a project for the existing account");
   });
 });
 
