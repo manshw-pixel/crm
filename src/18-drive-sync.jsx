@@ -80,8 +80,40 @@ function IntegrationsCard({ st, dispatch, user }) {
   const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); setFiles(s => ({ ...s, [key]: null })); };
   // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
   // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
+  // One sales CSV: import the accounts, then turn rows marked destination=onboarding into
+  // implementation projects. f is File-like ({ name, lastModified, ... }, readable by FileReader).
+  // plannedProjects carries projects planned earlier in the same sync pass (the store has not
+  // re-rendered yet), so two files can't both queue a project for one account.
+  const syncSalesFile = async (f, plannedProjects = []) => {
+    const r = await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, res, user, st.settings && st.settings.customFields));
+    let msg = importSummary(r);
+    if (r.err) return { msg, err: true };
+    const cells = r.cells || [];
+    const dflt = integ.salesDefault || "accounts";
+    const hasCol = cells.some(c => c && Object.prototype.hasOwnProperty.call(c, "destination"));
+    if (!hasCol && dflt !== "onboarding") return { msg, err: false };
+    const template = (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
+    let queued = 0, drafts = 0, skipped = 0; const reasons = {};
+    const skip = why => { skipped++; reasons[why] = (reasons[why] || 0) + 1; };
+    (r.rowAccounts || []).forEach((ra, i) => {
+      if (!ra || !ra.name) return;
+      const dest = rowDestination(cells[i] && cells[i].destination, dflt);
+      if (dest === "accounts") return;
+      if (dest && dest.unknown !== undefined) return skip(`unknown destination "${dest.unknown}"`);
+      const plan = planOnboardingRow({ accountId: ra.id, cells: cells[i] || {}, template, order: r.order,
+        projects: [...(st.projects || []), ...plannedProjects], user, now: iso(Date.now()), file: f.name, newId: uid() });
+      if (plan.kind === "skip") return skip(plan.reason);
+      plannedProjects.push(plan.project);
+      dispatch({ type: "ADD_PROJECT", item: plan.project });
+      if (plan.kind === "queued") queued++; else drafts++;
+    });
+    msg += ` · projects queued ${queued} · drafts ${drafts} · skipped ${skipped}`;
+    if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
+    return { msg, err: false };
+  };
   const sync = useCallback(async (interactive = true) => {
     if (busy) return; setBusy(true);
+    const plannedProjects = [];
     const processed = { ...integ.processed }; const log = [...integ.log];
     const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
     for (const key of ["sales", "finance"]) {
@@ -99,8 +131,7 @@ function IntegrationsCard({ st, dispatch, user }) {
           const sig = `${f.name}|${f.lastModified}`;
           if (processed[sig]) continue;
           try {
-            if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
-              { note(key, f.name, importSummary(r), !!r.err); res(); }, user, st.settings && st.settings.customFields));
+            if (key === "sales") { const o = await syncSalesFile(f, plannedProjects); note(key, f.name, o.msg, o.err); }
             else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
               note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, !!r.err); }
             processed[sig] = iso(Date.now());
