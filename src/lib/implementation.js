@@ -19,7 +19,7 @@ const isImplementer = (actor, project) => !!project.implementerId && actor.id ==
 const canWork = (actor, project) => isManager(actor) || isImplementer(actor, project);
 const isCsm = (actor, account) => actor.role === "admin" || (!!account && !!account.csm && actor.name === account.csm);
 
-function checklistFilled(project) {
+export function checklistFilled(project) {
   const values = project.checklist || {};
   const missing = (project.checklistTemplate || []).filter(it => {
     if (!it.required) return false;
