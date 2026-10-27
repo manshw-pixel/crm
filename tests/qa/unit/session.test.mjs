@@ -8,7 +8,7 @@ const env = { baseUrl: "http://x", orgName: "CRM", users: { admin: { email: "a@x
 function fake({ evaluate, errorText = null }) {
   const calls = { closed: 0, filled: [] };
   const page = {
-    goto: async () => {}, fill: async (sel, v) => { calls.filled.push(v); },
+    addInitScript: async () => {}, goto: async () => {}, fill: async (sel, v) => { calls.filled.push(v); },
     getByRole: () => ({ click: async () => {} }),
     locator: () => ({ first: () => ({ textContent: async () => errorText }) }),
     evaluate, waitForTimeout: async () => {},

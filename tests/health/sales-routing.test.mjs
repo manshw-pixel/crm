@@ -121,3 +121,16 @@ test("onboarding template lists checklist ids", async () => {
     assert(/Example Co \(delete this row\)/.test(text) && /,onboarding,/.test(text), text);
   });
 });
+
+// The QA hook is gated: absent for ordinary users, present only when the runner sets window.__qaHooks before app scripts.
+for (const [label, flag] of [["absent without __qaHooks", false], ["present with __qaHooks", true]]) {
+  test(`sales routing: QA hook __syncSalesText is ${label}`, async () => {
+    const { page, browser } = await launch(seed + (flag ? "window.__qaHooks = true;" : ""));
+    try {
+      await page.click('button[title="Settings"]', { timeout: 15000 });
+      await page.waitForSelector("[data-files='sales']", { timeout: 10000 });
+      const has = await page.evaluate(() => typeof window.__syncSalesText === "function");
+      assert(has === flag, `__syncSalesText ${has ? "exists" : "missing"}, expected ${flag ? "present" : "absent"}`);
+    } finally { await browser.close(); }
+  });
+}

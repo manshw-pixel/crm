@@ -118,6 +118,22 @@ function IntegrationsCard({ st, dispatch, user }) {
     if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
     return { msg, err: false };
   };
+  // QA only: the File System Access picker can't be driven by the live QA runner, so this feeds one sales CSV through the
+  // same syncSalesFile + processed/log path as a real sync. Exposed only when the runner sets window.__qaHooks (addInitScript).
+  const qaSync = useRef(null);
+  qaSync.current = async (name, text, lastModified) => {
+    const sig = `${name}|${lastModified}`;
+    if (integ.processed[sig]) return { skipped: true };
+    const o = await syncSalesFile(new File([text], name, { lastModified }));
+    const log = [...integ.log, { t: iso(Date.now()), folder: "sales", file: name, msg: o.msg, err: !!o.err }];
+    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed: { ...integ.processed, [sig]: iso(Date.now()) }, log: log.slice(-20) } });
+    return { msg: o.msg, err: !!o.err };
+  };
+  useEffect(() => {
+    if (!window.__qaHooks) return;
+    window.__syncSalesText = (name, text, lastModified) => qaSync.current(name, text, lastModified);
+    return () => { delete window.__syncSalesText; };
+  }, []);
   const sync = useCallback(async (interactive = true) => {
     if (busy) return; setBusy(true);
     const plannedProjects = [];
