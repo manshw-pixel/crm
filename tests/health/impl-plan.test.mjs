@@ -28,7 +28,7 @@ test("impl board: a column per stage, handover drafts, on hold, cancelled collap
     const cols = await page.locator("[data-board-column]").evaluateAll(els => els.map(e => e.dataset.boardColumn));
     assert(cols.join("|") === "queued|planning|in_progress|csm_review|live|handover|on_hold|cancelled", "columns " + cols.join("|"));
     const collapsed = await page.locator("[data-board-collapsed]").evaluateAll(els => els.map(e => e.dataset.boardColumn + ":" + e.open));
-    assert(collapsed.join("|") === "on_hold:false|cancelled:false", "collapsed " + collapsed.join("|"));
+    assert(collapsed.join("|") === "handover:false|on_hold:false|cancelled:false", "collapsed " + collapsed.join("|"));
     assert(await page.locator('[data-board-column="queued"] [data-board-project="p1"]').count() === 1, "p1 not in Queued");
     await openProject(page, "p1");
     await page.click("[data-stage-action=assign]");
