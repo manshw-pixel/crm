@@ -20,3 +20,4 @@ export * from "./invoice.js";
 export * from "./custom-fields.js";
 export * from "./ownership.js";
 export * from "./implementation.js";
+export * from "./sales-import.js";

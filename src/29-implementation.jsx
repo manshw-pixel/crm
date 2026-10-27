@@ -11,6 +11,20 @@ function missingRequired(template, values) {
   return template.find(it => it.required && (it.kind === "check" ? !values[it.id] : !String(values[it.id] || "").trim())) || null;
 }
 
+// Who may create or submit a handover: everyone except the implementation roles.
+function canCreateHandover(user) { return !isImplRole(user); }
+
+function ChecklistFields({ template, values, set }) {
+  return template.map(it => (
+    <label key={it.id} data-checklist-item={it.id} className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+      {it.kind === "check"
+        ? <><input type="checkbox" checked={!!values[it.id]} onChange={e => set(it.id, e.target.checked)} /><span>{it.label}{it.required && " *"}</span></>
+        : <><span className="w-56">{it.label}{it.required && " *"}</span>
+          <Input type={it.kind === "date" ? "date" : "text"} value={values[it.id] || ""} onChange={e => set(it.id, e.target.value)} className="w-auto flex-1" /></>}
+    </label>
+  ));
+}
+
 function HandoverForm({ account, st, dispatch, user, onDone }) {
   const toast = useToast();
   const template = implChecklistOf(st);
@@ -42,14 +56,7 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
   return (
     <form ref={formRef} data-handover-form className="space-y-2" onSubmit={submit}>
       <div className="text-sm font-bold text-slate-800">New {IMPL_TYPE_LABEL[type].toLowerCase()} project · handover checklist</div>
-      {template.map(it => (
-        <label key={it.id} data-checklist-item={it.id} className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
-          {it.kind === "check"
-            ? <><input type="checkbox" checked={!!values[it.id]} onChange={e => set(it.id, e.target.checked)} /><span>{it.label}{it.required && " *"}</span></>
-            : <><span className="w-56">{it.label}{it.required && " *"}</span>
-              <Input type={it.kind === "date" ? "date" : "text"} value={values[it.id] || ""} onChange={e => set(it.id, e.target.value)} className="w-auto flex-1" /></>}
-        </label>
-      ))}
+      <ChecklistFields template={template} values={values} set={set} />
       {err && <div data-handover-error role="alert" className="text-sm font-semibold text-rose-600">{err}</div>}
       <div className="flex gap-2"><Btn kind="primary" type="submit">Submit handover</Btn><Btn onClick={onDone}>Cancel</Btn></div>
     </form>
@@ -58,7 +65,7 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
 
 function ProjectsCard({ account, st, dispatch, user, open, setOpen, openProject }) {
   const projects = (st.projects || []).filter(p => p.accountId === account.id);
-  const canCreate = !isImplRole(user);
+  const canCreate = canCreateHandover(user);
   return (
     <Card title={`Projects (${projects.length})`} right={canCreate && !open
       ? <Btn data-new-project onClick={() => setOpen(true)}>+ New project</Btn> : null}>
@@ -78,7 +85,8 @@ function ProjectsCard({ account, st, dispatch, user, open, setOpen, openProject 
 }
 
 var BOARD_COLUMNS = ["queued", "planning", "in_progress", "csm_review", "live"];
-var BOARD_COLLAPSED = ["on_hold", "cancelled"];
+var BOARD_COLLAPSED = ["handover", "on_hold", "cancelled"];
+var BOARD_COLLAPSED_LABEL = { handover: "Handover drafts" };
 
 function BoardCard({ p, st, onOpen }) {
   const acct = (st.accounts || []).find(a => a.id === p.accountId);
@@ -105,7 +113,7 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
   const myTasks = (st.projectTasks || []).filter(t => t.ownerId === user.id && t.status !== "done")
     .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
   const impls = implementersOf(st);
-  if (selId) return <Card title="Implementation project"><ProjectDetail st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
+  if (selId) return <Card title="Implementation project"><ProjectDetail key={selId} st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
   const column = s => {
     const rows = projects.filter(p => p.stage === s);
     return rows.map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} />);
@@ -130,7 +138,7 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
           </div>)}
         </div>
         {BOARD_COLLAPSED.map(s => <details key={s} data-board-column={s} data-board-collapsed className="mt-2">
-          <summary className="cursor-pointer text-xs font-bold uppercase text-slate-500">{STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</summary>
+          <summary className="cursor-pointer text-xs font-bold uppercase text-slate-500">{BOARD_COLLAPSED_LABEL[s] || STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</summary>
           <div className="mt-2 grid grid-cols-1 gap-x-3 sm:grid-cols-3">{column(s)}</div>
         </details>)}
       </>}

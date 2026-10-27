@@ -400,4 +400,37 @@ export const scenarios = [
       const q = card.locator(`[data-impl-bar="Q${Math.floor(new Date().getUTCMonth() / 3) + 1}"]`);
       assert.ok(+await q.getAttribute("data-completed") >= 1, "current quarter shows no Completed project");
     } },
+  // The folder picker can't be driven live, so the page's QA hook (window.__syncSalesText, set up by session.mjs) feeds a sales CSV
+  // through the same sync path. The account name is run-unique, so a retry finds its own project and only asserts the count.
+  { id: `${F}/sales-feed-onboarding`, feature: F, title: "A sales-feed onboarding row creates exactly one queued project, even when re-fed", role: "admin",
+    run: async ({ page, thisRunId }) => {
+      const name = `QA ${thisRunId} Sales Onboarding`;
+      const csv = `name,tier,arr,currency,destination,order_form,go_live_target,customer_contact,modules_scope
+${name},Mid,100000,INR,onboarding,yes,15-12-2030,QA Contact,Core
+`;
+      await nav(page, "Settings").click();
+      await page.waitForFunction(() => typeof window.__syncSalesText === "function", null, { timeout: 15000 })
+        .catch(() => { throw new Error("window.__syncSalesText missing: Settings > Integrations not mounted or __qaHooks not set"); });
+      const cards = async () => {
+        await nav(page, "Implementation").click();
+        await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
+        const back = page.locator("[data-project-back]");
+        if (await back.count() && await back.first().isVisible()) await back.first().click();
+        await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
+        await page.waitForTimeout(500);
+        return page.locator("[data-board-project]").filter({ hasText: name }).count();
+      };
+      const feed = async mtime => {
+        await nav(page, "Settings").click();
+        await page.waitForFunction(() => typeof window.__syncSalesText === "function", null, { timeout: 15000 });
+        const r = await page.evaluate(([n, t, m]) => window.__syncSalesText(n, t, m), [`qa-${thisRunId}-sales.csv`, csv, mtime]);
+        assert.ok(!r.err, `sales sync reported an error: ${r.msg}`);
+        await waitForSaved(page);
+      };
+      if (await cards() === 0) await feed(Date.now());
+      assert.equal(await cards(), 1, `expected exactly 1 project for "${name}" after the first feed`);
+      await feed(Date.now() + 5000); // later timestamp: a new signature, so the file is processed again
+      assert.equal(await cards(), 1, `re-feeding the same row created a second project for "${name}"`);
+      await page.locator("[data-board-column=queued] [data-board-project]").filter({ hasText: name }).first().waitFor({ timeout: 5000 });
+    } },
 ];

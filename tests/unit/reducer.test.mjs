@@ -302,6 +302,12 @@ test("settings actions update their key and always write the settings row", () =
   }
 });
 
+test("SET_INTEGRATIONS merges, keeping salesDefault", () => {
+  const st = base(); st.settings = { ...st.settings, integrations: { processed: {}, log: [], salesDefault: "onboarding" } };
+  const { next } = run(ACTIONS.SET_INTEGRATIONS, st);
+  assert.equal(next.settings.integrations.salesDefault, "onboarding");
+});
+
 // ---------- diffRow
 
 test("diffRow: new row is a full patch; unchanged row is empty", () => {

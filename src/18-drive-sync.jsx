@@ -41,7 +41,7 @@ function IntegrationsCard({ st, dispatch, user }) {
   const [busy, setBusy] = useState(false);
   // folders whose access lapsed (e.g. after a reload) and need one click to re-grant
   const [needsGrant, setNeedsGrant] = useState({ sales: false, finance: false });
-  const integ = st.settings.integrations || { processed: {}, log: [] };
+  const integ = { processed: {}, log: [], ...(st.settings.integrations || {}) };
   const [files, setFiles] = useState({ sales: null, finance: null }); // what is in each folder right now
   const refreshFiles = async (key, h) => {
     if (!h || await h.queryPermission({ mode: "read" }) !== "granted") return setFiles(s => ({ ...s, [key]: null }));
@@ -72,6 +72,13 @@ function IntegrationsCard({ st, dispatch, user }) {
       return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
     download("sales-accounts.csv", accountsCSVText(rows));
   };
+  const onboardingTemplate = () => {
+    const head = accountsCSVText([]).split("\n")[0].split(",");
+    const ids = ((st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST).map(i => i.id);
+    const cols = [...head, "destination", ...ids];
+    const ex = cols.map(c => c === "name" ? "Example Co (delete this row)" : c === "destination" ? "onboarding" : "");
+    download("sales-onboarding.csv", [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n"));
+  };
   const financeTemplate = () => {
     const esc = csvCell;
     download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
@@ -80,8 +87,56 @@ function IntegrationsCard({ st, dispatch, user }) {
   const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); setFiles(s => ({ ...s, [key]: null })); };
   // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
   // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
+  // One sales CSV: import the accounts, then turn rows marked destination=onboarding into
+  // implementation projects. f is File-like ({ name, lastModified, ... }, readable by FileReader).
+  // plannedProjects carries projects planned earlier in the same sync pass (the store has not
+  // re-rendered yet), so two files can't both queue a project for one account.
+  const syncSalesFile = async (f, plannedProjects = []) => {
+    const r = await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, res, user, st.settings && st.settings.customFields));
+    let msg = importSummary(r);
+    if (r.err) return { msg, err: true };
+    const cells = r.cells || [];
+    const dflt = integ.salesDefault || "accounts";
+    const hasCol = cells.some(c => c && Object.prototype.hasOwnProperty.call(c, "destination"));
+    if (!hasCol && dflt !== "onboarding") return { msg, err: false };
+    const template = (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
+    let queued = 0, drafts = 0, skipped = 0; const reasons = {};
+    const skip = why => { skipped++; reasons[why] = (reasons[why] || 0) + 1; };
+    (r.rowAccounts || []).forEach((ra, i) => {
+      if (!ra || !ra.name) return;
+      const dest = rowDestination(cells[i] && cells[i].destination, ra.created ? dflt : "accounts");
+      if (dest === "accounts") return;
+      if (dest && dest.unknown !== undefined) return skip(`unknown destination "${dest.unknown}"`);
+      const plan = planOnboardingRow({ accountId: ra.id, cells: cells[i] || {}, template, order: r.order,
+        projects: [...(st.projects || []), ...plannedProjects], user, now: iso(Date.now()), file: f.name, newId: uid() });
+      if (plan.kind === "skip") return skip(plan.reason);
+      plannedProjects.push(plan.project);
+      dispatch({ type: "ADD_PROJECT", item: plan.project });
+      if (plan.kind === "queued") queued++; else drafts++;
+    });
+    msg += ` · projects queued ${queued} · drafts ${drafts} · skipped ${skipped}`;
+    if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
+    return { msg, err: false };
+  };
+  // QA only: the File System Access picker can't be driven by the live QA runner, so this feeds one sales CSV through the
+  // same syncSalesFile + processed/log path as a real sync. Exposed only when the runner sets window.__qaHooks (addInitScript).
+  const qaSync = useRef(null);
+  qaSync.current = async (name, text, lastModified) => {
+    const sig = `${name}|${lastModified}`;
+    if (integ.processed[sig]) return { skipped: true };
+    const o = await syncSalesFile(new File([text], name, { lastModified }));
+    const log = [...integ.log, { t: iso(Date.now()), folder: "sales", file: name, msg: o.msg, err: !!o.err }];
+    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed: { ...integ.processed, [sig]: iso(Date.now()) }, log: log.slice(-20) } });
+    return { msg: o.msg, err: !!o.err };
+  };
+  useEffect(() => {
+    if (!window.__qaHooks) return;
+    window.__syncSalesText = (name, text, lastModified) => qaSync.current(name, text, lastModified);
+    return () => { delete window.__syncSalesText; };
+  }, []);
   const sync = useCallback(async (interactive = true) => {
     if (busy) return; setBusy(true);
+    const plannedProjects = [];
     const processed = { ...integ.processed }; const log = [...integ.log];
     const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
     for (const key of ["sales", "finance"]) {
@@ -99,8 +154,7 @@ function IntegrationsCard({ st, dispatch, user }) {
           const sig = `${f.name}|${f.lastModified}`;
           if (processed[sig]) continue;
           try {
-            if (key === "sales") await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, r =>
-              { note(key, f.name, importSummary(r), !!r.err); res(); }, user, st.settings && st.settings.customFields));
+            if (key === "sales") { const o = await syncSalesFile(f, plannedProjects); note(key, f.name, o.msg, o.err); }
             else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
               note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, !!r.err); }
             processed[sig] = iso(Date.now());
@@ -145,6 +199,14 @@ function IntegrationsCard({ st, dispatch, user }) {
       <div className="mb-2 flex flex-wrap items-center gap-2">
         <Btn onClick={salesTemplate}>Export sales CSV</Btn>
         <Btn onClick={financeTemplate}>Export finance CSV</Btn>
+        <Btn data-onboarding-template onClick={onboardingTemplate}>Onboarding template</Btn>
+        <label className="flex items-center gap-1 text-xs text-slate-600">Sales rows go to
+          <select data-sales-default className="nm-inset rounded px-1 py-0.5 text-xs" value={integ.salesDefault || "accounts"}
+            onChange={e => dispatch({ type: "SET_INTEGRATIONS", integrations: { salesDefault: e.target.value } })}>
+            <option value="accounts">Accounts (straight to CSM)</option>
+            <option value="onboarding">Onboarding (implementation project)</option>
+          </select></label>
+        <span className="text-xs text-slate-500">Onboarding applies to new accounts only. To start a project for an existing account, put onboarding in its destination column.</span>
         <span className="text-xs text-slate-500">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
       </div>
       <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>

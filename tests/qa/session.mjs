@@ -6,6 +6,7 @@ export async function signIn(browser, env, role, { viewport, timeoutMs = 15000 }
   if (!creds) throw new Error(`no ${role} user configured in .env.qa`);
   const context = await browser.newContext(viewport ? { viewport } : {});
   const page = await context.newPage();
+  await page.addInitScript(() => { window.__qaHooks = true; }); // enables QA-only app hooks (e.g. __syncSalesText); production never sets it
   const close = () => context.close();
   try {
     await page.goto(env.baseUrl);
