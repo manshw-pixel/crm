@@ -17,16 +17,77 @@ async function ensurePermission(handle, mode = "read", interactive = true) {
   if (!interactive) return false;
   return (await handle.requestPermission({ mode })) === "granted";
 }
-// Every CSV directly in the folder. A file that cannot be read (typically an online-only
-// OneDrive / Google Drive placeholder) comes back as { name, err } instead of aborting the
-// whole folder, so the card can say which file and why.
-async function listCsvFiles(dirHandle) {
+// Every .csv and .xlsx directly in the folder (Excel's ~$ lock files skipped). A file that cannot be read
+// (typically an online-only OneDrive / Google Drive placeholder) comes back as { name, err } instead of
+// aborting the whole folder, so the card can say which file and why.
+async function listFeedFiles(dirHandle) {
   const out = [];
   for await (const [name, h] of dirHandle.entries()) {
-    if (h.kind !== "file" || !/\.csv$/i.test(name)) continue;
+    if (h.kind !== "file" || !/\.(csv|xlsx)$/i.test(name) || name.startsWith("~$")) continue;
     try { out.push(await h.getFile()); } catch (e) { out.push({ name, err: e.message || String(e) }); }
   }
   return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+// ExcelJS is only fetched when a template is downloaded or an .xlsx is synced -- never on app start.
+const EXCELJS_URL = "https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js";
+const EXCELJS_SRI = "sha384-Pqp51FUN2/qzfxZxBCtF0stpc9ONI6MYZpVqmo8m20SoaQCzf+arZvACkLkirlPz";
+let excelJsPromise = null;
+function loadExcelJS() {
+  if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+  if (!excelJsPromise) excelJsPromise = new Promise((res, rej) => {
+    const el = Object.assign(document.createElement("script"), { src: EXCELJS_URL, integrity: EXCELJS_SRI, crossOrigin: "anonymous" });
+    el.onload = () => window.ExcelJS ? res(window.ExcelJS) : rej(new Error("Excel library did not load"));
+    el.onerror = () => { el.remove(); rej(new Error("Excel library could not be downloaded")); };
+    document.head.appendChild(el);
+  }).catch(e => { excelJsPromise = null; throw e; }); // a failed load can be retried
+  return excelJsPromise;
+}
+// An .xlsx becomes the CSV File the importers already take; its name keeps .csv so CSV-only code paths
+// stay unchanged, and lastModified is carried over. The caller keeps the original name for the signature.
+async function xlsxToCsvFile(file) {
+  let rows;
+  try {
+    const ExcelJS = await loadExcelJS();
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(await file.arrayBuffer());
+    const ws = wb.worksheets.find(w => !w.state || w.state === "visible");
+    if (!ws) throw new Error("no visible worksheet");
+    rows = sheetRows(Array.from(ws.getSheetValues().slice(1), r => r ? Array.from(r).slice(1) : []));
+  } catch (e) { throw new Error("can't read Excel file: " + ((e && e.message) || String(e))); }
+  return new File([rowsToCSV(rows)], file.name.replace(/\.xlsx$/i, ".csv"), { lastModified: file.lastModified });
+}
+const asImportFile = f => /\.xlsx$/i.test(f.name) ? xlsxToCsvFile(f) : Promise.resolve(f);
+const colLetter = n => { let s = ""; for (n++; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
+// rows[0] is the header. dropdowns maps a header to its allowed values (list validation on rows 2-500);
+// a list that can't go inline (over Excel's 255-char limit, or containing a comma/quote) goes on a hidden Lists sheet.
+async function downloadXlsxTemplate(name, rows, dropdowns = {}) {
+  const ExcelJS = await loadExcelJS();
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet("Data", { views: [{ state: "frozen", ySplit: 1 }] });
+  rows.forEach(r => ws.addRow(r));
+  ws.getRow(1).font = { bold: true };
+  let lists = null, listCol = 0;
+  const lastRow = Math.max(500, rows.length + 500); // prefilled templates keep room for new rows below the data
+  rows[0].forEach((h, i) => {
+    const vals = (dropdowns[h] || []).map(String).filter(v => v !== "");
+    if (!vals.length) return;
+    const inline = vals.join(",");
+    let formula;
+    if (inline.length <= 250 && !/[,"]/.test(vals.join(""))) formula = `"${inline}"`;
+    else {
+      lists = lists || wb.addWorksheet("Lists", { state: "hidden" });
+      const c = ++listCol, L = colLetter(c - 1);
+      vals.forEach((v, j) => { lists.getCell(j + 1, c).value = v; });
+      formula = `Lists!$${L}$1:$${L}$${vals.length}`;
+    }
+    const L = colLetter(i);
+    ws.dataValidations.add(`${L}2:${L}${lastRow}`, { type: "list", allowBlank: true, formulae: [formula], showErrorMessage: true,
+      errorStyle: "stop", errorTitle: h, error: "Pick a value from the list" });
+  });
+  const buf = await wb.xlsx.writeBuffer();
+  const url = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+  const el = Object.assign(document.createElement("a"), { href: url, download: name });
+  el.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 // processed[sig] was `true` in older data; it now holds the import date
 function fileSyncStatus(f, processed) {
@@ -58,7 +119,7 @@ function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, bus
       </div>
       <div className="text-xs text-slate-500">{lastSync ? `Last sync ${fmtDate(lastSync)}` : "Never synced"}</div>
       {files && <ul data-files={feed} className="space-y-0.5 text-xs">
-        {files.length === 0 && <li className="text-slate-500">No .csv files directly in this folder (subfolders aren't read).</li>}
+        {files.length === 0 && <li className="text-slate-500">No .csv or .xlsx files directly in this folder (subfolders aren't read).</li>}
         {files.map(f => { const s = fileSyncStatus(f, processed); return (
           <li key={f.name} data-file={f.name} className="flex items-center gap-2">
             <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
@@ -68,7 +129,9 @@ function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, bus
       </ul>}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-xs text-slate-500">Templates</span>
-        {templates.map(([name, fn, attr]) => <Btn key={name} onClick={fn} {...(attr ? { [attr]: true } : {})}>{name}</Btn>)}
+        {templates.map(([name, xlsx, csv, attr]) => <span key={name} className="inline-flex items-center gap-1">
+          <Btn onClick={xlsx} {...(attr ? { [attr]: true } : {})}>{name}</Btn>
+          <button type="button" data-csv-template={name} className="text-xs text-slate-500 hover:underline" onClick={csv}>CSV</button></span>)}
       </div>
       {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
     </section>
@@ -100,7 +163,7 @@ function IntegrationsCard({ st, dispatch, user }) {
   const [files, setFiles] = useState({ sales: null, finance: null }); // what is in each folder right now
   const refreshFiles = async (key, h) => {
     if (!h || await h.queryPermission({ mode: "read" }) !== "granted") return setFiles(s => ({ ...s, [key]: null }));
-    try { const list = await listCsvFiles(h); setFiles(s => ({ ...s, [key]: list })); } catch (e) { setFiles(s => ({ ...s, [key]: null })); }
+    try { const list = await listFeedFiles(h); setFiles(s => ({ ...s, [key]: list })); } catch (e) { setFiles(s => ({ ...s, [key]: null })); }
   };
   useEffect(() => { (async () => {
     try {
@@ -122,23 +185,33 @@ function IntegrationsCard({ st, dispatch, user }) {
     const el = Object.assign(document.createElement("a"), { href: url, download: name });
     el.click(); URL.revokeObjectURL(url);
   };
-  const salesTemplate = () => {
-    const rows = st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
-      return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; });
-    download("sales-accounts.csv", accountsCSVText(rows));
+  // Each template is built once as CSV text; the Excel version is the same rows plus dropdowns.
+  const xlsx = (name, csvText, dropdowns) => downloadXlsxTemplate(name.replace(/\.csv$/i, ".xlsx"), parseCSV(csvText), dropdowns)
+    .catch(e => window.alert("Couldn't make the Excel template: " + ((e && e.message) || e) + ". Use the CSV link instead."));
+  const YES_NO = ["Yes", "No"];
+  const checklist = () => (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
+  // The values the accounts importer accepts (src/17-csv.jsx). Churned is left out on purpose: the import refuses it.
+  // csm is skipped when there is no active team member, so the template never carries an empty list.
+  const accountDropdowns = () => {
+    const csms = [...new Set((st.team || []).filter(u => !u.disabled && u.name).map(u => u.name))];
+    return { tier: ["Enterprise", "Mid", "SMB"], contractStatus: ["Active", "Auto-renew", "In negotiation", "Churn risk"], currency: CURRENCIES,
+      ...(csms.length ? { csm: csms } : {}), dedicatedSupport: YES_NO, billingCompleted: YES_NO, caseStudy: YES_NO, approvedSavings: YES_NO, approvedRoi: YES_NO };
   };
-  const onboardingTemplate = () => {
+  const salesCSV = () => accountsCSVText(st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
+    return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; }));
+  const onboardingCSV = () => {
     const head = accountsCSVText([]).split("\n")[0].split(",");
-    const ids = ((st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST).map(i => i.id);
-    const cols = [...head, "destination", ...ids];
+    const cols = [...head, "destination", ...checklist().map(i => i.id)];
     const ex = cols.map(c => c === "name" ? "Example Co (delete this row)" : c === "destination" ? "onboarding" : "");
-    download("sales-onboarding.csv", [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n"));
+    return [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n");
   };
-  const financeTemplate = () => {
-    const esc = csvCell;
-    download("finance-billing.csv", ["accountNo,name,billingCompletedDate",
-      ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(esc).join(","))].join("\n"));
-  };
+  const onboardingDropdowns = () => ({ ...accountDropdowns(), destination: ["onboarding", "accounts"],
+    ...Object.fromEntries(checklist().filter(i => i.kind === "check").map(i => [i.id, YES_NO])) });
+  const billingCSV = () => ["accountNo,name,billingCompletedDate",
+    ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(csvCell).join(","))].join("\n");
+  const PO_DROPDOWNS = { currency: ["INR", "USD", "PHP"], billing_cycle: ["quarterly", "half_yearly", "annual"], years: Array.from({ length: 10 }, (_, i) => String(i + 1)) };
+  // [label, Excel download, CSV download, extra attribute for the Excel button]
+  const templateSet = (label, name, csvText, dropdowns, attr) => [label, () => xlsx(name, csvText(), dropdowns()), () => download(name, csvText()), attr];
   const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); setFiles(s => ({ ...s, [key]: null })); };
   // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
   // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
@@ -146,7 +219,7 @@ function IntegrationsCard({ st, dispatch, user }) {
   // implementation projects. f is File-like ({ name, lastModified, ... }, readable by FileReader).
   // plannedProjects carries projects planned earlier in the same sync pass (the store has not
   // re-rendered yet), so two files can't both queue a project for one account.
-  const syncSalesFile = async (f, plannedProjects = []) => {
+  const syncSalesFile = async (f, plannedProjects = [], fileName = f.name) => {
     const r = await new Promise(res => importAccountsCSV(f, st.accounts, dispatch, res, user, st.settings && st.settings.customFields));
     let msg = importSummary(r);
     if (r.err) return { msg, err: true };
@@ -163,7 +236,7 @@ function IntegrationsCard({ st, dispatch, user }) {
       if (dest === "accounts") return;
       if (dest && dest.unknown !== undefined) return skip(`unknown destination "${dest.unknown}"`);
       const plan = planOnboardingRow({ accountId: ra.id, cells: cells[i] || {}, template, order: r.order,
-        projects: [...(st.projects || []), ...plannedProjects], user, now: iso(Date.now()), file: f.name, newId: uid() });
+        projects: [...(st.projects || []), ...plannedProjects], user, now: iso(Date.now()), file: fileName, newId: uid() });
       if (plan.kind === "skip") return skip(plan.reason);
       plannedProjects.push(plan.project);
       dispatch({ type: "ADD_PROJECT", item: plan.project });
@@ -278,16 +351,19 @@ function IntegrationsCard({ st, dispatch, user }) {
           continue;
         }
         setNeedsGrant(s => ({ ...s, [key]: false }));
-        const list = await listCsvFiles(h);
+        const list = await listFeedFiles(h);
         for (const f of list) {
           if (f.err) { note(key, f.name, fileSyncStatus(f, processed).text, true); continue; }
           const sig = `${f.name}|${f.lastModified}`;
           if (processed[sig]) continue;
           try {
-            if (key === "sales") { const o = await syncSalesFile(f, plannedProjects); note(key, f.name, o.msg, o.err); }
-            else { const o = await syncFinanceFile(f, h); note(key, f.name, o.msg, o.err); }
+            const imp = await asImportFile(f); // an .xlsx arrives as CSV text; f.name stays the log name and signature
+            if (key === "sales") { const o = await syncSalesFile(imp, plannedProjects, f.name); note(key, f.name, o.msg, o.err); }
+            else { const o = await syncFinanceFile(imp, h); note(key, f.name, o.msg, o.err); }
             processed[sig] = iso(Date.now());
-          } catch (ex) { note(key, f.name, ex.message, true); }
+          } catch (ex) { // still retried next sync, but an unchanged failure is not re-logged (it would flush the 20-entry log)
+            const prev = [...log].reverse().find(l => l.folder === key && l.file === f.name);
+            if (!(prev && prev.err && prev.msg === ex.message)) note(key, f.name, ex.message, true); }
         }
         setFiles(s => ({ ...s, [key]: list }));
       } catch (ex) { note(key, "—", ex.message, true); }
@@ -309,7 +385,8 @@ function IntegrationsCard({ st, dispatch, user }) {
     <Card title="Integrations — shared drive">
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <FeedCard feed="sales" label="Sales feed" hint="new-account CSVs (same columns as Accounts → Import CSV)" {...common("sales")}
-          templates={[["Accounts → CSM", () => salesTemplate()], ["Onboarding", () => onboardingTemplate(), "data-onboarding-template"]]}>
+          templates={[templateSet("Accounts → CSM", "sales-accounts.csv", salesCSV, accountDropdowns),
+            templateSet("Onboarding", "sales-onboarding.csv", onboardingCSV, onboardingDropdowns, "data-onboarding-template")]}>
           <label className="flex flex-wrap items-center gap-1 text-xs text-slate-600">Sales rows go to
             <select data-sales-default className="nm-inset rounded px-1 py-0.5 text-xs" value={integ.salesDefault || "accounts"}
               onChange={e => dispatch({ type: "SET_INTEGRATIONS", integrations: { salesDefault: e.target.value } })}>
@@ -320,9 +397,9 @@ function IntegrationsCard({ st, dispatch, user }) {
         </FeedCard>
         <FeedCard feed="finance" label="Finance feed" hint="purchase orders, payments or billing CSVs — recognised by their columns" {...common("finance")}
           notice={finAllowed ? null : "Only finance users can sync this folder"}
-          templates={[["Purchase orders", () => download("finance-purchase-orders.csv", poTemplateCSV())],
-            ["Payments", () => download("finance-payments.csv", paymentTemplateCSV())],
-            ["Billing completed", () => financeTemplate()]]} />
+          templates={[templateSet("Purchase orders", "finance-purchase-orders.csv", poTemplateCSV, () => PO_DROPDOWNS),
+            templateSet("Payments", "finance-payments.csv", paymentTemplateCSV, () => ({ status: ["paid", "waived"] })),
+            templateSet("Billing completed", "finance-billing.csv", billingCSV, () => ({}))]} />
       </div>
       <SyncLog log={integ.log} />
       <p className="mt-2 text-xs text-slate-500">Works in Chrome or Edge, and only while a OneVio tab is open (checks every 5 minutes). Each file is imported once per saved version; editing and re-saving a file imports it again, and duplicate projects and POs are refused, so that's safe. Finance files are recognised by their columns, not their names; put each PO's PDF in the same folder.</p>

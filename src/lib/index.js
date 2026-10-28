@@ -22,3 +22,4 @@ export * from "./ownership.js";
 export * from "./implementation.js";
 export * from "./sales-import.js";
 export * from "./finance-import.js";
+export * from "./xlsx-rows.js";
