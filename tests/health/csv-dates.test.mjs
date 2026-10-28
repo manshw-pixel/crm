@@ -128,7 +128,7 @@ test("folder card lists each CSV with its status, and Sync now imports only the 
   assert(/imported/.test(await fileRow(page, "old.csv")), "old.csv should show as imported");
   assert(/new — imports on next sync/.test(await fileRow(page, "new.csv")), "new.csv should show as new");
   assert(/can't read/.test(await fileRow(page, "cloud.csv")), "cloud.csv should show as unreadable");
-  await page.click('button:has-text("Sync now")');
+  await page.click('[data-feed=sales] button:has-text("Sync now")');
   await page.waitForFunction(() => /imported [A-Z][a-z]{2} \d/.test(document.querySelector('[data-files="sales"] [data-file="new.csv"]')?.textContent || ""), null, { timeout: 10000 });
   const st = await page.evaluate(() => window.__store.getState().accounts.map(a => ({ name: a.name, startDate: a.startDate })));
   assert(st.length === 1 && st[0].name === "New Co" && st[0].startDate === "2026-08-26", "only new.csv imported, date read day-first: " + JSON.stringify(st));
