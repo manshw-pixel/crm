@@ -75,3 +75,19 @@ test("targetGoLive falls back to first date item, else null", () => {
   assert.equal(plan({ template: t2, cells: { d1: "2026-12-01" } }).project.targetGoLive, "2026-12-01");
   assert.equal(plan({ template: t2, cells: {} }).project.targetGoLive, null);
 });
+
+test("checklistFromRow matches label headers, ignoring case, * and punctuation", () => {
+  for (const h of ["signed order form attached *", "signed order form attached", "order_form", "order form"]) {
+    assert.equal(checklistFromRow({ [h]: "Yes" }, T, "dmy").order_form, true, h);
+  }
+  assert.equal(checklistFromRow({ "go-live target date *": "15-11-2026" }, T, "dmy").go_live_target, "2026-11-15");
+  assert.equal(checklistFromRow({ order_form: "no", "signed order form attached": "yes" }, T, "dmy").order_form, false);
+});
+
+test("checklistFromRow truthy check values", () => {
+  for (const v of ["yes", "Y", "TRUE", "1", "✓", "✔", "☑", "✅", "x", " Done ", "attached", "Signed", "checked"])
+    assert.equal(checklistFromRow({ order_form: v }, T, "dmy").order_form, true, v);
+  assert.equal(checklistFromRow({ order_form: "no" }, T, "dmy").order_form, false);
+  assert.equal(checklistFromRow({ order_form: "pending" }, T, "dmy").order_form, false);
+  assert.equal("order_form" in checklistFromRow({ order_form: "" }, T, "dmy"), false);
+});

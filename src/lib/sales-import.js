@@ -3,7 +3,8 @@ import { projectType, historyEntry, checklistFilled } from "./implementation.js"
 import { parseCsvDate } from "./csv.js";
 
 const OPEN = ["queued", "planning", "in_progress", "csm_review", "on_hold", "handover"];
-const YES = ["yes", "y", "true", "1", "\u2713"];
+const YES = ["yes", "y", "true", "1", "\u2713", "\u2714", "\u2611", "\u2705", "x", "done", "attached", "signed", "checked"];
+const norm = v => String(v == null ? "" : v).toLowerCase().replace(/\*/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 
 export function rowDestination(value, fallback) {
   const v = String(value == null ? "" : value).trim();
@@ -14,8 +15,13 @@ export function rowDestination(value, fallback) {
 
 export function checklistFromRow(cells, template, order) {
   const out = {};
+  const byNorm = {};
+  for (const k of Object.keys(cells || {})) { const n = norm(k); if (n && !(n in byNorm)) byNorm[n] = cells[k]; }
+  const has = v => v != null && String(v).trim() !== "";
   for (const it of template || []) {
-    const raw = cells && cells[it.id];
+    let raw = cells && cells[it.id];
+    if (!has(raw)) raw = byNorm[norm(it.id)];
+    if (!has(raw)) raw = byNorm[norm(it.label)];
     const s = raw == null ? "" : String(raw).trim();
     if (!s) continue;
     if (it.kind === "check") out[it.id] = YES.includes(s.toLowerCase());

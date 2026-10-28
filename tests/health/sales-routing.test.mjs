@@ -65,6 +65,20 @@ test("missing required item makes a handover draft", async () => {
   });
 });
 
+test("label headers with * and tick values queue; drafts log what is missing", async () => {
+  await run("", async sync => {
+    const H = "name,destination,Signed order form attached *,Go-live target date *,Customer project contact *,Modules / scope purchased *";
+    let r = await sync(`${H}
+Kestrel,onboarding,✔,15-11-2026,Asha,Core
+`, 1);
+    assert(r.projects.length === 1 && r.projects[0].stage === "queued", JSON.stringify(r.projects.map(p => p.stage)));
+    r = await sync(`${H}
+Orion,onboarding,✔,15-11-2026,,Core
+`, 2);
+    assert(/drafts 1 \(missing: /.test(r.log) && /Customer project contact/.test(r.log), r.log);
+  });
+});
+
 test("blank destination with default accounts changes nothing", async () => {
   await run("", async sync => {
     const r = await sync(`${HEAD}\nKestrel,,yes,15-11-2026,Asha,Core\n`, 1);
