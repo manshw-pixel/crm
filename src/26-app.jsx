@@ -205,6 +205,8 @@ function App({ user, onBackToClients }) {
     return next;
   }), []);
   useEffect(() => { window.__store = { getState: () => st, dispatch }; });
+  // shared-drive feed engine: lives here, not in Settings, so its 5-minute auto-sync runs on every page (admins only)
+  const feed = useFeedSync({ st, dispatch, user, enabled: user.role === "admin" });
   useEffect(() => { window.__openAccounts = openAccounts; });
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
@@ -548,7 +550,7 @@ function App({ user, onBackToClients }) {
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
         {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
-        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} />}
+        {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} feed={feed} />}
         </>}
       </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}

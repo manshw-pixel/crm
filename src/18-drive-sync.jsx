@@ -98,7 +98,7 @@ function fileSyncStatus(f, processed) {
   return { kind: "new", text: older ? "changed — imports on next sync" : "new — imports on next sync" };
 }
 // One folder's card: status, folder controls, file list, last sync, template downloads. Presentation only --
-// IntegrationsCard owns the state and the single shared sync.
+// useFeedSync (below) owns the state and the single shared sync; IntegrationsCard renders it.
 function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, busy, lastSync, onPick, onClear, onSync, templates, notice, children }) {
   const status = !handle ? "Not set" : needsGrant ? "Needs access" : "Connected";
   const tone = status === "Connected" ? "text-emerald-600" : status === "Needs access" ? "text-amber-700" : "text-slate-500";
@@ -154,7 +154,10 @@ function SyncLog({ log }) {
     </div>
   );
 }
-function IntegrationsCard({ st, dispatch, user }) {
+// The feed engine. Called once from App (admins only) so the 5-minute auto-sync keeps running on every page;
+// IntegrationsCard only renders what this returns. A no-op when the browser has no File System Access API.
+function useFeedSync({ st, dispatch, user, enabled = true }) {
+  const on = FS_SUPPORTED && enabled;
   const [handles, setHandles] = useState({ sales: null, finance: null });
   const [busy, setBusy] = useState(false);
   // folders whose access lapsed (e.g. after a reload) and need one click to re-grant
@@ -165,7 +168,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     if (!h || await h.queryPermission({ mode: "read" }) !== "granted") return setFiles(s => ({ ...s, [key]: null }));
     try { const list = await listFeedFiles(h); setFiles(s => ({ ...s, [key]: list })); } catch (e) { setFiles(s => ({ ...s, [key]: null })); }
   };
-  useEffect(() => { (async () => {
+  useEffect(() => { if (!on) return; (async () => {
     try {
       const h = { sales: await idbGet("sales") || null, finance: await idbGet("finance") || null };
       setHandles(h);
@@ -174,44 +177,11 @@ function IntegrationsCard({ st, dispatch, user }) {
       setNeedsGrant(lapsed);
       for (const key of ["sales", "finance"]) await refreshFiles(key, h[key]);
     } catch (e) {}
-  })(); }, []);
+  })(); }, [on]);
   const pick = async key => {
     try { const h = await window.showDirectoryPicker({ mode: "read" }); await idbSet(key, h); setHandles(s => ({ ...s, [key]: h })); setNeedsGrant(s => ({ ...s, [key]: false })); refreshFiles(key, h); }
     catch (e) { /* user cancelled */ }
   };
-  // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
-  const download = (name, text) => {
-    const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
-    const el = Object.assign(document.createElement("a"), { href: url, download: name });
-    el.click(); URL.revokeObjectURL(url);
-  };
-  // Each template is built once as CSV text; the Excel version is the same rows plus dropdowns.
-  const xlsx = (name, csvText, dropdowns) => downloadXlsxTemplate(name.replace(/\.csv$/i, ".xlsx"), parseCSV(csvText), dropdowns)
-    .catch(e => window.alert("Couldn't make the Excel template: " + ((e && e.message) || e) + ". Use the CSV link instead."));
-  const YES_NO = ["Yes", "No"];
-  const checklist = () => (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
-  // The values the accounts importer accepts (src/17-csv.jsx). Churned is left out on purpose: the import refuses it.
-  // csm is skipped when there is no active team member, so the template never carries an empty list.
-  const accountDropdowns = () => {
-    const csms = [...new Set((st.team || []).filter(u => !u.disabled && u.name).map(u => u.name))];
-    return { tier: ["Enterprise", "Mid", "SMB"], contractStatus: ["Active", "Auto-renew", "In negotiation", "Churn risk"], currency: CURRENCIES,
-      ...(csms.length ? { csm: csms } : {}), dedicatedSupport: YES_NO, billingCompleted: YES_NO, caseStudy: YES_NO, approvedSavings: YES_NO, approvedRoi: YES_NO };
-  };
-  const salesCSV = () => accountsCSVText(st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
-    return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; }));
-  const onboardingCSV = () => {
-    const head = accountsCSVText([]).split("\n")[0].split(",");
-    const cols = [...head, "destination", ...checklist().map(i => i.id)];
-    const ex = cols.map(c => c === "name" ? "Example Co (delete this row)" : c === "destination" ? "onboarding" : "");
-    return [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n");
-  };
-  const onboardingDropdowns = () => ({ ...accountDropdowns(), destination: ["onboarding", "accounts"],
-    ...Object.fromEntries(checklist().filter(i => i.kind === "check").map(i => [i.id, YES_NO])) });
-  const billingCSV = () => ["accountNo,name,billingCompletedDate",
-    ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(csvCell).join(","))].join("\n");
-  const PO_DROPDOWNS = { currency: ["INR", "USD", "PHP"], billing_cycle: ["quarterly", "half_yearly", "annual"], years: Array.from({ length: 10 }, (_, i) => String(i + 1)) };
-  // [label, Excel download, CSV download, extra attribute for the Excel button]
-  const templateSet = (label, name, csvText, dropdowns, attr) => [label, () => xlsx(name, csvText(), dropdowns()), () => download(name, csvText()), attr];
   const clear = async key => { await idbDel(key); setHandles(s => ({ ...s, [key]: null })); setNeedsGrant(s => ({ ...s, [key]: false })); setFiles(s => ({ ...s, [key]: null })); };
   // interactive = started by a click (Sync now / Grant access), so it may ask for permission;
   // the timer passes false and skips a lapsed folder quietly -- the card shows it instead.
@@ -314,10 +284,10 @@ function IntegrationsCard({ st, dispatch, user }) {
     return { msg: o.msg, err: !!o.err };
   };
   useEffect(() => {
-    if (!window.__qaHooks) return;
+    if (!on || !window.__qaHooks) return;
     window.__syncSalesText = (name, text, lastModified) => qaSync.current(name, text, lastModified);
     return () => { delete window.__syncSalesText; };
-  }, []);
+  }, [on]);
   // QA only: files = [{ name, text | bytes (base64), lastModified }]. CSVs go through syncFinanceFile; every file
   // (PDFs included) is served by an in-memory dir whose getFileHandle(name) the PO import reads PDFs from.
   const qaFinance = useRef(null);
@@ -341,51 +311,94 @@ function IntegrationsCard({ st, dispatch, user }) {
     return out;
   };
   useEffect(() => {
-    if (!window.__qaHooks) return;
+    if (!on || !window.__qaHooks) return;
     window.__syncFinanceFiles = files => qaFinance.current(files);
     return () => { delete window.__syncFinanceFiles; };
-  }, []);
-  const sync = useCallback(async (interactive = true) => {
-    if (busy) return; setBusy(true);
-    const plannedProjects = [];
-    const processed = { ...integ.processed }; const log = [...integ.log];
-    const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
-    for (const key of ["sales", "finance"]) {
-      const h = handles[key]; if (!h) continue;
-      if (key === "finance" && !canFinance(user)) continue;
-      try {
-        if (!await ensurePermission(h, "read", interactive)) {
-          setNeedsGrant(s => ({ ...s, [key]: true }));
-          if (interactive) note(key, "—", "permission denied", true);
-          continue;
-        }
-        setNeedsGrant(s => ({ ...s, [key]: false }));
-        const list = await listFeedFiles(h);
-        for (const f of list) {
-          if (f.err) { note(key, f.name, fileSyncStatus(f, processed).text, true); continue; }
-          const sig = `${f.name}|${f.lastModified}`;
-          if (processed[sig]) continue;
-          try {
-            const imp = await asImportFile(f); // an .xlsx arrives as CSV text; f.name stays the log name and signature
-            if (key === "sales") { const o = await syncSalesFile(imp, plannedProjects, f.name); note(key, f.name, o.msg, o.err); }
-            else { const o = await syncFinanceFile(imp, h); note(key, f.name, o.msg, o.err); }
-            processed[sig] = iso(Date.now());
-          } catch (ex) { // still retried next sync, but an unchanged failure is not re-logged (it would flush the 20-entry log)
-            const prev = [...log].reverse().find(l => l.folder === key && l.file === f.name);
-            if (!(prev && prev.err && prev.msg === ex.message)) note(key, f.name, ex.message, true); }
-        }
-        setFiles(s => ({ ...s, [key]: list }));
-      } catch (ex) { note(key, "—", ex.message, true); }
-    }
-    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
-    setBusy(false);
-  }, [handles, st, busy, dispatch, user]);
-  useEffect(() => { // auto-scan every 5 minutes while a folder is connected
-    if (!handles.sales && !handles.finance) return;
-    const t = setInterval(() => sync(false), 5 * 60 * 1000);
+  }, [on]);
+  const busyRef = useRef(false); // a ref, so the timer and a click can never both start a run
+  const sync = async (interactive = true) => {
+    if (busyRef.current) return; busyRef.current = true; setBusy(true);
+    try {
+      const plannedProjects = [];
+      const processed = { ...integ.processed }; const log = [...integ.log];
+      const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
+      for (const key of ["sales", "finance"]) {
+        const h = handles[key]; if (!h) continue;
+        if (key === "finance" && !canFinance(user)) continue;
+        try {
+          if (!await ensurePermission(h, "read", interactive)) {
+            setNeedsGrant(s => ({ ...s, [key]: true }));
+            if (interactive) note(key, "—", "permission denied", true);
+            continue;
+          }
+          setNeedsGrant(s => ({ ...s, [key]: false }));
+          const list = await listFeedFiles(h);
+          for (const f of list) {
+            if (f.err) { note(key, f.name, fileSyncStatus(f, processed).text, true); continue; }
+            const sig = `${f.name}|${f.lastModified}`;
+            if (processed[sig]) continue;
+            try {
+              const imp = await asImportFile(f); // an .xlsx arrives as CSV text; f.name stays the log name and signature
+              if (key === "sales") { const o = await syncSalesFile(imp, plannedProjects, f.name); note(key, f.name, o.msg, o.err); }
+              else { const o = await syncFinanceFile(imp, h); note(key, f.name, o.msg, o.err); }
+              processed[sig] = iso(Date.now());
+            } catch (ex) { // still retried next sync, but an unchanged failure is not re-logged (it would flush the 20-entry log)
+              const prev = [...log].reverse().find(l => l.folder === key && l.file === f.name);
+              if (!(prev && prev.err && prev.msg === ex.message)) note(key, f.name, ex.message, true); }
+          }
+          setFiles(s => ({ ...s, [key]: list }));
+        } catch (ex) { note(key, "—", ex.message, true); }
+      }
+      dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
+    } finally { busyRef.current = false; setBusy(false); }
+  };
+  const syncRef = useRef(sync);
+  syncRef.current = sync; // the timer always runs the latest sync (current store, handles, user)
+  const connected = !!(handles.sales || handles.finance);
+  useEffect(() => { // auto-scan every 5 minutes while a folder is connected; one interval per mount
+    if (!on || !connected) return;
+    const t = setInterval(() => syncRef.current(false), 5 * 60 * 1000);
     return () => clearInterval(t);
-  }, [handles, sync]);
-  if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  }, [on, connected]);
+  return { supported: on, handles, needsGrant, files, busy, pick, clear, sync };
+}
+function IntegrationsCard({ st, dispatch, user, feed }) {
+  if (!feed || !feed.supported) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  const { handles, needsGrant, files, busy, pick, clear, sync } = feed;
+  const integ = { processed: {}, log: [], ...(st.settings.integrations || {}) };
+  // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
+  const download = (name, text) => {
+    const url = URL.createObjectURL(new Blob([text], { type: "text/csv" }));
+    const el = Object.assign(document.createElement("a"), { href: url, download: name });
+    el.click(); URL.revokeObjectURL(url);
+  };
+  // Each template is built once as CSV text; the Excel version is the same rows plus dropdowns.
+  const xlsx = (name, csvText, dropdowns) => downloadXlsxTemplate(name.replace(/\.csv$/i, ".xlsx"), parseCSV(csvText), dropdowns)
+    .catch(e => window.alert("Couldn't make the Excel template: " + ((e && e.message) || e) + ". Use the CSV link instead."));
+  const YES_NO = ["Yes", "No"];
+  const checklist = () => (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
+  // The values the accounts importer accepts (src/17-csv.jsx). Churned is left out on purpose: the import refuses it.
+  // csm is skipped when there is no active team member, so the template never carries an empty list.
+  const accountDropdowns = () => {
+    const csms = [...new Set((st.team || []).filter(u => !u.disabled && u.name).map(u => u.name))];
+    return { tier: ["Enterprise", "Mid", "SMB"], contractStatus: ["Active", "Auto-renew", "In negotiation", "Churn risk"], currency: CURRENCIES,
+      ...(csms.length ? { csm: csms } : {}), dedicatedSupport: YES_NO, billingCompleted: YES_NO, caseStudy: YES_NO, approvedSavings: YES_NO, approvedRoi: YES_NO };
+  };
+  const salesCSV = () => accountsCSVText(st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
+    return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; }));
+  const onboardingCSV = () => {
+    const head = accountsCSVText([]).split("\n")[0].split(",");
+    const cols = [...head, "destination", ...checklist().map(i => i.id)];
+    const ex = cols.map(c => c === "name" ? "Example Co (delete this row)" : c === "destination" ? "onboarding" : "");
+    return [cols.join(","), ex.map(c => c === "Example Co (delete this row)" ? csvCell(c) : c).join(",")].join("\n");
+  };
+  const onboardingDropdowns = () => ({ ...accountDropdowns(), destination: ["onboarding", "accounts"],
+    ...Object.fromEntries(checklist().filter(i => i.kind === "check").map(i => [i.id, YES_NO])) });
+  const billingCSV = () => ["accountNo,name,billingCompletedDate",
+    ...st.accounts.map(a => [a.accountNo, a.name, a.billingCompletedDate || ""].map(csvCell).join(","))].join("\n");
+  const PO_DROPDOWNS = { currency: ["INR", "USD", "PHP"], billing_cycle: ["quarterly", "half_yearly", "annual"], years: Array.from({ length: 10 }, (_, i) => String(i + 1)) };
+  // [label, Excel download, CSV download, extra attribute for the Excel button]
+  const templateSet = (label, name, csvText, dropdowns, attr) => [label, () => xlsx(name, csvText(), dropdowns()), () => download(name, csvText()), attr];
   const lastSync = feed => integ.log.filter(l => l.folder === feed).reduce((m, l) => (!m || l.t > m ? l.t : m), null);
   const finAllowed = !(window.__qaHooks && window.__qaNoFinance) && canFinance(user); // __qaNoFinance: QA only, renders the finance-only notice
   const common = key => ({ handle: handles[key], needsGrant: needsGrant[key], files: files[key], processed: integ.processed, busy,
