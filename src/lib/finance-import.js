@@ -1,6 +1,6 @@
 /* Finance-folder files: classify a CSV by its header and plan each row. Pure -- no store access,
  * no file access. The caller does the inserts / RPC calls and the PDF lookup. */
-import { parseCsvDate, csvDateOrder, parseCsvNumber } from "./csv.js";
+import { parseCsvDate, csvDateOrder, parseCsvNumber, csvCell } from "./csv.js";
 
 const norm = s => String(s == null ? "" : s).toLowerCase().replace(/[^a-z]/g, "");
 const PO_REQUIRED = ["ponumber", "podate", "povalue", "currency", "years", "billingcycle", "billingstart", "pofile"];
@@ -103,3 +103,13 @@ export function planPaymentRows(rows, invoices) {
   });
   return { items };
 }
+
+/* Example CSVs for the finance folder; cells go through csvCell so commas in names stay quoted. */
+const tplCell = c => (/[",\n]/.test(c) ? csvCell(c) : c);
+const tplCSV = rows => rows.map(r => r.map(tplCell).join(",")).join("\n");
+export const poTemplateCSV = () => tplCSV([
+  ["accountNo", "name", "po_number", "po_date", "po_value", "currency", "years", "billing_cycle", "billing_start", "po_file"],
+  ["ACC-1", "Example Co (delete this row)", "PO-001", "2026-11-01", "100000", "INR", "1", "annual", "2026-11-01", "PO-001.pdf"]]);
+export const paymentTemplateCSV = () => tplCSV([
+  ["invoice_number", "status", "paid_date", "payment_ref", "reason"],
+  ["INV-0001", "paid", "2026-11-01", "UTR123", ""]]);
