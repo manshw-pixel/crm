@@ -156,11 +156,11 @@ const ScrollList = ({ label, className = "max-h-48", children }) => {
 const Btn = ({ children, onClick, kind = "default", type = "button", disabled, ...rest }) => (
   <button type={type} onClick={onClick} disabled={disabled} {...rest} className={`px-3.5 py-1.5 text-xs font-bold disabled:opacity-50 ${kind === "primary" ? "grad text-white" : "nm-btn text-slate-700"}`}>{children}</button>
 );
-const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
+const Input = React.forwardRef((p, ref) => <input ref={ref} {...p} className={"nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 " + (p.className || "")} />);
 // `labels` is optional and additive: without it every option renders its own value, as
 // it always has. With it, a value missing from the map still falls back to the value.
 const Select = ({ options, labels, ...p }) => (
-  <select {...p} className={"nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none " + (p.className || "")}>
+  <select {...p} className={"nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none " + (p.className || "")}>
     {options.map(o => <option key={o} value={o}>{labels ? (labels[o] ?? o) : o}</option>)}
   </select>
 );

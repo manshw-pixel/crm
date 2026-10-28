@@ -235,7 +235,7 @@ function BillingSettingsCard({ user }) {
           onChange={e => { setTouched(t => ({ ...t, default_tax_pct: true })); set("default_tax_pct", e.target.value); }} />
         {isIN && <Input name="lut_number" placeholder="LUT number (zero-rated exports)" value={f.lut_number} onChange={e => set("lut_number", e.target.value)} />}
         <textarea name="bank_details" placeholder="Bank details shown on the invoice" rows={3} value={f.bank_details} onChange={e => set("bank_details", e.target.value)}
-          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 sm:col-span-2" />
+          className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 sm:col-span-2" />
         <div className="flex gap-2 sm:col-span-2">
           <Btn kind="primary" type="submit" disabled={busy}>{busy ? "Saving…" : editingId ? "Save entity" : "Add entity"}</Btn>
           {editingId && <Btn onClick={reset}>Cancel</Btn>}

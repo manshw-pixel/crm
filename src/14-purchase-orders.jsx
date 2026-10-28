@@ -134,7 +134,7 @@ function POReview({ po, user, schedule, onClose, onDone }) {
             <td className="p-1">{periodLabel(po, r)}</td><td className="p-1 tabular-nums">{r.period_start}</td><td className="p-1 tabular-nums">{r.period_end}</td>
             <td className="p-1 text-right"><input data-po-amount type="number" step="0.01" min="0" aria-label={`Amount ${periodLabel(po, r)}`} value={amounts[i]}
               onChange={e => { const x = e.target.value; setAmounts(a => a.map((y, j) => j === i ? x : y)); setMismatchOk(false); }}
-              className="nm-inset w-28 border-0 px-2 py-1 text-right text-xs tabular-nums outline-none" /></td></tr>)}</tbody></table></div>
+              className="nm-inset w-28 px-2 py-1 text-right text-xs tabular-nums outline-none" /></td></tr>)}</tbody></table></div>
         <div className="mt-2 text-xs text-slate-700">Total <span data-po-amount-total className="font-semibold tabular-nums">{poMoney(po.currency, total / 100)}</span> of {poMoney(po.currency, po.po_value)}</div>
         {badDp && <div data-po-amount-error className="mt-1 text-xs text-rose-600">Amounts can have at most 2 decimal places.</div>}
         {mismatch && !badDp && <label data-po-mismatch className="mt-1 block rounded bg-amber-50 p-2 text-xs text-amber-800">
@@ -146,7 +146,7 @@ function POReview({ po, user, schedule, onClose, onDone }) {
         </div>
         <div className="mt-4 border-t border-slate-100 pt-3">
           <label className="block text-xs text-slate-700">Reject reason (required)
-            <textarea data-po-reject-reason rows={2} value={reason} onChange={e => setReason(e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none" /></label>
+            <textarea data-po-reject-reason rows={2} value={reason} onChange={e => setReason(e.target.value)} className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none" /></label>
           <Btn data-po-reject disabled={busy || !reason.trim()} onClick={() => act("reject_po", { p_id: po.id, p_reason: reason.trim() }, `PO ${po.po_number} rejected`)}>Reject</Btn>
         </div></>}
       {po.status !== "submitted" && <div className="text-xs text-slate-600">{poStatusLabel(po)}</div>}

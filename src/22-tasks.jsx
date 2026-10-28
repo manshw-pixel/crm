@@ -13,7 +13,7 @@ function TaskRow({ t, a, dispatch, openAccount }) {
       <span data-task-title className={t.status === "Done" ? "text-slate-400 line-through" : ""}>{SOURCE_GLYPH[taskSource(t)] ? t.title.replace(/^[▶♥]\s*/, "") : t.title}</span>
       <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
       <span className="flex-1" />
-      <select value="" title="Reschedule" aria-label="Reschedule task" className="nm-inset border-0 px-2 py-1 text-xs text-slate-700 outline-none"
+      <select value="" title="Reschedule" aria-label="Reschedule task" className="nm-inset px-2 py-1 text-xs text-slate-700 outline-none"
         onChange={e => {
           const v = e.target.value;
           if (v === "custom") { setCustom(true); return; }
@@ -25,7 +25,7 @@ function TaskRow({ t, a, dispatch, openAccount }) {
         <option value="7">+1 week</option>
         <option value="custom">Pick date…</option>
       </select>
-      {custom && <input type="date" className="nm-inset border-0 px-2 py-1 text-xs" autoFocus
+      {custom && <input type="date" className="nm-inset px-2 py-1 text-xs" autoFocus
         onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
         onBlur={() => setCustom(false)} />}
       {late && <DaysChip days={daysUntil(t.due)} />}
@@ -55,14 +55,14 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
         {/* plain <select> rather than the shared Select: these need readable labels with
             short values (the values feed filterTasks, so they must stay as-is) */}
         <select value={source} title="Source" onChange={e => setSource(e.target.value)}
-          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          className="nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none">
           <option value="all">All sources</option>
           <option value="health">♥ Health</option>
           <option value="renewal">▶ Renewal</option>
           <option value="manual">Manual</option>
         </select>
         <select value={band} title="Health band" onChange={e => setBand(e.target.value)}
-          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          className="nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none">
           <option value="all">All health</option>
           <option value="Red">Red</option>
           <option value="Yellow">Yellow</option>
