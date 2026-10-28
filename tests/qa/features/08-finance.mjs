@@ -3,6 +3,7 @@ import { SkipScenario } from "../core.mjs";
 import { openAccount, isoPlus } from "./_accounts.mjs";
 import { nav } from "./_users-card.mjs";
 import { waitForRunAccounts } from "./_store.mjs";
+import { waitForSaved } from "../reset.mjs";
 import { computeTotals, buildSchedule, periodLabel } from "../../../src/lib/invoice.js";
 
 const F = "08-finance";
@@ -108,6 +109,19 @@ async function runInvoice(page, runId) {
   if (!await inrEntity(page)) throw new SkipScenario(SETUP);
   throw new Error(`no invoice for ${runId} -- 08-finance/create-invoice did not raise one`);
 }
+
+// The folder picker can't be driven live, so the page's QA hook (window.__syncFinanceFiles, set up by session.mjs via
+// __qaHooks) feeds finance files through the same sync path. files = [{ name, text | bytes (base64), lastModified }].
+async function feedFinance(page, files) {
+  await nav(page, "Settings").click();
+  await page.waitForFunction(() => typeof window.__syncFinanceFiles === "function", null, { timeout: 15000 })
+    .catch(() => { throw new Error("window.__syncFinanceFiles missing: Settings > Integrations not mounted or __qaHooks not set"); });
+  const out = await page.evaluate(f => window.__syncFinanceFiles(f), files);
+  await waitForSaved(page);
+  return out;
+}
+const poRows = (page, n) => page.evaluate(async n => (await sb.from("purchase_orders").select("status,file_path").eq("po_number", n)).data || [], n);
+const invoiceState = (page, n) => page.evaluate(async n => ((await sb.from("invoices").select("status").eq("number", n)).data || [])[0]?.status ?? null, n);
 
 export const scenarios = [
   { id: `${F}/create-invoice`, feature: F, title: "Raise an invoice with two lines; totals match the invoice math and a hand-computed figure", role: "admin",
@@ -244,6 +258,28 @@ export const scenarios = [
       }
     } },
 
+  // Feeds a PO CSV + its PDF. The PO number is run-unique and POs can't be deleted, so it stays on the run account like the other fixtures.
+  { id: `${F}/finance-feed-po`, feature: F, title: "A finance-feed PO row imports as one submitted PO with its PDF, even when re-fed", role: "admin",
+    run: async ({ page, runId, thisRunId = runId }) => {
+      await nav(page, "Accounts").waitFor({ timeout: 20000 });
+      await waitForRunAccounts(page, runId);
+      const po = `${thisRunId}-FEED`, pdf = `${po}.pdf`;
+      const csv = `name,po_number,po_date,po_value,currency,years,billing_cycle,billing_start,po_file
+${PO_ACCT(runId)},${po},${isoPlus(0)},12000,PHP,1,annual,${isoPlus(200)},${pdf}
+`;
+      const files = lm => [{ name: `qa-${thisRunId}-po.csv`, text: csv, lastModified: lm }, { name: pdf, bytes: PO_PDF.toString("base64"), lastModified: lm }];
+      const first = await feedFinance(page, files(Date.now()));
+      assert.ok(!first[0].err, `finance sync reported an error: ${first[0].msg}`);
+      let rows = await poRows(page, po);
+      assert.equal(rows.length, 1, `expected one PO ${po} after the first feed (${first[0].msg})`);
+      assert.equal(rows[0].status, "submitted");
+      assert.ok(rows[0].file_path, "imported PO has no PDF file_path");
+      const again = await feedFinance(page, files(Date.now() + 5000)); // later timestamp: a new signature, so processed again
+      assert.ok(!again[0].err, `re-feed reported an error: ${again[0].msg}`);
+      rows = await poRows(page, po);
+      assert.equal(rows.length, 1, `re-feeding created a second PO ${po}`);
+    } },
+
   { id: `${F}/payment-status`, feature: F, title: "Marking the run invoice paid moves it from the pending filter to the paid filter", role: "admin",
     run: async ({ page, runId, thisRunId }) => {
       needFreshSeed({ runId, thisRunId });
@@ -266,5 +302,27 @@ export const scenarios = [
       const number = await runInvoice(page, runId); // non-vacuous: the run has an invoice under "all"
       assert.ok((await invoiceRows(page, runId, "all")).includes(number));
       assert.deepEqual(await invoiceRows(page, runId, "overdue"), [], "overdue filter + runId");
+    } },
+  // The paid path itself is covered by the health test; live, the run invoice is already Paid (payment-status), so a
+  // paid row must be refused as "already paid" and leave status and payment_ref untouched, and an unknown number is refused.
+  { id: `${F}/finance-feed-payment`, feature: F, title: "A finance-feed paid row for an already-paid invoice is refused and changes nothing; an unknown invoice is refused", role: "admin",
+    run: async ({ page, runId, thisRunId }) => {
+      needFreshSeed({ runId, thisRunId });
+      const number = await runInvoice(page, runId); // SkipScenario with SETUP when no INR entity
+      const read = () => page.evaluate(async n => ((await sb.from("invoices").select("status,payment_ref").eq("number", n)).data || [])[0] || null, number);
+      const before = await read();
+      assert.equal(before?.status, "paid", "payment-status should have left the run invoice paid");
+      const csv = `invoice_number,status,paid_date,payment_ref
+${number},paid,${isoPlus(0)},QA ${runId} feed
+${runId}-NOPE,paid,${isoPlus(0)},x
+`;
+      const out = await feedFinance(page, [{ name: `qa-${runId}-pay.csv`, text: csv, lastModified: Date.now() }]);
+      const msg = out[0].msg || "";
+      assert.ok(msg.includes("invoices paid 0"), `expected "invoices paid 0": ${msg}`);
+      assert.ok(msg.includes("already paid"), `expected "already paid": ${msg}`);
+      assert.ok(msg.includes("unknown invoice") && msg.includes(`${runId}-NOPE`), `expected unknown invoice ${runId}-NOPE refused: ${msg}`);
+      const after = await read();
+      assert.equal(after.status, "paid", "invoice status after the feed");
+      assert.equal(after.payment_ref, before.payment_ref, "payment_ref changed by the refused row");
     } },
 ];

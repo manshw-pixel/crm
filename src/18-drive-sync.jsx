@@ -118,6 +118,53 @@ function IntegrationsCard({ st, dispatch, user }) {
     if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
     return { msg, err: false };
   };
+  // One finance CSV, recognised by its header: purchase orders (+ their PDFs from the same folder),
+  // invoice payments, or the legacy billing-completed-date file. Row problems are counted, never thrown.
+  const syncFinanceFile = async (f, dirHandle) => {
+    const rows = parseCSV(await f.text());
+    const kind = financeFileKind(rows[0] || []);
+    if (!kind) return { msg: "unrecognised finance file (needs po_number, invoice_number or billingCompletedDate columns)", err: true };
+    if (kind === "billing") {
+      const r = importBillingCSV(await f.text(), st.accounts, dispatch);
+      return { msg: r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, err: !!r.err };
+    }
+    const reasons = {}; let refused = 0;
+    const refuse = why => { refused++; reasons[why] = (reasons[why] || 0) + 1; };
+    const tail = () => `refused ${refused}${refused ? ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})` : ""}`;
+    if (kind === "po") {
+      const plan = planPORows(rows, st.accounts);
+      if (plan.err) return { msg: plan.err, err: true };
+      const findPdf = async name => {
+        try { return await (await dirHandle.getFileHandle(name)).getFile(); } catch (e) { /* fall through to a case-insensitive scan */ }
+        for await (const [n, h] of dirHandle.entries()) if (h.kind === "file" && n.toLowerCase() === name.toLowerCase()) return await h.getFile();
+        return null;
+      };
+      let submitted = 0, already = 0;
+      for (const it of plan.items) {
+        if (!it.ok) { refuse(it.reason); continue; }
+        let file = null;
+        try { file = await findPdf(it.poFile); } catch (e) { refuse(`PDF ${it.poFile} can't be read`); continue; }
+        if (!file) { refuse(`PDF ${it.poFile} not found`); continue; }
+        try { await savePO({ account: it.account, file, v: it.v, orgId: (user && user.org_id) || CURRENT_ORG }); submitted++; }
+        catch (e) { const m = (e && e.message) || String(e); if (/already exists on this account/.test(m)) already++; else refuse(m); }
+      }
+      const missingPdf = Object.keys(reasons).some(k => /^PDF .* not found$/.test(k));
+      return { msg: `POs submitted ${submitted} · already imported ${already} · ${tail()}${missingPdf ? " — add the missing PDF(s) and re-save the CSV to retry" : ""}`, err: plan.items.length > 0 && refused === plan.items.length };
+    }
+    const inv = await sb.from("invoices").select("id,number,status");
+    if (inv.error) return { msg: inv.error.message, err: true };
+    const plan = planPaymentRows(rows, inv.data || []);
+    if (plan.err) return { msg: plan.err, err: true };
+    let paid = 0, waived = 0;
+    for (const it of plan.items) {
+      if (!it.ok) { refuse(it.reason); continue; }
+      let r;
+      try { r = await sb.rpc("set_invoice_status", { p_id: it.invoiceId, p_status: it.status, p_paid_date: it.paidDate, p_ref: it.ref, p_reason: it.reason }); }
+      catch (e) { r = { error: { message: (e && e.message) || String(e) } }; }
+      if (r.error) refuse(r.error.message); else if (it.status === "paid") paid++; else waived++;
+    }
+    return { msg: `invoices paid ${paid} · waived ${waived} · ${tail()}`, err: plan.items.length > 0 && refused === plan.items.length };
+  };
   // QA only: the File System Access picker can't be driven by the live QA runner, so this feeds one sales CSV through the
   // same syncSalesFile + processed/log path as a real sync. Exposed only when the runner sets window.__qaHooks (addInitScript).
   const qaSync = useRef(null);
@@ -134,6 +181,33 @@ function IntegrationsCard({ st, dispatch, user }) {
     window.__syncSalesText = (name, text, lastModified) => qaSync.current(name, text, lastModified);
     return () => { delete window.__syncSalesText; };
   }, []);
+  // QA only: files = [{ name, text | bytes (base64), lastModified }]. CSVs go through syncFinanceFile; every file
+  // (PDFs included) is served by an in-memory dir whose getFileHandle(name) the PO import reads PDFs from.
+  const qaFinance = useRef(null);
+  qaFinance.current = async files => {
+    const mk = x => new File([x.bytes ? Uint8Array.from(atob(x.bytes), c => c.charCodeAt(0)) : x.text || ""], x.name, { lastModified: x.lastModified || 0 });
+    const made = files.map(mk);
+    const dir = {
+      async getFileHandle(n) { const f = made.find(m => m.name === n); if (!f) throw new DOMException("not found", "NotFoundError"); return { kind: "file", getFile: async () => f }; },
+      async *entries() { for (const f of made) yield [f.name, { kind: "file", getFile: async () => f }]; },
+    };
+    const processed = { ...integ.processed }; const log = [...integ.log]; const out = [];
+    for (const f of made.filter(m => /\.csv$/i.test(m.name))) {
+      const sig = `${f.name}|${f.lastModified}`;
+      if (processed[sig]) { out.push({ skipped: true }); continue; }
+      const o = await syncFinanceFile(f, dir);
+      log.push({ t: iso(Date.now()), folder: "finance", file: f.name, msg: o.msg, err: !!o.err });
+      processed[sig] = iso(Date.now());
+      out.push({ msg: o.msg, err: !!o.err });
+    }
+    dispatch({ type: "SET_INTEGRATIONS", integrations: { processed, log: log.slice(-20) } });
+    return out;
+  };
+  useEffect(() => {
+    if (!window.__qaHooks) return;
+    window.__syncFinanceFiles = files => qaFinance.current(files);
+    return () => { delete window.__syncFinanceFiles; };
+  }, []);
   const sync = useCallback(async (interactive = true) => {
     if (busy) return; setBusy(true);
     const plannedProjects = [];
@@ -141,6 +215,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     const note = (folder, file, msg, err) => log.push({ t: iso(Date.now()), folder, file, msg, err: !!err });
     for (const key of ["sales", "finance"]) {
       const h = handles[key]; if (!h) continue;
+      if (key === "finance" && !canFinance(user)) continue;
       try {
         if (!await ensurePermission(h, "read", interactive)) {
           setNeedsGrant(s => ({ ...s, [key]: true }));
@@ -155,8 +230,7 @@ function IntegrationsCard({ st, dispatch, user }) {
           if (processed[sig]) continue;
           try {
             if (key === "sales") { const o = await syncSalesFile(f, plannedProjects); note(key, f.name, o.msg, o.err); }
-            else { const r = importBillingCSV(await f.text(), st.accounts, dispatch);
-              note(key, f.name, r.err || `billing updated ${r.updated} · skipped ${r.skipped}${r.badDate ? ` · ⚠ ${r.badDate} unreadable date(s)` : ""}`, !!r.err); }
+            else { const o = await syncFinanceFile(f, h); note(key, f.name, o.msg, o.err); }
             processed[sig] = iso(Date.now());
           } catch (ex) { note(key, f.name, ex.message, true); }
         }
@@ -174,7 +248,7 @@ function IntegrationsCard({ st, dispatch, user }) {
   if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
   return (
     <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={() => sync(true)}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
-      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "billing CSVs: accountNo or name + billingCompletedDate"]].map(([key, label, hint]) => (
+      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "purchase orders, payments or billing CSVs — recognised by their columns"]].map(([key, label, hint]) => (
         <React.Fragment key={key}>
         <div className="mb-2 flex items-center gap-2 text-sm">
           <span className="w-28 font-semibold">{label}</span>
@@ -183,7 +257,7 @@ function IntegrationsCard({ st, dispatch, user }) {
               <Btn onClick={() => sync(true)}>Grant access</Btn></span>}
             <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
             : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
-          <span className="ml-auto text-xs text-slate-500">{hint}</span>
+          <span className="ml-auto text-xs text-slate-500">{key === "finance" && !canFinance(user) ? "Only finance users can sync this folder" : hint}</span>
         </div>
         {files[key] && <ul data-files={key} className="mb-2 ml-0 space-y-0.5 text-xs sm:ml-[7.5rem]">
           {files[key].length === 0 && <li className="text-slate-500">No .csv files directly in this folder (subfolders aren't read).</li>}
