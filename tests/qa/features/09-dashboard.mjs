@@ -47,7 +47,7 @@ export const scenarios = [
       await lic.waitFor({ timeout: 10000 });
       const licText = await lic.innerText();
       if (await lic.locator("[data-license-summary]").count())
-        assert.match(await lic.locator("[data-license-summary]").textContent(), /\d+ total · \d+ deployed · \d+%/);
+        assert.match(await lic.locator("[data-license-summary]").textContent(), /[\d,]+ total · [\d,]+ deployed · \d+%/);
       else assert.match(licText, /No accounts have licenses yet/);
       const body = await page.locator("main").innerText();
       assert.doesNotMatch(body, /\bNaN\b|\bundefined\b|Infinity/, "dashboard text contains NaN/undefined/Infinity");
