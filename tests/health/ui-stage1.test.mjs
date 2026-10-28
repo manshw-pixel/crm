@@ -172,3 +172,36 @@ test("Settings at 390px has no page-level horizontal overflow", async () => {
     assert(w <= 390, "Settings scrollWidth at 390px: " + w);
   } finally { await browser.close(); }
 });
+
+// ---- owner: match the approved preview exactly ----
+test("frame controls match the approved preview: buttons, search, filters, scope toggle, account cells", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const st = await page.$eval("[data-scope-toggle]", e => { const s = getComputedStyle(e); return [s.paddingTop, s.borderTopLeftRadius]; });
+    assert(st[0] === "4px" && st[1] === "12px", "scope toggle: " + st);
+    const sb = await page.$eval("[data-scope-toggle] > button", e => { const s = getComputedStyle(e); return [s.paddingTop, s.paddingLeft, s.borderTopLeftRadius, s.fontSize, s.fontWeight]; });
+    assert(sb.join() === "8px,14px,9px,13px,600", "scope buttons: " + sb);
+    await page.click('button[title="Accounts"]');
+    await page.waitForSelector("[data-account-row]");
+    const nb = await page.locator("[data-btn]", { hasText: "+ New account" }).evaluate(e => { const s = getComputedStyle(e); return [Math.round(e.getBoundingClientRect().height), s.borderTopLeftRadius, s.fontSize, s.fontWeight]; });
+    assert(nb.join() === "34,10px,13px,600", "in-card button: " + nb);
+    const q = await page.$eval('input[placeholder^="Search"]', e => { const s = getComputedStyle(e); return [Math.round(e.getBoundingClientRect().height), s.paddingLeft, s.fontSize, s.borderTopLeftRadius]; });
+    assert(q.join() === "42,14px,14px,12px", "search: " + q);
+    const sel = await page.$eval('select[aria-label="Filter by tier"]', e => { const s = getComputedStyle(e); return [s.borderTopLeftRadius, s.fontSize]; });
+    assert(sel.join() === "10px,14px", "filter select: " + sel);
+    const td = await page.$eval("[data-account-row] > td:nth-child(3)", e => { const s = getComputedStyle(e); return [s.paddingTop, s.paddingLeft]; });
+    assert(td.join() === "14px,10px", "account cell: " + td);
+    const first = await page.$eval("[data-account-row] > td:first-child", e => getComputedStyle(e).paddingLeft);
+    assert(first === "18px", "first cell: " + first);
+  } finally { await browser.close(); }
+});
+
+test("a frame-level Btn (outside any card) is 40px, 13.5px/600, 16px sides, r12", async () => {
+  const { page, browser } = await open("light");
+  try {
+    const r = await page.evaluate(() => { const b = document.createElement("button"); b.setAttribute("data-btn", ""); b.className = "nm-btn text-slate-700"; b.textContent = "Frame"; document.querySelector("main").prepend(b);
+      const s = getComputedStyle(b); const v = [Math.round(b.getBoundingClientRect().height), s.fontSize, s.fontWeight, s.paddingLeft, s.borderTopLeftRadius]; b.remove(); return v; });
+    assert(r.join() === "40,13.5px,600,16px,12px", "frame Btn: " + r);
+  } finally { await browser.close(); }
+});

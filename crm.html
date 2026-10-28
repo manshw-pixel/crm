@@ -154,11 +154,17 @@
   .grad:hover { background: var(--f-primary-hi); }
   .grad:active { background: rgb(var(--indigo-800)); }
   /* frame-level controls (outside cards, tables, dialogs): 40px buttons, 42px inputs */
+  /* the Btn atom ([data-btn]) carries no size utilities: frame-level 40px / 13.5px / 0 16px / r12,
+     inside cards, tables and dialogs 34px / 13px / r10 (approved preview) */
+  [data-btn] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 6px 16px; font-size: 13.5px; line-height: 20px; font-weight: 600; }
+  :where(.nm, .nm-sm, table, [role=dialog]) [data-btn] { min-height: 34px; padding: 6px 14px; font-size: 13px; line-height: 18px; border-radius: 10px; }
   main :where(.grad, .nm-btn):where(:not(.lg\:hidden)):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { min-height: 40px; font-size: 13.5px; padding-left: 16px; padding-right: 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
   main :where(.grad, .nm-btn).h-9.w-9:where(:not(.lg\:hidden)) { display: flex; width: 40px; height: 40px; padding: 0; }
   :where(.nm, .nm-sm) .grad, :where(.nm, .nm-sm) .nm-btn { border-radius: 10px; min-height: 34px; }
   main :where(input.nm-inset:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), .nm-inset:has(> input[type=search]), .nm-inset:has(> input[type=text])):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { height: 42px; border-radius: 12px; border-color: var(--f-line); background: var(--f-card); padding: 0 14px; font-size: 14px; }
   :where(.nm, .nm-sm) .nm-inset { border-radius: 10px; border-color: var(--f-line); }
+  /* search fields anywhere in main: 42px / 0 14px / 14px / r12 (beats the Input atom's px-3 py-1.5 by specificity) */
+  main input.nm-inset[placeholder^="Search"] { height: 42px; padding: 0 14px; font-size: 14px; border-radius: 12px; border-color: var(--f-line); background: var(--f-card); }
   /* segmented scope toggle */
   [data-scope-toggle] { background: var(--f-seg-bg); border: 0; border-radius: 12px; padding: 4px; gap: 0; box-shadow: none; }
   [data-scope-toggle] > button { font-size: 13px; font-weight: 600; color: var(--f-seg-tx); padding: 8px 14px; border-radius: 9px; background: transparent; }
@@ -173,6 +179,11 @@
   main :where(table:has(> thead)) :where(th, td):last-child { padding-right: 18px; }
   main :where(table:has(> thead)) > tbody > tr { border: 0; border-top: 1px solid var(--f-rowline); }
   main :where(table:has(> thead)) > tbody > tr:hover { background: var(--f-band); }
+  /* the accounts list: the preview's cell padding (beats the cells' px-2 / py-1.5 by specificity) */
+  main table:has([data-account-row]) > thead th { padding: 12px 10px; font-size: 11.5px; letter-spacing: .05em; }
+  [data-account-row] > td { padding: 14px 10px; }
+  main table:has([data-account-row]) :is(th, td):first-child { padding-left: 18px; }
+  main table:has([data-account-row]) :is(th, td):last-child { padding-right: 18px; }
   [data-account-row] td, main :where(table:has(> thead)) td:where(.text-right, .tabular-nums) { white-space: nowrap; }
   main tbody tr[data-row-spacer], main tbody tr[data-row-spacer] td { border: 0; padding: 0; }
   /* pills: shape and type only; each chip keeps its own padding */
