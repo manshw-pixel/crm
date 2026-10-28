@@ -67,6 +67,7 @@ async function downloadXlsxTemplate(name, rows, dropdowns = {}) {
   rows.forEach(r => ws.addRow(r));
   ws.getRow(1).font = { bold: true };
   let lists = null, listCol = 0;
+  const lastRow = Math.max(500, rows.length + 500); // prefilled templates keep room for new rows below the data
   rows[0].forEach((h, i) => {
     const vals = (dropdowns[h] || []).map(String).filter(v => v !== "");
     if (!vals.length) return;
@@ -80,7 +81,7 @@ async function downloadXlsxTemplate(name, rows, dropdowns = {}) {
       formula = `Lists!$${L}$1:$${L}$${vals.length}`;
     }
     const L = colLetter(i);
-    ws.dataValidations.add(`${L}2:${L}500`, { type: "list", allowBlank: true, formulae: [formula], showErrorMessage: true,
+    ws.dataValidations.add(`${L}2:${L}${lastRow}`, { type: "list", allowBlank: true, formulae: [formula], showErrorMessage: true,
       errorStyle: "stop", errorTitle: h, error: "Pick a value from the list" });
   });
   const buf = await wb.xlsx.writeBuffer();
@@ -360,7 +361,9 @@ function IntegrationsCard({ st, dispatch, user }) {
             if (key === "sales") { const o = await syncSalesFile(imp, plannedProjects, f.name); note(key, f.name, o.msg, o.err); }
             else { const o = await syncFinanceFile(imp, h); note(key, f.name, o.msg, o.err); }
             processed[sig] = iso(Date.now());
-          } catch (ex) { note(key, f.name, ex.message, true); }
+          } catch (ex) { // still retried next sync, but an unchanged failure is not re-logged (it would flush the 20-entry log)
+            const prev = [...log].reverse().find(l => l.folder === key && l.file === f.name);
+            if (!(prev && prev.err && prev.msg === ex.message)) note(key, f.name, ex.message, true); }
         }
         setFiles(s => ({ ...s, [key]: list }));
       } catch (ex) { note(key, "—", ex.message, true); }

@@ -115,6 +115,35 @@ test("corrupt xlsx is logged and the folder continues", async () => {
   } finally { await browser.close(); }
 });
 
+test("corrupt xlsx synced twice is logged once (still retried)", async () => {
+  const { page, browser } = await openSales();
+  try {
+    await setFolder(page, [{ name: "bad.xlsx", text: "not a zip at all", lastModified: 1 }]);
+    await syncNow(page, "sales");
+    await syncNow(page, "sales");
+    const s = await state(page);
+    const n = s.log.filter(l => l.file === "bad.xlsx" && /can't read Excel file/.test(l.msg)).length;
+    assert(n === 1, "expected 1 log entry, got " + n + ": " + JSON.stringify(s.log));
+    assert(!/✓/.test(await fileRow(page, "bad.xlsx")), "corrupt file must not be marked imported");
+  } finally { await browser.close(); }
+});
+
+test("prefilled template validation reaches 500 rows past the data", async () => {
+  const { page, browser } = await openSales();
+  try {
+    await page.evaluate(() => { const s = window.__store.getState();
+      window.__store.dispatch({ type: "REPLACE", state: { ...s, accounts: Array.from({ length: 600 }, (_, i) => ({ ...(s.accounts[0] || {}), id: "x" + i, name: "Co " + i, tier: "Mid", arr: 1, currency: "USD", renewalDate: "2030-01-01", inputs: {}, history: [] })) } }); });
+    await page.waitForFunction(() => window.__store.getState().accounts.length === 600, null, { timeout: 5000 });
+    const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 20000 }), page.click('[data-feed=sales] button:has-text("Accounts → CSM")')]);
+    const wb = new ExcelJS.Workbook(); await wb.xlsx.load(readFileSync(await dl.path()));
+    const ws = wb.worksheets[0];
+    const col = ws.getRow(1).values.indexOf("tier");
+    assert(ws.rowCount === 601, "data rows " + ws.rowCount + " dv500 " + JSON.stringify(ws.getCell(500, col).dataValidation) + " dv700 " + JSON.stringify(ws.getCell(700, col).dataValidation));
+    assert(ws.getCell(1101, col).dataValidation && ws.getCell(1101, col).dataValidation.type === "list", "row 1101 lacks validation");
+    assert(!ws.getCell(1102, col).dataValidation, "validation past 1101");
+  } finally { await browser.close(); }
+});
+
 const download = async (page, feed, label) => {
   const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 15000 }), page.click(`[data-feed=${feed}] button:has-text("${label}")`)]);
   const wb = new ExcelJS.Workbook(); await wb.xlsx.load(readFileSync(await dl.path()));
