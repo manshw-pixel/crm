@@ -189,7 +189,8 @@ test("row height is re-measured after a viewport resize", async () => {
   // Change what a row actually measures, then resize -- the component must re-measure a
   // real row rather than trust whatever it learned on mount. A hardcoded constant, or a
   // height cached once, fails from here down.
-  await page.addStyleTag({ content: "tr[data-account-row] td { padding-top: 12px; padding-bottom: 12px; }" });
+  // !important + 24px: the stage 1 table style already pads cells 14px !important, so a plain 12px rule no longer changes anything
+  await page.addStyleTag({ content: "tr[data-account-row] td { padding-top: 24px !important; padding-bottom: 24px !important; }" });
   await page.setViewportSize({ width: 1100, height: 900 });
   await page.waitForTimeout(500);
   const after = await geometry(page);

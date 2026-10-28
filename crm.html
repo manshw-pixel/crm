@@ -45,7 +45,7 @@
     --f-line: #e2e8f0; --f-band: #f8fafc; --f-rowline: #f1f5f9; --f-th: #64748b;
     --f-primary: #4f46e5; --f-primary-hi: #4338ca; --f-btn2-bg: #fff; --f-btn2-tx: #334155;
     --f-seg-bg: #e9eaf6; --f-seg-tx: #475569; --f-seg-on: #fff; --f-seg-on-tx: #4338ca; --f-seg-shadow: 0 1px 2px rgba(15,23,42,.08);
-    --f-logo: #6366f1; --f-avatar: #4338ca; --f-avatar-tx: #e0e7ff; --f-ring: #4f46e5;
+    --f-page: #f4f5fb; --f-logo: #6366f1; --f-avatar: #4338ca; --f-avatar-tx: #e0e7ff; --f-ring: #4f46e5;
     --sky-50: 240 249 255; --sky-100: 224 242 254; --sky-200: 186 230 253; --sky-300: 125 211 252; --sky-400: 56 189 248; --sky-500: 14 165 233; --sky-600: 2 132 199; --sky-700: 3 105 161; --sky-800: 7 89 133; --sky-900: 12 74 110; --sky-950: 8 47 73;
   }
   /* dark theme. Screen-only, so printing always uses the light palette. Neutrals invert
@@ -61,7 +61,7 @@
     --rose-50: 50 18 30; --rose-100: 70 22 38; --rose-200: 100 30 50; --rose-300: 150 45 70; --rose-400: 236 90 118; --rose-500: 251 113 133; --rose-600: 251 120 140; --rose-700: 253 164 175; --rose-800: 254 205 211; --rose-900: 255 228 230; --rose-950: 255 241 242;
     --amber-50: 48 32 10; --amber-100: 66 44 12; --amber-200: 92 62 14; --amber-300: 140 95 20; --amber-400: 200 140 30; --amber-500: 245 158 11; --amber-600: 251 191 36; --amber-700: 252 211 77; --amber-800: 253 230 138; --amber-900: 254 243 199; --amber-950: 255 251 235;
     --emerald-50: 10 40 32; --emerald-100: 12 56 44; --emerald-200: 16 80 62; --emerald-300: 25 120 90; --emerald-400: 40 170 125; --emerald-500: 52 211 153; --emerald-600: 52 211 153; --emerald-700: 110 231 183; --emerald-800: 167 243 208; --emerald-900: 209 250 229; --emerald-950: 236 253 245;
-    --f-card: rgb(19 27 44); --f-shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    --f-page: #0b1120; --f-card: rgb(19 27 44); --f-shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
     --f-side: #070b16; --f-side-hi: #162036; --f-side-line: #1a2236;
     --f-title: rgb(241 245 249); --f-meta: rgb(148 163 184); --f-page-meta: rgb(148 163 184); --f-kpi: rgb(170 182 199); --f-body: rgb(203 213 225);
     --f-line: rgb(58 72 94); --f-band: rgb(24 33 52); --f-rowline: rgb(30 41 59); --f-th: rgb(148 163 184);
@@ -180,6 +180,13 @@
   [data-side-btn] { height: 30px; padding: 0 10px; background: transparent; border: 1px solid var(--f-side-line); color: var(--f-side-meta); border-radius: 9px; font-size: 12px; font-weight: 600; }
   [data-sidebar].w-14 [data-side-btn] { height: 36px; padding: 0; }
   [data-side-btn]:hover { background: var(--f-side-hi); color: #fff; }
+  /* ---- stage 1 page frame: main padding, page title, card titles ---- */
+  main[data-main] { background: var(--f-page); }
+  @media (min-width: 1024px) { main[data-main] { padding: 28px 36px 40px; } }
+  main h1 { font-size: 26px !important; line-height: 1.25 !important; font-weight: 800 !important; letter-spacing: -0.02em !important; color: var(--f-title) !important; }
+  main h1 button { font-weight: 800; }
+  .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
+  .nm > div.mb-3 { margin-bottom: 12px; }
 </style>
 </head>
 <body class="text-slate-700">

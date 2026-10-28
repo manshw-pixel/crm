@@ -533,6 +533,8 @@ test("raise invoice: a failed PDF upload leaves Unsent with Retry, and retry reb
   assert((await page.locator('[data-invoice-row="IN-0001"] [data-download]').count()) === 0, "no PDF to download");
   assert((await page.locator('[data-invoice-row="IN-0001"] [data-resend]').innerText()) === "Retry send", "Retry send offered without a PDF");
   await page.keyboard.press("Escape");   // close the raise form, as a user would, to reach the list
+  // stage 1's 16px root moves the row under the bottom-right error toast; dismiss it, as a user would
+  for (const x of await page.locator('[aria-label="Dismiss notification"]').all()) await x.click();
   await page.click('[data-invoice-row="IN-0001"] [data-resend]');
   await page.waitForSelector('[data-invoice-row="IN-0001"] [data-invoice-status]:has-text("Pending")', { timeout: 8000 });
   assert((await rpcCalls(page, "attach_invoice_pdf")).length === 1, "PDF attached on retry");

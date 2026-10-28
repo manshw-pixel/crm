@@ -118,3 +118,17 @@ test("phone menu opens and closes at 390px", async () => {
     assert(closed, "menu closes after navigating");
   } finally { await browser.close(); }
 });
+
+// ---- Task 3: page frame ----
+test("page title and card titles use the stage 1 type", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const h = await cs(page, "main h1", ["fontSize", "fontWeight"]);
+    assert(h.fontSize === "26px" && h.fontWeight === "800", "h1: " + JSON.stringify(h));
+    const t = await cs(page, "main .nm > div.mb-3 > h3", ["fontSize", "fontWeight", "textTransform"]);
+    assert(t.fontSize === "16px" && t.fontWeight === "700" && t.textTransform === "none", "card title: " + JSON.stringify(t));
+    const m = await cs(page, "main[data-main]", ["paddingTop", "paddingLeft"]);
+    assert(m.paddingTop === "28px" && m.paddingLeft === "36px", "main padding: " + JSON.stringify(m));
+  } finally { await browser.close(); }
+});
