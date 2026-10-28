@@ -17,7 +17,8 @@ test("dashboard shows Recently declined card with account", async () => {
   // button containing the account name plus the from/to band spans (e.g. Yellow -> Red).
   const bands = await page.evaluate((name) => {
     const btns = Array.from(document.querySelectorAll("#root button"));
-    const btn = btns.find(b => Array.from(b.querySelectorAll("span")).some(s => s.textContent === name));
+    const btn = btns.find(b => Array.from(b.querySelectorAll("span")).some(s => s.textContent === name)
+      && Array.from(b.querySelectorAll("span.font-semibold")).some(s => s.textContent === "Red"));
     if (!btn) return null;
     return Array.from(btn.querySelectorAll("span.font-semibold")).map(s => s.textContent);
   }, acct.name);

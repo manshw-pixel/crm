@@ -130,6 +130,19 @@ const ScrollList = ({ label, className = "max-h-48", children }) => {
   const measure = useCallback(() => {
     const el = ref.current;
     if (!el) return;
+    // At rest, trim the cap to the last whole row so no row is cut mid-line at the fold.
+    if (el.scrollTop === 0) {
+      el.style.maxHeight = "";
+      const cap = el.clientHeight, top = el.getBoundingClientRect().top;
+      if (el.scrollHeight > cap + 1) {
+        const cut = Array.from(el.querySelectorAll("[data-row]")).find(r => r.getBoundingClientRect().bottom - top > cap + 1);
+        if (cut) {
+          const prev = cut.previousElementSibling;
+          const at = (prev && !prev.hasAttribute("data-row") ? prev : cut).getBoundingClientRect().top - top;
+          if (at > 0 && at < cap) el.style.maxHeight = Math.floor(at) + "px";
+        }
+      }
+    }
     if (el.scrollHeight - el.scrollTop - el.clientHeight <= 1) { setMore(0); return; }
     const bottom = el.getBoundingClientRect().bottom;
     const rows = el.querySelectorAll("[data-row]");
@@ -145,10 +158,10 @@ const ScrollList = ({ label, className = "max-h-48", children }) => {
     return () => ro.disconnect();
   });
   return (
-    <div className="relative" data-scroll-list={label}>
+    <div className="relative pb-5" data-scroll-list={label}>
       <div ref={ref} onScroll={measure} tabIndex={0} aria-label={label} className={`${className} overflow-y-auto pr-1 outline-none`}>{children}</div>
-      {more > 0 && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0 flex h-8 items-end justify-center bg-gradient-to-t from-white to-transparent">
-        <span data-more-count={more} className="mb-0.5 rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 shadow-sm">↓ {more} more</span>
+      {more > 0 && <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-full flex h-5 items-start justify-center">
+        <span data-more-count={more} className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-600 shadow-sm">↓ {more} more</span>
       </div>}
     </div>
   );

@@ -84,9 +84,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
               <div className="text-xs font-semibold tabular-nums text-slate-500">{label} · {fmtMoney(list.reduce((s, a) => s + a.arrUSD, 0))} USD</div>
               {list.length === 0 && <div className="text-xs text-slate-500 italic">none</div>}
               {list.map(a => (
-                <button key={a.id} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
-                  <span>{a.name}</span>
-                  <span className="flex items-center gap-2 text-xs tabular-nums text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <DaysChip days={daysUntil(a.renewalDate)} /></span>
+                <button key={a.id} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
+                  <span className="min-w-0 truncate" title={a.name}>{a.name}</span>
+                  <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-xs tabular-nums text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <DaysChip days={daysUntil(a.renewalDate)} /></span>
                 </button>
               ))}
             </div>
@@ -97,9 +97,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           <ScrollList label="Alerts & flags">
           {flagged.length === 0 && <div className="text-sm text-slate-500">No flags. 🎉</div>}
           {flagged.map(a => (
-            <button key={a.id} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left hover:bg-slate-50">
-              <span className="text-sm">{a.name} <HealthChip score={a.score} /></span>
-              <span className="flex flex-wrap justify-end gap-1">{a.flags.map(f => <span key={f} className="rounded bg-rose-50 px-1.5 py-0.5 text-xs text-rose-600 border border-rose-200">{f}</span>)}</span>
+            <button key={a.id} data-row onClick={() => openAccount(a.id)} className="block w-full rounded px-2 py-1.5 text-left hover:bg-slate-50">
+              <span className="flex min-w-0 items-center gap-2 text-sm"><span className="min-w-0 truncate" title={a.name}>{a.name}</span> <span className="shrink-0"><HealthChip score={a.score} /></span></span>
+              <span className="mt-1 flex flex-wrap gap-1">{a.flags.map(f => <span key={f} className="whitespace-nowrap rounded bg-rose-50 px-1.5 py-0.5 text-xs text-rose-600 border border-rose-200">{f}</span>)}</span>
             </button>
           ))}
           </ScrollList>
@@ -110,12 +110,16 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
           const a = scored.find(x => x.id === t.accountId);
           return (
-            <div key={t.id} data-row className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b sm:flex-nowrap border-slate-100 py-1.5 last:border-0 text-sm">
-              <input type="checkbox" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-              <span className="min-w-0 flex-1 max-sm:basis-[calc(100%-2rem)]">{t.title}</span>
-              <button className="text-indigo-600 hover:underline text-xs" onClick={() => openAccount(t.accountId)}>{a?.name}</button>
-              <span className={`text-xs tabular-nums ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
-              <span className="w-14 text-xs text-slate-500">{t.priority}</span>
+            <div key={t.id} data-row className="flex items-start gap-x-3 border-b border-slate-100 py-1.5 last:border-0 text-sm">
+              <input type="checkbox" className="mt-1 shrink-0" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+              <div className="min-w-0 flex-1">
+                <div className="truncate" title={t.title}>{t.title}</div>
+                <div className="flex min-w-0 items-center gap-x-3 text-xs">
+                  <button className="min-w-0 truncate text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
+                  <span className={`shrink-0 whitespace-nowrap tabular-nums ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
+                  <span className="ml-auto shrink-0 whitespace-nowrap text-slate-500">{t.priority}</span>
+                </div>
+              </div>
             </div>
           );
         })}
@@ -128,13 +132,15 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <ScrollList label="Team tasks by owner" className="max-h-40">
         {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
         {owners.map(([name, o]) => (
-          <div key={name} data-row className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-            <span className="w-24 shrink-0 font-bold text-slate-700 max-lg:truncate lg:w-40">{name}{name === user.name && <span className="font-normal text-slate-400"> (you)</span>}</span>
-            <span className="tabular-nums text-slate-600">{o.open} open</span>
+          <div key={name} data-row className="border-b border-slate-100 py-1.5 text-sm last:border-0">
+            <div className="truncate font-bold text-slate-700" title={name}>{name}{name === user.name && <span className="font-normal text-slate-400"> (you)</span>}</div>
+            <div className="flex items-center gap-3">
+            <span className="shrink-0 whitespace-nowrap tabular-nums text-slate-600">{o.open} open</span>
             {o.overdue > 0
-              ? <span className="rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600">{o.overdue} overdue</span>
-              : <span className="text-xs text-emerald-600">on track</span>}
-            <span className="ml-auto text-xs tabular-nums text-slate-500">next due {fmtDate(o.next)}</span>
+              ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600">{o.overdue} overdue</span>
+              : <span className="shrink-0 whitespace-nowrap text-xs text-emerald-600">on track</span>}
+            <span className="ml-auto shrink-0 whitespace-nowrap text-xs tabular-nums text-slate-500">next due {fmtDate(o.next)}</span>
+            </div>
           </div>
         ))}
         </ScrollList>
