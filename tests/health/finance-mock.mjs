@@ -13,6 +13,8 @@
 //   rpc(...)              admin_user_list, approve_po, reject_po, cancel_po, create_invoice,
 //                         send_invoice, set_invoice_status, attach_invoice_pdf -- same checks
 //                         and messages as finance.sql; recorded on window.__rpcCalls
+//   purchase_orders insert enforces the purchase_orders_live_number unique index:
+//                         (account_id, lower(trim(po_number))) among non-cancelled rows
 //   storage               buckets "invoices" and "purchase-orders" (window.__mockStorage):
 //                         upload, download, createSignedUrl, remove, list, getPublicUrl
 //
@@ -81,6 +83,11 @@ export function financeExt() {
             const row = existing ? Object.assign(existing, r) : Object.assign(DEFAULTS[t] ? DEFAULTS[t]() : { id: uid(t) }, r);
             const bad = CHECKS[t] && CHECKS[t](row);
             if (bad) return fin(null, bad);
+            if (!existing && t === "purchase_orders") {
+              const k = x => String(x.po_number == null ? "" : x.po_number).trim().toLowerCase();
+              if (rows.some(x => x.status !== "cancelled" && x.account_id === row.account_id && k(x) === k(row)))
+                return fin(null, 'duplicate key value violates unique constraint "purchase_orders_live_number"');
+            }
             if (!existing) rows.push(row);
             done.push(row);
           }
