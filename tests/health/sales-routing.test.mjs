@@ -167,3 +167,25 @@ for (const [label, flag] of [["absent without __qaHooks", false], ["present with
     } finally { await browser.close(); }
   });
 }
+
+test("existing account with blank destination: note explains it stayed in Accounts", async () => {
+  const NOTE = /1 existing account kept in Accounts \(destination blank/;
+  const BARE = `${HEAD}\nKestrel,,,,,\n`;
+  const FILLED = `${HEAD}\nKestrel,,yes,15-11-2026,Asha,Core\n`;
+  await run("", async (sync, page) => {
+    await sync(BARE, 1); // Kestrel now exists
+    // (b) default accounts, no checklist values: unchanged message
+    let r = await sync(BARE, 2);
+    assert(!/kept in Accounts/.test(r.log), r.log);
+    assert(/projects queued 0 · drafts 0 · skipped 0$/.test(r.log), r.log);
+    // (c) default accounts, checklist values present: note
+    r = await sync(FILLED, 3);
+    assert(NOTE.test(r.log), r.log);
+    assert(r.projects.length === 0, "no project");
+    // (a) default onboarding, existing account, blank destination: note, no project
+    await page.selectOption("[data-sales-default]", "onboarding");
+    r = await sync(BARE, 4);
+    assert(NOTE.test(r.log), r.log);
+    assert(r.projects.length === 0, "no project");
+  });
+});

@@ -226,8 +226,17 @@ function IntegrationsCard({ st, dispatch, user }) {
     const cells = r.cells || [];
     const dflt = integ.salesDefault || "accounts";
     const hasCol = cells.some(c => c && Object.prototype.hasOwnProperty.call(c, "destination"));
-    if (!hasCol && dflt !== "onboarding") return { msg, err: false };
     const template = (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
+    // Existing accounts with a blank destination stay in Accounts; say so when the sheet looked like it meant onboarding.
+    let keptExisting = 0;
+    (r.rowAccounts || []).forEach((ra, i) => {
+      if (!ra || !ra.name || ra.created) return;
+      const d = cells[i] && cells[i].destination;
+      if (String(d == null ? "" : d).trim() !== "") return;
+      if (dflt === "onboarding" || Object.keys(checklistFromRow(cells[i], template, r.order)).length) keptExisting++;
+    });
+    const keptNote = keptExisting ? ` · ${keptExisting} existing account${keptExisting === 1 ? "" : "s"} kept in Accounts (destination blank — set "onboarding" to start a project)` : "";
+    if (!hasCol && dflt !== "onboarding") return { msg: msg + keptNote, err: false };
     let queued = 0, drafts = 0, skipped = 0; const missingSet = new Set(); const reasons = {};
     const skip = why => { skipped++; reasons[why] = (reasons[why] || 0) + 1; };
     (r.rowAccounts || []).forEach((ra, i) => {
@@ -244,7 +253,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     });
     msg += ` · projects queued ${queued} · drafts ${drafts}${drafts ? ` (missing: ${template.map(it => it.label || it.id).filter(l => missingSet.has(l)).join(", ")})` : ""} · skipped ${skipped}`;
     if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
-    return { msg, err: false };
+    return { msg: msg + keptNote, err: false };
   };
   // One finance CSV, recognised by its header: purchase orders (+ their PDFs from the same folder),
   // invoice payments, or the legacy billing-completed-date file. Row problems are counted, never thrown.
