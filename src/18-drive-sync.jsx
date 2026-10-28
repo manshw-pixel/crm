@@ -148,7 +148,8 @@ function IntegrationsCard({ st, dispatch, user }) {
         try { await savePO({ account: it.account, file, v: it.v, orgId: (user && user.org_id) || CURRENT_ORG }); submitted++; }
         catch (e) { const m = (e && e.message) || String(e); if (/already exists on this account/.test(m)) already++; else refuse(m); }
       }
-      return { msg: `POs submitted ${submitted} · already imported ${already} · ${tail()}`, err: plan.items.length > 0 && refused === plan.items.length };
+      const missingPdf = Object.keys(reasons).some(k => /^PDF .* not found$/.test(k));
+      return { msg: `POs submitted ${submitted} · already imported ${already} · ${tail()}${missingPdf ? " — add the missing PDF(s) and re-save the CSV to retry" : ""}`, err: plan.items.length > 0 && refused === plan.items.length };
     }
     const inv = await sb.from("invoices").select("id,number,status");
     if (inv.error) return { msg: inv.error.message, err: true };
@@ -157,7 +158,9 @@ function IntegrationsCard({ st, dispatch, user }) {
     let paid = 0, waived = 0;
     for (const it of plan.items) {
       if (!it.ok) { refuse(it.reason); continue; }
-      const r = await sb.rpc("set_invoice_status", { p_id: it.invoiceId, p_status: it.status, p_paid_date: it.paidDate, p_ref: it.ref, p_reason: it.reason });
+      let r;
+      try { r = await sb.rpc("set_invoice_status", { p_id: it.invoiceId, p_status: it.status, p_paid_date: it.paidDate, p_ref: it.ref, p_reason: it.reason }); }
+      catch (e) { r = { error: { message: (e && e.message) || String(e) } }; }
       if (r.error) refuse(r.error.message); else if (it.status === "paid") paid++; else waived++;
     }
     return { msg: `invoices paid ${paid} · waived ${waived} · ${tail()}`, err: plan.items.length > 0 && refused === plan.items.length };

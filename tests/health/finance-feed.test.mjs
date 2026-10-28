@@ -71,6 +71,7 @@ test("finance feed: PO row whose PDF is missing is refused", async () => {
   await syncNow(page);
   assert((await pos(page)).length === 0, "PO written without a PDF");
   assert(/PDF nope\.pdf not found/.test(await text(page)), "log: " + (await text(page)).slice(-400));
+  assert(/ — add the missing PDF\(s\) and re-save the CSV to retry/.test(await text(page)), "retry hint missing: " + (await text(page)).slice(-400));
   await browser.close();
 });
 
