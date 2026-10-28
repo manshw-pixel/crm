@@ -155,7 +155,7 @@ function IntegrationsCard({ st, dispatch, user }) {
     const hasCol = cells.some(c => c && Object.prototype.hasOwnProperty.call(c, "destination"));
     if (!hasCol && dflt !== "onboarding") return { msg, err: false };
     const template = (st.settings && st.settings.implChecklist) || DEFAULT_IMPL_CHECKLIST;
-    let queued = 0, drafts = 0, skipped = 0; const reasons = {};
+    let queued = 0, drafts = 0, skipped = 0; const missingSet = new Set(); const reasons = {};
     const skip = why => { skipped++; reasons[why] = (reasons[why] || 0) + 1; };
     (r.rowAccounts || []).forEach((ra, i) => {
       if (!ra || !ra.name) return;
@@ -167,9 +167,9 @@ function IntegrationsCard({ st, dispatch, user }) {
       if (plan.kind === "skip") return skip(plan.reason);
       plannedProjects.push(plan.project);
       dispatch({ type: "ADD_PROJECT", item: plan.project });
-      if (plan.kind === "queued") queued++; else drafts++;
+      if (plan.kind === "queued") queued++; else { drafts++; (plan.project.missing || []).forEach(l => missingSet.add(l)); }
     });
-    msg += ` · projects queued ${queued} · drafts ${drafts} · skipped ${skipped}`;
+    msg += ` · projects queued ${queued} · drafts ${drafts}${drafts ? ` (missing: ${template.map(it => it.label || it.id).filter(l => missingSet.has(l)).join(", ")})` : ""} · skipped ${skipped}`;
     if (skipped) msg += ` (${Object.entries(reasons).map(([k, n]) => `${k}: ${n}`).join(", ")})`;
     return { msg, err: false };
   };
