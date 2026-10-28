@@ -280,21 +280,6 @@ ${PO_ACCT(runId)},${isoPlus(0)},12000,PHP,1,annual,${isoPlus(200)},${pdf}
       assert.equal(rows.length, 1, `re-feeding created a second PO ${po}`);
     } },
 
-  // Placed before payment-status: needs the run invoice still pending. payment-status then finds it already Paid and only asserts the filters.
-  { id: `${F}/finance-feed-payment`, feature: F, title: "A finance-feed payment row marks the run invoice paid", role: "admin",
-    run: async ({ page, runId, thisRunId }) => {
-      needFreshSeed({ runId, thisRunId });
-      const number = await runInvoice(page, runId); // SkipScenario with SETUP when no INR entity
-      if (await invoiceState(page, number) !== "paid") {
-        const csv = `invoice_number,status,paid_date,payment_ref
-${number},paid,${isoPlus(0)},QA ${runId} feed
-`;
-        const out = await feedFinance(page, [{ name: `qa-${runId}-pay.csv`, text: csv, lastModified: Date.now() }]);
-        assert.ok(!out[0].err, `finance sync reported an error: ${out[0].msg}`);
-      }
-      assert.equal(await invoiceState(page, number), "paid", "invoice status after the payment feed");
-    } },
-
   { id: `${F}/payment-status`, feature: F, title: "Marking the run invoice paid moves it from the pending filter to the paid filter", role: "admin",
     run: async ({ page, runId, thisRunId }) => {
       needFreshSeed({ runId, thisRunId });
@@ -317,5 +302,27 @@ ${number},paid,${isoPlus(0)},QA ${runId} feed
       const number = await runInvoice(page, runId); // non-vacuous: the run has an invoice under "all"
       assert.ok((await invoiceRows(page, runId, "all")).includes(number));
       assert.deepEqual(await invoiceRows(page, runId, "overdue"), [], "overdue filter + runId");
+    } },
+  // The paid path itself is covered by the health test; live, the run invoice is already Paid (payment-status), so a
+  // paid row must be refused as "already paid" and leave status and payment_ref untouched, and an unknown number is refused.
+  { id: `${F}/finance-feed-payment`, feature: F, title: "A finance-feed paid row for an already-paid invoice is refused and changes nothing; an unknown invoice is refused", role: "admin",
+    run: async ({ page, runId, thisRunId }) => {
+      needFreshSeed({ runId, thisRunId });
+      const number = await runInvoice(page, runId); // SkipScenario with SETUP when no INR entity
+      const read = () => page.evaluate(async n => ((await sb.from("invoices").select("status,payment_ref").eq("number", n)).data || [])[0] || null, number);
+      const before = await read();
+      assert.equal(before?.status, "paid", "payment-status should have left the run invoice paid");
+      const csv = `invoice_number,status,paid_date,payment_ref
+${number},paid,${isoPlus(0)},QA ${runId} feed
+${runId}-NOPE,paid,${isoPlus(0)},x
+`;
+      const out = await feedFinance(page, [{ name: `qa-${runId}-pay.csv`, text: csv, lastModified: Date.now() }]);
+      const msg = out[0].msg || "";
+      assert.ok(msg.includes("invoices paid 0"), `expected "invoices paid 0": ${msg}`);
+      assert.ok(msg.includes("already paid"), `expected "already paid": ${msg}`);
+      assert.ok(msg.includes("unknown invoice") && msg.includes(`${runId}-NOPE`), `expected unknown invoice ${runId}-NOPE refused: ${msg}`);
+      const after = await read();
+      assert.equal(after.status, "paid", "invoice status after the feed");
+      assert.equal(after.payment_ref, before.payment_ref, "payment_ref changed by the refused row");
     } },
 ];
