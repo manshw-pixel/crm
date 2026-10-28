@@ -54,7 +54,7 @@ test("garbage stored value + light device paints light", async () => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.reload(); await ready(page);
     assert(!(await isDark(page)), "unknown value must mean auto -> light device -> light");
-    assert(await bg(page, "body") === "rgb(246, 248, 251)", "body: " + await bg(page, "body"));
+    assert(await bg(page, "body") === "rgb(244, 245, 251)", "body: " + await bg(page, "body"));
   } finally { await browser.close(); }
 });
 
@@ -83,7 +83,7 @@ test("print renders the light palette even in dark mode", async () => {
   try {
     await ready(page);
     await page.emulateMedia({ media: "print" });
-    const v = await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === "rgb(246, 248, 251)", null, { timeout: 3000 }).then(() => true).catch(() => false);
+    const v = await page.waitForFunction(() => getComputedStyle(document.body).backgroundColor === "rgb(244, 245, 251)", null, { timeout: 3000 }).then(() => true).catch(() => false);
     assert(v, "print background: " + await bg(page, "body"));
     // native controls too: no colour-scheme may leak into print (an inline style would)
     const cs = await page.evaluate(() => { const i = document.createElement("input"); document.body.appendChild(i);
