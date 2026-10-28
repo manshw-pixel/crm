@@ -31,13 +31,21 @@
      :root = Tailwind's stock palette (the light theme, unchanged). The dark theme overrides
      these under html.dark -- see the dark block. scrim never flips (overlays stay dark). */
   :root {
-    --white: 255 255 255; --scrim: 15 23 42; --page: 246 248 251; --line-strong: 211 220 230;
+    --white: 255 255 255; --scrim: 15 23 42; --page: 244 245 251; --line-strong: 211 220 230;
     --slate-50: 248 250 252; --slate-100: 241 245 249; --slate-200: 226 232 240; --slate-300: 203 213 225; --slate-400: 148 163 184; --slate-500: 100 116 139; --slate-600: 71 85 105; --slate-700: 51 65 85; --slate-800: 30 41 59; --slate-900: 15 23 42; --slate-950: 2 6 23;
     --gray-50: 249 250 251; --gray-100: 243 244 246; --gray-200: 229 231 235; --gray-300: 209 213 219; --gray-400: 156 163 175; --gray-500: 107 114 128; --gray-600: 75 85 99; --gray-700: 55 65 81; --gray-800: 31 41 55; --gray-900: 17 24 39; --gray-950: 3 7 18;
     --indigo-50: 238 242 255; --indigo-100: 224 231 255; --indigo-200: 199 210 254; --indigo-300: 165 180 252; --indigo-400: 129 140 248; --indigo-500: 99 102 241; --indigo-600: 79 70 229; --indigo-700: 67 56 202; --indigo-800: 55 48 163; --indigo-900: 49 46 129; --indigo-950: 30 27 75;
     --rose-50: 255 241 242; --rose-100: 255 228 230; --rose-200: 254 205 211; --rose-300: 253 164 175; --rose-400: 251 113 133; --rose-500: 244 63 94; --rose-600: 225 29 72; --rose-700: 190 18 60; --rose-800: 159 18 57; --rose-900: 136 19 55; --rose-950: 76 5 25;
     --amber-50: 255 251 235; --amber-100: 254 243 199; --amber-200: 253 230 138; --amber-300: 252 211 77; --amber-400: 251 191 36; --amber-500: 245 158 11; --amber-600: 217 119 6; --amber-700: 180 83 9; --amber-800: 146 64 14; --amber-900: 120 53 15; --amber-950: 69 26 3;
     --emerald-50: 236 253 245; --emerald-100: 209 250 229; --emerald-200: 167 243 208; --emerald-300: 110 231 183; --emerald-400: 52 211 153; --emerald-500: 16 185 129; --emerald-600: 5 150 105; --emerald-700: 4 120 87; --emerald-800: 6 95 70; --emerald-900: 6 78 59; --emerald-950: 2 44 34;
+    /* UI refresh stage 1 frame tokens (approved preview stage1.css, verbatim values) */
+    --f-card: #fff; --f-shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px -12px rgba(15,23,42,.12);
+    --f-side: #111827; --f-side-hi: #1f2937; --f-side-line: #1f2937; --f-side-tx: #cbd5e1; --f-side-icon: #94a3b8; --f-side-icon-on: #a5b4fc; --f-side-meta: #94a3b8;
+    --f-title: #0f172a; --f-meta: #64748b; --f-page-meta: #5f6f86; --f-kpi: #475569; --f-body: #334155;
+    --f-line: #e2e8f0; --f-band: #f8fafc; --f-rowline: #f1f5f9; --f-th: #64748b;
+    --f-primary: #4f46e5; --f-primary-hi: #4338ca; --f-btn2-bg: #fff; --f-btn2-tx: #334155;
+    --f-seg-bg: #e9eaf6; --f-seg-tx: #475569; --f-seg-on: #fff; --f-seg-on-tx: #4338ca; --f-seg-shadow: 0 1px 2px rgba(15,23,42,.08);
+    --f-page: #f4f5fb; --f-logo: #6366f1; --f-avatar: #4338ca; --f-avatar-tx: #e0e7ff; --f-ring: #4f46e5;
     --sky-50: 240 249 255; --sky-100: 224 242 254; --sky-200: 186 230 253; --sky-300: 125 211 252; --sky-400: 56 189 248; --sky-500: 14 165 233; --sky-600: 2 132 199; --sky-700: 3 105 161; --sky-800: 7 89 133; --sky-900: 12 74 110; --sky-950: 8 47 73;
   }
   /* dark theme. Screen-only, so printing always uses the light palette. Neutrals invert
@@ -53,6 +61,13 @@
     --rose-50: 50 18 30; --rose-100: 70 22 38; --rose-200: 100 30 50; --rose-300: 150 45 70; --rose-400: 236 90 118; --rose-500: 251 113 133; --rose-600: 251 120 140; --rose-700: 253 164 175; --rose-800: 254 205 211; --rose-900: 255 228 230; --rose-950: 255 241 242;
     --amber-50: 48 32 10; --amber-100: 66 44 12; --amber-200: 92 62 14; --amber-300: 140 95 20; --amber-400: 200 140 30; --amber-500: 245 158 11; --amber-600: 251 191 36; --amber-700: 252 211 77; --amber-800: 253 230 138; --amber-900: 254 243 199; --amber-950: 255 251 235;
     --emerald-50: 10 40 32; --emerald-100: 12 56 44; --emerald-200: 16 80 62; --emerald-300: 25 120 90; --emerald-400: 40 170 125; --emerald-500: 52 211 153; --emerald-600: 52 211 153; --emerald-700: 110 231 183; --emerald-800: 167 243 208; --emerald-900: 209 250 229; --emerald-950: 236 253 245;
+    --f-page: #0b1120; --f-card: rgb(19 27 44); --f-shadow: 0 1px 3px rgba(0,0,0,.4), 0 8px 24px -12px rgba(0,0,0,.6);
+    --f-side: #070b16; --f-side-hi: #162036; --f-side-line: #1a2236;
+    --f-title: rgb(241 245 249); --f-meta: rgb(148 163 184); --f-page-meta: rgb(148 163 184); --f-kpi: rgb(170 182 199); --f-body: rgb(203 213 225);
+    --f-line: rgb(58 72 94); --f-band: rgb(24 33 52); --f-rowline: rgb(30 41 59); --f-th: rgb(148 163 184);
+    --f-primary: #4f46e5; --f-primary-hi: #6366f1; --f-btn2-bg: rgb(19 27 44); --f-btn2-tx: rgb(203 213 225);
+    --f-seg-bg: rgb(30 41 59); --f-seg-tx: rgb(170 182 199); --f-seg-on: rgb(45 58 79); --f-seg-on-tx: #c7d2fe; --f-seg-shadow: 0 1px 2px rgba(0,0,0,.4);
+    --f-ring: #818cf8;
     --sky-50: 10 35 52; --sky-100: 12 48 72; --sky-200: 16 70 100; --sky-300: 30 110 150; --sky-400: 56 189 248; --sky-500: 56 189 248; --sky-600: 125 211 252; --sky-700: 125 211 252; --sky-800: 186 230 253; --sky-900: 224 242 254; --sky-950: 240 249 255;
   } }
   /* the chart tooltip box flips light in dark; the band colours (500 shades, fixed hex) are
@@ -71,24 +86,114 @@
     html.dark .impl-seg-active { fill: rgb(90 95 190); } html.dark .impl-seg-completed { fill: rgb(40 170 125); } html.dark .impl-seg-onHold { fill: rgb(180 127 28); }
     html.dark .impl-key-active { background: rgb(90 95 190); } html.dark .impl-key-completed { background: rgb(40 170 125); } html.dark .impl-key-onHold { background: rgb(180 127 28); }
   }
-  html { font-size: 12.5px; }
+  /* stage 1 base type: 16px root so text-sm = 14px body, text-xs = 12px meta. Phones keep the
+     same 16px (the old phone override only ever made phones LARGER than desktop). */
+  html { font-size: 16px; }
   body { background: rgb(var(--page)); font-family: 'Inter', ui-sans-serif, system-ui, sans-serif; color: rgb(var(--slate-700)); }
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-thumb { background: rgb(var(--slate-300)); border-radius: 4px; }
   /* design tokens: quiet surfaces, hairline borders, color = meaning */
-  .nm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
-  .nm-sm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 10px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
-  .nm-inset { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: border-color .12s, box-shadow .12s; }
-  .nm-inset:focus, .nm-inset:focus-within { border-color: rgb(var(--indigo-500)); box-shadow: 0 0 0 3px rgb(var(--indigo-500) / .12); outline: none; }
-  .nm-btn { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: background .12s; }
-  .nm-btn:hover { background: rgb(var(--slate-100)); }
-  .nm-btn:active { background: rgb(var(--slate-200)); }
-  .grad { background: rgb(var(--indigo-600)); border-radius: 8px; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
-  .grad:hover { background: rgb(var(--indigo-700)); }
-  .grad:active { background: rgb(var(--indigo-800)); }
   input[type=range] { accent-color: rgb(var(--indigo-600)); }
-  /* phones only: larger base type and tap targets; desktop sizing untouched */
-  @media (max-width: 640px) { html { font-size: 14px; } }
+  /* ---- stage 1: focus + motion. The only !important left in stage 1: the keyboard ring
+     must beat outline-none / focus:outline-none utilities (a11y), and reduced motion must
+     beat every utility and inline transition. ---- */
+  :focus-visible { outline: 2px solid var(--f-ring) !important; outline-offset: 2px; }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+  /* ---- stage 1 sidebar: dark in both themes (values from the approved preview) ---- */
+  [data-sidebar] { background: var(--f-side); color: var(--f-side-tx); padding: 22px 14px; box-sizing: border-box; height: 100vh; height: 100dvh; }
+  [data-sidebar].w-52 { width: 248px; }
+  [data-sidebar].w-14 { padding: 22px 8px; }
+  @media (min-width: 1024px) { main.lg\:ml-52[data-main] { margin-left: 248px; } }
+  [data-sidebar] > div:first-child { padding: 4px 10px 22px; }
+  [data-sidebar].w-14 > div:first-child { padding: 4px 0 22px; }
+  [data-brand] { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 700; color: #fff; }
+  [data-logo-tile] { width: 32px; height: 32px; border-radius: 9px; background: var(--f-logo); color: #fff; font-weight: 800; font-size: 16px; display: flex; align-items: center; justify-content: center; flex: none; }
+  [data-collapse] { color: #64748b; background: transparent; border-radius: 8px; }
+  [data-collapse]:hover { color: #cbd5e1; background: var(--f-side-hi); }
+  [data-sidebar] nav[aria-label="Main"] { display: flex; flex-direction: column; gap: 6px; padding: 0; }
+  [data-sidebar] nav[aria-label="Main"] > * + * { margin-top: 0; }
+  [data-sidebar] nav[aria-label="Main"] button { gap: 12px; padding: 10px 12px; border-radius: 10px; font-size: 14px; line-height: 20px; font-weight: 500; color: var(--f-side-tx); background: transparent; }
+  [data-sidebar].w-14 nav[aria-label="Main"] button { padding: 10px 0; }
+  [data-sidebar] nav[aria-label="Main"] button svg { width: 18px; height: 18px; stroke: var(--f-side-icon); color: var(--f-side-icon); flex: none; }
+  [data-sidebar] nav[aria-label="Main"] button:hover { background: var(--f-side-hi); color: #fff; }
+  [data-sidebar] nav[aria-label="Main"] button[aria-current="page"] { background: var(--f-side-hi); color: #fff; font-weight: 600; }
+  [data-sidebar] nav[aria-label="Main"] button[aria-current="page"] svg { stroke: var(--f-side-icon-on); color: var(--f-side-icon-on); }
+  [data-profile] { border-top: 1px solid var(--f-side-line); padding: 12px; display: grid; grid-template-columns: 34px 1fr 1fr; column-gap: 10px; align-items: center; }
+  [data-sidebar].w-14 [data-profile] { display: flex; flex-direction: column; align-items: center; padding: 12px 0; }
+  [data-avatar] { grid-column: 1; grid-row: 1 / 3; width: 34px; height: 34px; border-radius: 50%; background: var(--f-avatar); color: var(--f-avatar-tx); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  [data-profile-name] { grid-column: 2 / 4; grid-row: 1; font-size: 13px; line-height: 18px; font-weight: 600; color: #fff; }
+  [data-profile-role] { grid-column: 2 / 4; grid-row: 2; font-size: 12px; line-height: 16px; color: var(--f-side-meta); text-transform: capitalize; }
+  [data-profile] > [data-current-org] { grid-column: 1 / 4; }
+  [data-sidebar].w-52 [data-profile] > [data-theme-toggle] { grid-column: 1 / 3; grid-row: 3; margin-top: 12px; }
+  [data-sidebar].w-52 [data-profile] > [data-theme-toggle] + button { grid-column: 3; grid-row: 3; margin-top: 12px; }
+  [data-side-btn] { height: 30px; padding: 0 10px; background: transparent; border: 1px solid var(--f-side-line); color: var(--f-side-meta); border-radius: 9px; font-size: 12px; font-weight: 600; }
+  [data-sidebar].w-14 [data-side-btn] { height: 36px; padding: 0; }
+  [data-side-btn]:hover { background: var(--f-side-hi); color: #fff; }
+  /* ---- stage 1 page frame: main padding, page title, card titles ---- */
+  main[data-main] { background: var(--f-page); }
+  @media (min-width: 1024px) { main[data-main] { padding: 28px 36px 40px; } }
+  /* print stays light: no dark sidebar on paper */
+  @media print { [data-sidebar] { display: none; } main[data-main] { margin-left: 0; padding: 0; } }
+</style>
+<style id="components">
+  /* Primitives, emitted by build.mjs BETWEEN Tailwind's components and utilities (Tailwind's
+     own "components" slot): they beat preflight but any utility on the element, including
+     !p-0 / rounded-lg / px-*, still wins. Stage 1 values from the approved preview. No
+     !important in this block. */
+  /* toasts keep their own look (tone stripe via border-l-4, p-3) */
+  .nm, .nm-sm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+  /* cards: no visible border (transparent 1px so a Stat's hover:border-indigo-300 still shows), r16, soft shadow */
+  .nm:where(:not([data-toast])), .nm-sm { background: var(--f-card); border-color: transparent; border-radius: 16px; box-shadow: var(--f-shadow); }
+  .nm.p-4:where(:not([data-toast])), .nm.p-3:where(:not([data-toast])) { padding: 20px; }
+  .nm-inset { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: border-color .12s, box-shadow .12s; }
+  .nm-inset:focus, .nm-inset:focus-within { border-color: var(--f-primary); box-shadow: 0 0 0 3px rgb(79 70 229 / .14); outline: none; }
+  .nm-btn { background: var(--f-btn2-bg); border: 1px solid var(--f-line); color: var(--f-btn2-tx); border-radius: 12px; font-weight: 600; transition: background .12s; }
+  .nm-btn:hover { background: var(--f-band); }
+  .nm-btn:active { background: rgb(var(--slate-200)); }
+  .grad { background: var(--f-primary); color: #fff; border-radius: 12px; font-weight: 600; }
+  .grad:hover { background: var(--f-primary-hi); }
+  .grad:active { background: rgb(var(--indigo-800)); }
+  /* frame-level controls (outside cards, tables, dialogs): 40px buttons, 42px inputs */
+  /* the Btn atom ([data-btn]) carries no size utilities: frame-level 40px / 13.5px / 0 16px / r12,
+     inside cards, tables and dialogs 34px / 13px / r10 (approved preview) */
+  [data-btn] { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 6px 16px; font-size: 13.5px; line-height: 20px; font-weight: 600; }
+  :where(.nm, .nm-sm, table, [role=dialog]) [data-btn] { min-height: 34px; padding: 6px 14px; font-size: 13px; line-height: 18px; border-radius: 10px; }
+  main :where(.grad, .nm-btn):where(:not(.lg\:hidden)):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { min-height: 40px; font-size: 13.5px; padding-left: 16px; padding-right: 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  main :where(.grad, .nm-btn).h-9.w-9:where(:not(.lg\:hidden)) { display: flex; width: 40px; height: 40px; padding: 0; }
+  :where(.nm, .nm-sm) .grad, :where(.nm, .nm-sm) .nm-btn { border-radius: 10px; min-height: 34px; }
+  main :where(input.nm-inset:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), .nm-inset:has(> input[type=search]), .nm-inset:has(> input[type=text])):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { height: 42px; border-radius: 12px; border-color: var(--f-line); background: var(--f-card); padding: 0 14px; font-size: 14px; }
+  :where(.nm, .nm-sm) .nm-inset { border-radius: 10px; border-color: var(--f-line); }
+  /* search fields anywhere in main: 42px / 0 14px / 14px / r12 (beats the Input atom's px-3 py-1.5 by specificity) */
+  main input.nm-inset[placeholder^="Search"] { height: 42px; padding: 0 14px; font-size: 14px; border-radius: 12px; border-color: var(--f-line); background: var(--f-card); }
+  /* segmented scope toggle */
+  [data-scope-toggle] { background: var(--f-seg-bg); border: 0; border-radius: 12px; padding: 4px; gap: 0; box-shadow: none; }
+  [data-scope-toggle] > button { font-size: 13px; font-weight: 600; color: var(--f-seg-tx); padding: 8px 14px; border-radius: 9px; background: transparent; }
+  [data-scope-toggle] > button[aria-pressed="true"] { background: var(--f-seg-on); color: var(--f-seg-on-tx); box-shadow: var(--f-seg-shadow); }
+  /* data tables (a table with a <thead>): header band, row rules; only numeric/date cells and
+     the virtualized account rows stay on one line, text cells wrap */
+  main :where(table:has(> thead)) { border-collapse: collapse; }
+  main :where(table:has(> thead)) > thead :where(tr, th) { background: var(--f-band); border: 0; }
+  main :where(table:has(> thead)) > thead th { font-size: 11.5px; line-height: 16px; text-transform: uppercase; letter-spacing: .05em; color: var(--f-th); font-weight: 700; padding: 12px 10px; white-space: nowrap; }
+  main :where(table:has(> thead)) > tbody td { padding: 14px 10px; }
+  main :where(table:has(> thead)) :where(th, td):first-child { padding-left: 18px; }
+  main :where(table:has(> thead)) :where(th, td):last-child { padding-right: 18px; }
+  main :where(table:has(> thead)) > tbody > tr { border: 0; border-top: 1px solid var(--f-rowline); }
+  main :where(table:has(> thead)) > tbody > tr:hover { background: var(--f-band); }
+  /* the accounts list: the preview's cell padding (beats the cells' px-2 / py-1.5 by specificity) */
+  main table:has([data-account-row]) > thead th { padding: 12px 10px; font-size: 11.5px; letter-spacing: .05em; }
+  [data-account-row] > td { padding: 14px 10px; }
+  main table:has([data-account-row]) :is(th, td):first-child { padding-left: 18px; }
+  main table:has([data-account-row]) :is(th, td):last-child { padding-right: 18px; }
+  [data-account-row] td, main :where(table:has(> thead)) td:where(.text-right, .tabular-nums) { white-space: nowrap; }
+  main tbody tr[data-row-spacer], main tbody tr[data-row-spacer] td { border: 0; padding: 0; }
+  /* pills: shape and type only; each chip keeps its own padding */
+  main span.rounded-full:where([class*="px-"]), [data-days-chip] { border-radius: 999px; font-weight: 600; }
+  /* KPI labels and in-card small labels: sentence case */
+  [data-stat] > div:first-child, .nm-sm .uppercase { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--f-kpi); }
+  [data-stat] > div:first-child { font-size: 13px; }
+  .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
+  main .text-slate-500:where(:not(:is(.nm, .nm-sm) *)) { color: var(--f-page-meta); }
+  main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }
 </style>
 </head>
 <body class="text-slate-700">

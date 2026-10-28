@@ -6,7 +6,7 @@ function PlaybookCard({ st, dispatch }) {
   return (
     <Card title="Renewal playbook">
       {pb.map(p => (
-        <div key={p.id} className="mb-2 flex items-center gap-2 text-sm">
+        <div key={p.id} className="mb-2 flex flex-wrap items-center gap-2 text-sm sm:flex-nowrap">
           <Input value={p.title} placeholder="Step…" onChange={e => edit(p.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
           <Input type="number" min="0" max="365" value={p.offsetDays} title="Days before renewal"
             onChange={e => edit(p.id, { offsetDays: Math.min(365, Math.max(0, Math.round(+e.target.value || 0))) })} className="!w-20 shrink-0" />
@@ -94,7 +94,7 @@ function HealthPlaybookCard({ st, dispatch, scored }) {
     <div className="mb-3">
       <div className={`mb-1 text-xs font-bold uppercase tracking-widest ${tone}`}>{band}</div>
       {hpb[band].map(s => (
-        <div key={s.id} className="mb-2 flex items-center gap-2 text-sm">
+        <div key={s.id} className="mb-2 flex flex-wrap items-center gap-2 text-sm sm:flex-nowrap">
           <Input value={s.title} placeholder="Step…" onChange={e => editStep(band, s.id, { title: e.target.value })} className="flex-1 min-w-[160px]" />
           <Input type="number" min="0" max="180" value={s.dueDays} title="Days after crossing"
             onChange={e => editStep(band, s.id, { dueDays: Math.min(180, Math.max(0, Math.round(+e.target.value || 0))) })} className="!w-20 shrink-0" />
@@ -235,7 +235,7 @@ function BillingSettingsCard({ user }) {
           onChange={e => { setTouched(t => ({ ...t, default_tax_pct: true })); set("default_tax_pct", e.target.value); }} />
         {isIN && <Input name="lut_number" placeholder="LUT number (zero-rated exports)" value={f.lut_number} onChange={e => set("lut_number", e.target.value)} />}
         <textarea name="bank_details" placeholder="Bank details shown on the invoice" rows={3} value={f.bank_details} onChange={e => set("bank_details", e.target.value)}
-          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 sm:col-span-2" />
+          className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none placeholder:text-slate-500 sm:col-span-2" />
         <div className="flex gap-2 sm:col-span-2">
           <Btn kind="primary" type="submit" disabled={busy}>{busy ? "Saving…" : editingId ? "Save entity" : "Add entity"}</Btn>
           {editingId && <Btn onClick={reset}>Cancel</Btn>}
@@ -363,8 +363,8 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
         {Object.keys(w).map(k => (
           <React.Fragment key={k}>
           <div className="mb-2 flex items-center gap-3 text-sm">
-            <span className="w-40">{WEIGHT_LABELS[k]}</span>
-            <input type="range" min="0" max="100" value={w[k]} onChange={e => setW(k, e.target.value)} className="flex-1" />
+            <span className="w-28 shrink-0 sm:w-40">{WEIGHT_LABELS[k]}</span>
+            <input type="range" min="0" max="100" value={w[k]} onChange={e => setW(k, e.target.value)} className="min-w-0 flex-1" />
             <span className="w-12 text-right font-mono text-xs">{(100 * w[k] / total).toFixed(0)}%</span>
           </div>
             {k === "recency" && <div className="mb-3 ml-4">

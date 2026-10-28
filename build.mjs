@@ -111,7 +111,11 @@ const libJs = `${libBundle}\nObject.assign(globalThis, __lib);`;
 const TMP_CSS = p("dist", ".tailwind.out.css");
 mkdirSync(p("dist"), { recursive: true });
 const TMP_IN = p("dist", ".tailwind.in.css");
-writeFileSync(TMP_IN, "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n");
+// crm.html's <style id="components"> block is emitted in Tailwind's components slot (after
+// preflight, before utilities), so any utility on an element beats a primitive's default.
+const compMatch = html.match(/<style id="components">([\s\S]*?)<\/style>/);
+if (!compMatch) throw new Error('build: no <style id="components"> block found in crm.html');
+writeFileSync(TMP_IN, "@tailwind base;\n@tailwind components;\n" + compMatch[1] + "\n@tailwind utilities;\n");
 execFileSync(
   process.execPath,
   [p("node_modules", "tailwindcss", "lib", "cli.js"), "-c", p("tailwind.config.js"), "-i", TMP_IN, "-o", TMP_CSS, "--minify"],
@@ -177,6 +181,8 @@ const head = headMatch[1]
   // the Google Fonts preconnect + stylesheet; Inter is embedded as base64 instead
   .replace(/<link rel="preconnect" href="https:\/\/fonts\.googleapis\.com">\s*/g, "")
   .replace(/<link href="https:\/\/fonts\.googleapis\.com\/[^"]*"[^>]*>\s*/g, "")
+  // the components block already went into Tailwind's input (step 3); drop the raw copy
+  .replace(/<style id="components">[\s\S]*?<\/style>\s*/, "")
   // the hand-written token block moves into the combined stylesheet, after Tailwind, so
   // its .nm/.grad rules still win the cascade exactly as they do today
   .replace(/<style>[\s\S]*?<\/style>/, () =>

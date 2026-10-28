@@ -667,3 +667,14 @@ test("dashboard finance card is absent when there are no invoices and no POs", a
   assert((await page.locator("[data-finance-card]").count()) === 0);
   await browser.close();
 });
+
+// UI stage 1: data-table text cells wrap, so the Finance page never scrolls sideways on a phone
+test("stage 1: Finance at 390px has no page-level horizontal overflow", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test" }, undefined, "", );
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(400);
+    const w = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert(w <= 390, "Finance scrollWidth at 390px: " + w);
+  } finally { await browser.close(); }
+});

@@ -44,7 +44,7 @@ function DocumentForm({ acct, dispatch, user, onDone, existing }) {
     <form onSubmit={submit} className="space-y-2">
       <div className="grid gap-2 sm:grid-cols-2">
         <select value={category} onChange={e => setCategory(e.target.value)} required
-          className="nm-inset border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          className="nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none">
           <option value="" disabled>Select category…</option>
           {DOC_CATEGORIES.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
@@ -146,7 +146,7 @@ function LogActivityForm({ acct, dispatch, onDone, existing }) {
       </div>
       <KeptAttachments kept={kept} setKept={setKept} />
       <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
-        className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
+        className="nm-inset w-full px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
       <div className="flex flex-wrap items-center gap-2">
         <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
         <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
@@ -187,7 +187,7 @@ function AddTaskForm({ acct, dispatch, onDone, team = [], user, existing }) {
       </div>
       <KeptAttachments kept={kept} setKept={setKept} />
       <textarea placeholder="Detailed comment (optional)…" value={details} onChange={e => setDetails(e.target.value)} rows={3}
-        className="nm-inset w-full border-0 px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
+        className="nm-inset w-full px-3 py-2 text-sm text-slate-800 outline-none placeholder:text-slate-500" />
       <div className="flex flex-wrap items-center gap-2">
         <input ref={fileRef} type="file" multiple className="text-xs text-slate-700 file:nm-btn file:mr-2 file:cursor-pointer file:border-0 file:px-3 file:py-1 file:text-xs file:font-bold file:text-slate-700" />
         <span className="text-[11px] text-slate-500">max {MAX_FILE_MB} MB each</span>
@@ -297,13 +297,13 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       <F label="Billing currency"><Select value={v.currency} onChange={e => set("currency", e.target.value)} options={CURRENCIES} className="w-full" /></F>
       <F label="Industry"><Input value={v.industry} onChange={e => set("industry", e.target.value)} /></F>
       <F label="CSM owner"><select data-csm-select value={v.csm} disabled={!admin} onChange={e => set("csm", e.target.value)}
-          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
+          className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
           {csmOptions.map(o => <option key={o} value={o}>{o}</option>)}
         </select>
         {!admin && <div data-csm-lock className="mt-0.5 text-[11px] text-slate-500">🔒 Only admins can change this</div>}
       </F>
       <F label="Lead"><select data-lead-select value={leadId} disabled={!admin} onChange={e => setLeadId(e.target.value)}
-          className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
+          className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none disabled:opacity-60">
           <option value=""></option>
           {leadOptions.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
         </select>
@@ -326,7 +326,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       {v.billingCompleted && <F label="Billing date"><Input type="date" value={v.billingCompletedDate} onChange={e => set("billingCompletedDate", e.target.value)} /></F>}
       <F label="Parent account">{hasSubs
         ? <div className="py-1.5 text-xs text-slate-500">Has sub-accounts — can't also be a sub.</div>
-        : <select value={v.parentId} onChange={e => set("parentId", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+        : <select value={v.parentId} onChange={e => set("parentId", e.target.value)} className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none">
             <option value="">None (top-level)</option>
             {parentOptions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>}
@@ -334,7 +334,7 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
       {cfs.length > 0 && <div className="col-span-2 mt-1 text-xs font-bold text-slate-700 md:col-span-4">Custom fields</div>}
       {cfs.map(d => {
         const setC = val => setCv(s => ({ ...s, [d.id]: val }));
-        const cls = "nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none";
+        const cls = "nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none";
         if (d.type === "bool") return <label key={d.id} className="flex items-center gap-1 text-xs text-slate-700">
           <input type="checkbox" data-custom-field={d.id} checked={!!cv[d.id]} onChange={e => setC(e.target.checked)} />{d.label}</label>;
         if (d.type === "select") {
@@ -352,14 +352,14 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
         <summary className="cursor-pointer text-xs font-bold text-slate-700">Billing</summary>
         <div className="mt-2 grid grid-cols-2 gap-3 md:grid-cols-4">
           <F label="Country"><Select name="country" value={v.country} onChange={e => set("country", e.target.value)} options={["", "IN", "US", "PH"]} className="w-full" /></F>
-          <F label="Billing entity"><select name="billingEntityId" value={v.billingEntityId} onChange={e => set("billingEntityId", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none">
+          <F label="Billing entity"><select name="billingEntityId" value={v.billingEntityId} onChange={e => set("billingEntityId", e.target.value)} className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none">
             <option value="">Auto from country</option>
             {entities.map(en => <option key={en.id} value={en.id}>{en.name}</option>)}
           </select></F>
           <F label="Billing email"><Input name="billingEmail" type="email" onInvalid={() => setBillingOpen(true)} value={v.billingEmail} onChange={e => set("billingEmail", e.target.value)} /></F>
           <F label="Customer tax ID"><Input name="customerTaxId" value={v.customerTaxId} onChange={e => set("customerTaxId", e.target.value)} /></F>
           {v.country === "IN" && <F label="Customer state"><Input name="customerState" value={v.customerState} onChange={e => set("customerState", e.target.value)} /></F>}
-          <F label="Billing address"><textarea name="billingAddress" rows={2} value={v.billingAddress} onChange={e => set("billingAddress", e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none" /></F>
+          <F label="Billing address"><textarea name="billingAddress" rows={2} value={v.billingAddress} onChange={e => set("billingAddress", e.target.value)} className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none" /></F>
           <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" name="taxExempt" checked={v.taxExempt} onChange={e => set("taxExempt", e.target.checked)} />Tax exempt</label>
           {v.taxExempt && <F label="Exemption note"><Input name="taxExemptNote" value={v.taxExemptNote} onChange={e => set("taxExemptNote", e.target.value)} /></F>}
         </div>

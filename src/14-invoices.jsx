@@ -87,7 +87,7 @@ function WaiveDialog({ inv, onDone, onClose }) {
     <Modal label={`${unsent ? "Discard" : "Waive"} ${inv.number}`} onClose={onClose}>
       <h3 className="mb-2 text-sm font-bold text-slate-800">{unsent ? "Discard" : "Waive"} {inv.number}</h3>
       <label className="block text-xs text-slate-700">Reason (required)
-        <textarea data-waive-reason rows={3} value={reason} onChange={e => setReason(e.target.value)} className="nm-inset w-full border-0 px-3 py-1.5 text-sm text-slate-800 outline-none" /></label>
+        <textarea data-waive-reason rows={3} value={reason} onChange={e => setReason(e.target.value)} className="nm-inset w-full px-3 py-1.5 text-sm text-slate-800 outline-none" /></label>
       <div className="mt-4 flex gap-2">
         <Btn kind="primary" data-waive-confirm disabled={!reason.trim() || busy} onClick={async () => {
           setBusy(true);

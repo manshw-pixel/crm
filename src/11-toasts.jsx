@@ -26,17 +26,19 @@ function ToastProvider({ children }) {
     <ToastCtx.Provider value={pushToast}>
       {children}
       {/* phones: full width with 12px margins, lifted clear of the iPhone home bar; sm+: the
-          320px bottom-right stack */}
-      <div className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[60] flex flex-col gap-2 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-80" aria-live="polite">
+          320px bottom-right stack. Errors never auto-dismiss, so the toast body is click-through
+          (pointer-events-none) and only its buttons take clicks: a sticky toast must not block
+          the control beneath it (it covered an invoice row's Retry button). */}
+      <div className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-[60] flex flex-col gap-2 sm:inset-x-auto sm:bottom-4 sm:right-4 sm:w-80 pointer-events-none" aria-live="polite">
         {toasts.map(t => (
           <div key={t.id} data-toast data-tone={t.tone} role={t.tone === "error" ? "alert" : "status"}
                className={`nm flex items-start gap-2 border-l-4 p-3 text-sm ${TOAST_TONE[t.tone]}`}>
             <span className="flex-1 whitespace-pre-line">{t.text}</span>
-            {t.undo && <button data-toast-undo className="font-bold text-indigo-600 hover:underline"
+            {t.undo && <button data-toast-undo className="pointer-events-auto font-bold text-indigo-600 hover:underline"
               onClick={() => { t.undo(); dismiss(t.id); }}>Undo</button>}
-            {t.action && <button data-toast-action className="font-bold text-indigo-600 hover:underline"
+            {t.action && <button data-toast-action className="pointer-events-auto font-bold text-indigo-600 hover:underline"
               onClick={() => { t.action.run(); dismiss(t.id); }}>{t.action.label}</button>}
-            <button aria-label="Dismiss notification" className="text-slate-400 hover:text-slate-700"
+            <button aria-label="Dismiss notification" className="pointer-events-auto text-slate-400 hover:text-slate-700"
               onClick={() => dismiss(t.id)}>✕</button>
           </div>
         ))}
