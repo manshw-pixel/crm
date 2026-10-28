@@ -21,9 +21,10 @@ for (const [theme, page_, card] of [["light", "rgb(244, 245, 251)", "rgb(255, 25
       await page.setViewportSize({ width: 1440, height: 900 });
       const body = await cs(page, "body", ["backgroundColor"]);
       assert(body.backgroundColor === page_, "page bg: " + body.backgroundColor);
-      const c = await cs(page, "main .nm", ["borderTopLeftRadius", "borderTopWidth", "backgroundColor"]);
+      const c = await cs(page, "main .nm", ["borderTopLeftRadius", "borderTopColor", "backgroundColor"]);
       assert(c.borderTopLeftRadius === "16px", "card radius: " + c.borderTopLeftRadius);
-      assert(c.borderTopWidth === "0px", "card border: " + c.borderTopWidth);
+      // no visible border: 1px transparent, so a clickable Stat's hover border can still show
+      assert(c.borderTopColor === "rgba(0, 0, 0, 0)", "card border: " + c.borderTopColor);
       assert(c.backgroundColor === card, "card bg: " + c.backgroundColor);
       await page.click('button[title="Accounts"]');
       await page.waitForSelector("main thead th");
@@ -130,5 +131,44 @@ test("page title and card titles use the stage 1 type", async () => {
     assert(t.fontSize === "16px" && t.fontWeight === "700" && t.textTransform === "none", "card title: " + JSON.stringify(t));
     const m = await cs(page, "main[data-main]", ["paddingTop", "paddingLeft"]);
     assert(m.paddingTop === "28px" && m.paddingLeft === "36px", "main padding: " + JSON.stringify(m));
+  } finally { await browser.close(); }
+});
+
+// ---- review fixes ----
+test("toasts keep their tone stripe and padding; a clickable Stat keeps its hover border", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.evaluate(() => window.__toast({ text: "Saved nothing", tone: "error" }));
+    await page.waitForSelector("[data-toast]");
+    const t = await cs(page, "[data-toast]", ["borderLeftWidth", "paddingTop", "borderTopLeftRadius"]);
+    assert(t.borderLeftWidth === "4px" && t.paddingTop === "12px", "toast: " + JSON.stringify(t));
+    const stat = page.locator("[data-stat][role=button]").first();
+    await stat.hover();
+    const ok = await page.waitForFunction(() => { const e = document.querySelector("[data-stat][role=button]").closest(".nm"); return getComputedStyle(e).borderTopColor === "rgb(165, 180, 252)"; }, null, { timeout: 3000 }).then(() => true).catch(() => false);
+    assert(ok, "stat hover border: " + await stat.evaluate(e => getComputedStyle(e.closest(".nm")).borderTopColor));
+  } finally { await browser.close(); }
+});
+
+test("a Tailwind utility on a primitive still wins (no !important cascade)", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const r = await page.evaluate(() => { const d = document.createElement("div"); d.className = "nm !p-0 rounded-lg"; document.querySelector("main").appendChild(d);
+      const s = getComputedStyle(d); const v = [s.paddingTop, s.borderTopLeftRadius]; d.remove(); return v; });
+    assert(r[0] === "0px" && r[1] === "8px", "utility vs .nm: " + r);
+  } finally { await browser.close(); }
+});
+
+test("Settings at 390px has no page-level horizontal overflow", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.click("[data-nav-toggle]");
+    await page.click('nav[aria-label="Main"] button[title="Settings"]');
+    await page.waitForSelector("#set-users", { timeout: 10000 });
+    await page.waitForTimeout(300);
+    const w = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert(w <= 390, "Settings scrollWidth at 390px: " + w);
   } finally { await browser.close(); }
 });

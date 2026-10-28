@@ -93,63 +93,12 @@
   ::-webkit-scrollbar { height: 8px; width: 8px; }
   ::-webkit-scrollbar-thumb { background: rgb(var(--slate-300)); border-radius: 4px; }
   /* design tokens: quiet surfaces, hairline borders, color = meaning */
-  .nm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
-  .nm-sm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 10px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
-  .nm-inset { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: border-color .12s, box-shadow .12s; }
-  .nm-inset:focus, .nm-inset:focus-within { border-color: rgb(var(--indigo-500)); box-shadow: 0 0 0 3px rgb(var(--indigo-500) / .12); outline: none; }
-  .nm-btn { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: background .12s; }
-  .nm-btn:hover { background: rgb(var(--slate-100)); }
-  .nm-btn:active { background: rgb(var(--slate-200)); }
-  .grad { background: rgb(var(--indigo-600)); border-radius: 8px; box-shadow: 0 1px 2px rgba(79, 70, 229, .3); }
-  .grad:hover { background: rgb(var(--indigo-700)); }
-  .grad:active { background: rgb(var(--indigo-800)); }
   input[type=range] { accent-color: rgb(var(--indigo-600)); }
-  /* ---- UI refresh stage 1: primitives (values from the approved preview stage1.css) ---- */
-  /* cards: white, no border, r16, soft shadow */
-  .nm, .nm-sm { background: var(--f-card) !important; border: 0 !important; border-radius: 16px !important; box-shadow: var(--f-shadow) !important; }
-  .nm.p-4, .nm.p-3 { padding: 20px !important; }
-  [data-stat] > div:first-child { font-size: 13px !important; font-weight: 600 !important; text-transform: none !important; letter-spacing: normal !important; color: var(--f-kpi) !important; }
-  .nm-sm .uppercase { font-size: 12px !important; font-weight: 600 !important; text-transform: none !important; letter-spacing: normal !important; color: var(--f-kpi) !important; }
-  main .text-slate-500 { color: var(--f-meta); }
-  /* buttons: frame-level 40px / r12; inside cards compact 34px / r10 */
-  main .grad, main .nm-btn { border-radius: 12px !important; font-weight: 600; }
-  main .grad { background: var(--f-primary) !important; color: #fff !important; border: 0 !important; box-shadow: none !important; }
-  main .grad:hover { background: var(--f-primary-hi) !important; }
-  main .nm-btn { background: var(--f-btn2-bg) !important; border: 1px solid var(--f-line) !important; color: var(--f-btn2-tx) !important; }
-  main .nm-btn:hover { background: var(--f-band) !important; }
-  main :is(.grad, .nm-btn):not(.lg\:hidden):not(:is(.nm, .nm-sm, table, [role=dialog]) *) { min-height: 40px; font-size: 13.5px !important; padding-left: 16px; padding-right: 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
-  main :is(.grad, .nm-btn).h-9.w-9:not(.lg\:hidden):not(:is(.nm, .nm-sm) *) { display: flex; width: 40px !important; height: 40px !important; padding: 0 !important; }
-  main :is(.nm, .nm-sm) :is(.grad, .nm-btn) { border-radius: 10px !important; min-height: 34px; font-size: 13px !important; }
-  /* segmented scope toggle (My book / All) */
-  [data-scope-toggle] { background: var(--f-seg-bg) !important; border: 0 !important; border-radius: 12px !important; padding: 4px !important; gap: 0 !important; box-shadow: none !important; }
-  [data-scope-toggle] button { font-size: 13px !important; font-weight: 600 !important; color: var(--f-seg-tx) !important; padding: 8px 14px !important; border-radius: 9px !important; background: transparent !important; box-shadow: none !important; }
-  [data-scope-toggle] button.bg-indigo-600 { background: var(--f-seg-on) !important; color: var(--f-seg-on-tx) !important; box-shadow: var(--f-seg-shadow) !important; }
-  /* inputs: frame-level 42px / r12; inside cards r10 */
-  main :is(input.nm-inset:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), .nm-inset:has(> input[type=search]), .nm-inset:has(> input[type=text])):not(:is(.nm, .nm-sm, table, [role=dialog]) *) { height: 42px; border-radius: 12px !important; border: 1px solid var(--f-line) !important; background: var(--f-card) !important; padding: 0 14px !important; font-size: 14px !important; }
-  main :is(.nm, .nm-sm) :is(input, select).nm-inset { border-radius: 10px !important; border-color: var(--f-line) !important; }
-  .nm-inset:focus, .nm-inset:focus-within { border-color: var(--f-primary) !important; box-shadow: 0 0 0 3px rgb(79 70 229 / .14) !important; }
-  main input.nm-inset[placeholder^="Search"] { height: 42px; border-radius: 12px !important; padding: 0 14px !important; font-size: 14px !important; border: 1px solid var(--f-line) !important; background: var(--f-card) !important; }
-  main select { max-width: 100%; }
-  /* tables */
-  main table { border-collapse: collapse; }
-  main thead, main thead tr, main thead th { background: var(--f-band) !important; }
-  main thead tr { border: 0 !important; }
-  main th { font-size: 11.5px !important; line-height: 16px; text-transform: uppercase !important; letter-spacing: .05em !important; color: var(--f-th) !important; font-weight: 700 !important; padding: 12px 10px !important; white-space: nowrap; }
-  main td { border: 0 !important; }
-  main table:has(> thead) td { padding: 14px 10px !important; white-space: nowrap; }
-  main table:has(> thead) :is(th, td):first-child { padding-left: 18px !important; }
-  main table:has(> thead) :is(th, td):last-child { padding-right: 18px !important; }
-  main table:has(> thead) td > span.flex { flex-wrap: nowrap; }
-  main tbody tr { border: 0 !important; border-top: 1px solid var(--f-rowline) !important; }
-  main tbody tr[data-row-spacer], main tbody tr[data-row-spacer] td { border: 0 !important; padding: 0 !important; }
-  main tbody tr:hover, [data-account-row]:hover { background: var(--f-band) !important; }
-  /* pills / badges */
-  main span.rounded-full:is([class*="px-"]), main span.rounded:is([class*="py-0.5"]), [data-days-chip] { border-radius: 999px !important; font-size: 12px !important; line-height: 16px; font-weight: 600 !important; padding: 3px 10px !important; }
-  /* focus + motion */
+  /* ---- stage 1: focus + motion. The only !important left in stage 1: the keyboard ring
+     must beat outline-none / focus:outline-none utilities (a11y), and reduced motion must
+     beat every utility and inline transition. ---- */
   :focus-visible { outline: 2px solid var(--f-ring) !important; outline-offset: 2px; }
   @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition-duration: .01ms !important; animation-duration: .01ms !important; } }
-  /* meta text on the page background: #64748b is 4.37:1 on #f4f5fb, nudged to pass 4.5 */
-  main .text-slate-500:not(:is(.nm, .nm-sm) *) { color: var(--f-page-meta); }
   /* ---- stage 1 sidebar: dark in both themes (values from the approved preview) ---- */
   [data-sidebar] { background: var(--f-side); color: var(--f-side-tx); padding: 22px 14px; box-sizing: border-box; height: 100vh; height: 100dvh; }
   [data-sidebar].w-52 { width: 248px; }
@@ -183,10 +132,57 @@
   /* ---- stage 1 page frame: main padding, page title, card titles ---- */
   main[data-main] { background: var(--f-page); }
   @media (min-width: 1024px) { main[data-main] { padding: 28px 36px 40px; } }
-  main h1 { font-size: 26px !important; line-height: 1.25 !important; font-weight: 800 !important; letter-spacing: -0.02em !important; color: var(--f-title) !important; }
-  main h1 button { font-weight: 800; }
+  /* print stays light: no dark sidebar on paper */
+  @media print { [data-sidebar] { display: none; } main[data-main] { margin-left: 0; padding: 0; } }
+</style>
+<style id="components">
+  /* Primitives, emitted by build.mjs BETWEEN Tailwind's components and utilities (Tailwind's
+     own "components" slot): they beat preflight but any utility on the element, including
+     !p-0 / rounded-lg / px-*, still wins. Stage 1 values from the approved preview. No
+     !important in this block. */
+  /* toasts keep their own look (tone stripe via border-l-4, p-3) */
+  .nm, .nm-sm { background: rgb(var(--white)); border: 1px solid rgb(var(--slate-200)); border-radius: 12px; box-shadow: 0 1px 2px rgba(15, 23, 42, .04); }
+  /* cards: no visible border (transparent 1px so a Stat's hover:border-indigo-300 still shows), r16, soft shadow */
+  .nm:where(:not([data-toast])), .nm-sm { background: var(--f-card); border-color: transparent; border-radius: 16px; box-shadow: var(--f-shadow); }
+  .nm.p-4:where(:not([data-toast])), .nm.p-3:where(:not([data-toast])) { padding: 20px; }
+  .nm-inset { background: rgb(var(--white)); border: 1px solid rgb(var(--line-strong)); border-radius: 8px; transition: border-color .12s, box-shadow .12s; }
+  .nm-inset:focus, .nm-inset:focus-within { border-color: var(--f-primary); box-shadow: 0 0 0 3px rgb(79 70 229 / .14); outline: none; }
+  .nm-btn { background: var(--f-btn2-bg); border: 1px solid var(--f-line); color: var(--f-btn2-tx); border-radius: 12px; font-weight: 600; transition: background .12s; }
+  .nm-btn:hover { background: var(--f-band); }
+  .nm-btn:active { background: rgb(var(--slate-200)); }
+  .grad { background: var(--f-primary); color: #fff; border-radius: 12px; font-weight: 600; }
+  .grad:hover { background: var(--f-primary-hi); }
+  .grad:active { background: rgb(var(--indigo-800)); }
+  /* frame-level controls (outside cards, tables, dialogs): 40px buttons, 42px inputs */
+  main :where(.grad, .nm-btn):where(:not(.lg\:hidden)):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { min-height: 40px; font-size: 13.5px; padding-left: 16px; padding-right: 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
+  main :where(.grad, .nm-btn).h-9.w-9:where(:not(.lg\:hidden)) { display: flex; width: 40px; height: 40px; padding: 0; }
+  :where(.nm, .nm-sm) .grad, :where(.nm, .nm-sm) .nm-btn { border-radius: 10px; min-height: 34px; }
+  main :where(input.nm-inset:not([type=checkbox]):not([type=radio]):not([type=range]):not([type=file]), .nm-inset:has(> input[type=search]), .nm-inset:has(> input[type=text])):where(:not(:is(.nm, .nm-sm, table, [role=dialog]) *)) { height: 42px; border-radius: 12px; border-color: var(--f-line); background: var(--f-card); padding: 0 14px; font-size: 14px; }
+  :where(.nm, .nm-sm) .nm-inset { border-radius: 10px; border-color: var(--f-line); }
+  /* segmented scope toggle */
+  [data-scope-toggle] { background: var(--f-seg-bg); border: 0; border-radius: 12px; padding: 4px; gap: 0; box-shadow: none; }
+  [data-scope-toggle] > button { font-size: 13px; font-weight: 600; color: var(--f-seg-tx); padding: 8px 14px; border-radius: 9px; background: transparent; }
+  [data-scope-toggle] > button[aria-pressed="true"] { background: var(--f-seg-on); color: var(--f-seg-on-tx); box-shadow: var(--f-seg-shadow); }
+  /* data tables (a table with a <thead>): header band, row rules; only numeric/date cells and
+     the virtualized account rows stay on one line, text cells wrap */
+  main :where(table:has(> thead)) { border-collapse: collapse; }
+  main :where(table:has(> thead)) > thead :where(tr, th) { background: var(--f-band); border: 0; }
+  main :where(table:has(> thead)) > thead th { font-size: 11.5px; line-height: 16px; text-transform: uppercase; letter-spacing: .05em; color: var(--f-th); font-weight: 700; padding: 12px 10px; white-space: nowrap; }
+  main :where(table:has(> thead)) > tbody td { padding: 14px 10px; }
+  main :where(table:has(> thead)) :where(th, td):first-child { padding-left: 18px; }
+  main :where(table:has(> thead)) :where(th, td):last-child { padding-right: 18px; }
+  main :where(table:has(> thead)) > tbody > tr { border: 0; border-top: 1px solid var(--f-rowline); }
+  main :where(table:has(> thead)) > tbody > tr:hover { background: var(--f-band); }
+  [data-account-row] td, main :where(table:has(> thead)) td:where(.text-right, .tabular-nums) { white-space: nowrap; }
+  main tbody tr[data-row-spacer], main tbody tr[data-row-spacer] td { border: 0; padding: 0; }
+  /* pills: shape and type only; each chip keeps its own padding */
+  main span.rounded-full:where([class*="px-"]), [data-days-chip] { border-radius: 999px; font-weight: 600; }
+  /* KPI labels and in-card small labels: sentence case */
+  [data-stat] > div:first-child, .nm-sm .uppercase { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--f-kpi); }
+  [data-stat] > div:first-child { font-size: 13px; }
   .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
-  .nm > div.mb-3 { margin-bottom: 12px; }
+  main .text-slate-500:where(:not(:is(.nm, .nm-sm) *)) { color: var(--f-page-meta); }
+  main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }
 </style>
 </head>
 <body class="text-slate-700">

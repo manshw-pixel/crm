@@ -533,8 +533,6 @@ test("raise invoice: a failed PDF upload leaves Unsent with Retry, and retry reb
   assert((await page.locator('[data-invoice-row="IN-0001"] [data-download]').count()) === 0, "no PDF to download");
   assert((await page.locator('[data-invoice-row="IN-0001"] [data-resend]').innerText()) === "Retry send", "Retry send offered without a PDF");
   await page.keyboard.press("Escape");   // close the raise form, as a user would, to reach the list
-  // stage 1's 16px root moves the row under the bottom-right error toast; dismiss it, as a user would
-  for (const x of await page.locator('[aria-label="Dismiss notification"]').all()) await x.click();
   await page.click('[data-invoice-row="IN-0001"] [data-resend]');
   await page.waitForSelector('[data-invoice-row="IN-0001"] [data-invoice-status]:has-text("Pending")', { timeout: 8000 });
   assert((await rpcCalls(page, "attach_invoice_pdf")).length === 1, "PDF attached on retry");
@@ -668,4 +666,15 @@ test("dashboard finance card is absent when there are no invoices and no POs", a
   const { page, browser } = await openDash([]);
   assert((await page.locator("[data-finance-card]").count()) === 0);
   await browser.close();
+});
+
+// UI stage 1: data-table text cells wrap, so the Finance page never scrolls sideways on a phone
+test("stage 1: Finance at 390px has no page-level horizontal overflow", async () => {
+  const { page, browser } = await openRaise({ country: "IN", customerState: "Karnataka", billingEmail: "ap@acme.test" }, undefined, "", );
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(400);
+    const w = await page.evaluate(() => document.documentElement.scrollWidth);
+    assert(w <= 390, "Finance scrollWidth at 390px: " + w);
+  } finally { await browser.close(); }
 });
