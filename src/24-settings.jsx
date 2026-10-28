@@ -301,7 +301,7 @@ function CustomFieldsCard({ st, dispatch }) {
   );
 }
 
-function Settings({ st, dispatch, user, scored, theme }) {
+function Settings({ st, dispatch, user, scored, theme, feed }) {
   const toast = useToast();
   const w = st.settings.weights;
   const rates = st.settings.rates;
@@ -411,7 +411,7 @@ function Settings({ st, dispatch, user, scored, theme }) {
         ))}
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
-      <div id="set-integrations" className="scroll-mt-4"><IntegrationsCard st={st} dispatch={dispatch} user={user} /></div>
+      <div id="set-integrations" className="scroll-mt-4"><IntegrationsCard st={st} dispatch={dispatch} user={user} feed={feed} /></div>
       <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
       <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
       <div id="set-custom-fields" className="scroll-mt-4"><CustomFieldsCard st={st} dispatch={dispatch} /></div>
