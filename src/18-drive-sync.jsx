@@ -36,6 +36,61 @@ function fileSyncStatus(f, processed) {
   const older = Object.keys(processed).some(k => k.startsWith(f.name + "|"));
   return { kind: "new", text: older ? "changed — imports on next sync" : "new — imports on next sync" };
 }
+// One folder's card: status, folder controls, file list, last sync, template downloads. Presentation only --
+// IntegrationsCard owns the state and the single shared sync.
+function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, busy, lastSync, onPick, onClear, onSync, templates, notice, children }) {
+  const status = !handle ? "Not set" : needsGrant ? "Needs access" : "Connected";
+  const tone = status === "Connected" ? "text-emerald-600" : status === "Needs access" ? "text-amber-700" : "text-slate-500";
+  return (
+    <section data-feed={feed} className="nm-inset min-w-0 space-y-2 !rounded-xl p-3 text-sm">
+      <div className="flex flex-wrap items-center gap-2">
+        <h4 className="font-semibold">{label}</h4>
+        <span data-status className={`text-xs font-semibold ${tone}`}>{status}</span>
+      </div>
+      <div className="text-xs text-slate-500">{notice || hint}</div>
+      <div className="flex flex-wrap items-center gap-2">
+        {handle ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handle.name}</span>
+          {needsGrant && !notice && <span data-grant={feed} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
+            <Btn onClick={onSync}>Grant access</Btn></span>}
+          <button className="text-xs text-rose-500 hover:underline" onClick={onClear}>disconnect</button></>
+          : <Btn onClick={onPick}>Choose folder…</Btn>}
+        {handle && !notice && <Btn kind="primary" onClick={onSync}>{busy ? "Syncing…" : "Sync now"}</Btn>}
+      </div>
+      <div className="text-xs text-slate-500">{lastSync ? `Last sync ${fmtDate(lastSync)}` : "Never synced"}</div>
+      {files && <ul data-files={feed} className="space-y-0.5 text-xs">
+        {files.length === 0 && <li className="text-slate-500">No .csv files directly in this folder (subfolders aren't read).</li>}
+        {files.map(f => { const s = fileSyncStatus(f, processed); return (
+          <li key={f.name} data-file={f.name} className="flex items-center gap-2">
+            <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
+            <span className="truncate font-medium text-slate-700">{f.name}</span>
+            <span className="shrink-0 text-slate-500">{s.text}</span>
+          </li>); })}
+      </ul>}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-slate-500">Templates</span>
+        {templates.map(([name, fn, attr]) => <Btn key={name} onClick={fn} {...(attr ? { [attr]: true } : {})}>{name}</Btn>)}
+      </div>
+      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+    </section>
+  );
+}
+function SyncLog({ log }) {
+  const [filter, setFilter] = useState("All");
+  const rows = [...log].reverse().filter(l => filter === "All" ? true : filter === "Errors" ? l.err : l.folder === filter.toLowerCase());
+  return (
+    <div data-synclog className="mt-3 border-t border-slate-100 pt-2 text-xs">
+      <div className="mb-1 flex flex-wrap items-center gap-1">
+        <span className="mr-1 font-semibold text-slate-600">Activity</span>
+        {["All", "Sales", "Finance", "Errors"].map(f => <button key={f} type="button" data-log-filter={f} onClick={() => setFilter(f)}
+          className={`rounded-full px-2 py-0.5 ${filter === f ? "grad font-bold text-white" : "nm-btn text-slate-700"}`}>{f}</button>)}
+      </div>
+      <div className="max-h-48 overflow-y-auto">
+        {rows.length === 0 && <div className="py-0.5 text-slate-500">{log.length === 0 ? "No activity yet" : filter === "Errors" ? "No errors" : "No entries"}</div>}
+        {rows.map((l, i) => <div key={i} {...(l.err ? { "data-log-err": true } : {})} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
+      </div>
+    </div>
+  );
+}
 function IntegrationsCard({ st, dispatch, user }) {
   const [handles, setHandles] = useState({ sales: null, finance: null });
   const [busy, setBusy] = useState(false);
@@ -246,48 +301,31 @@ function IntegrationsCard({ st, dispatch, user }) {
     return () => clearInterval(t);
   }, [handles, sync]);
   if (!FS_SUPPORTED) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  const lastSync = feed => integ.log.filter(l => l.folder === feed).reduce((m, l) => (!m || l.t > m ? l.t : m), null);
+  const finAllowed = !(window.__qaHooks && window.__qaNoFinance) && canFinance(user); // __qaNoFinance: QA only, renders the finance-only notice
+  const common = key => ({ handle: handles[key], needsGrant: needsGrant[key], files: files[key], processed: integ.processed, busy,
+    lastSync: lastSync(key), onPick: () => pick(key), onClear: () => clear(key), onSync: () => sync(true) });
   return (
-    <Card title="Integrations — shared drive" right={<Btn kind="primary" onClick={() => sync(true)}>{busy ? "Syncing…" : "Sync now"}</Btn>}>
-      {[["sales", "Sales folder", "new-account CSVs (same columns as Accounts → Import CSV)"], ["finance", "Finance folder", "purchase orders, payments or billing CSVs — recognised by their columns"]].map(([key, label, hint]) => (
-        <React.Fragment key={key}>
-        <div className="mb-2 flex items-center gap-2 text-sm">
-          <span className="w-28 font-semibold">{label}</span>
-          {handles[key] ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handles[key].name}</span>
-            {needsGrant[key] && <span data-grant={key} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
-              <Btn onClick={() => sync(true)}>Grant access</Btn></span>}
-            <button className="text-xs text-rose-500 hover:underline" onClick={() => clear(key)}>disconnect</button></>
-            : <Btn onClick={() => pick(key)}>Choose folder…</Btn>}
-          <span className="ml-auto text-xs text-slate-500">{key === "finance" && !canFinance(user) ? "Only finance users can sync this folder" : hint}</span>
-        </div>
-        {files[key] && <ul data-files={key} className="mb-2 ml-0 space-y-0.5 text-xs sm:ml-[7.5rem]">
-          {files[key].length === 0 && <li className="text-slate-500">No .csv files directly in this folder (subfolders aren't read).</li>}
-          {files[key].map(f => { const s = fileSyncStatus(f, integ.processed); return (
-            <li key={f.name} data-file={f.name} className="flex items-center gap-2">
-              <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
-              <span className="truncate font-medium text-slate-700">{f.name}</span>
-              <span className="shrink-0 text-slate-500">{s.text}</span>
-            </li>); })}
-        </ul>}
-        </React.Fragment>
-      ))}
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <Btn onClick={salesTemplate}>Export sales CSV</Btn>
-        <Btn onClick={financeTemplate}>Export finance CSV</Btn>
-        <Btn data-onboarding-template onClick={onboardingTemplate}>Onboarding template</Btn>
-        <label className="flex items-center gap-1 text-xs text-slate-600">Sales rows go to
-          <select data-sales-default className="nm-inset rounded px-1 py-0.5 text-xs" value={integ.salesDefault || "accounts"}
-            onChange={e => dispatch({ type: "SET_INTEGRATIONS", integrations: { salesDefault: e.target.value } })}>
-            <option value="accounts">Accounts (straight to CSM)</option>
-            <option value="onboarding">Onboarding (implementation project)</option>
-          </select></label>
-        <span className="text-xs text-slate-500">Onboarding applies to new accounts only. To start a project for an existing account, put onboarding in its destination column.</span>
-        <span className="text-xs text-slate-500">prefilled with current accounts — save into the OneDrive folder, edit, sync picks it up</span>
+    <Card title="Integrations — shared drive">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <FeedCard feed="sales" label="Sales feed" hint="new-account CSVs (same columns as Accounts → Import CSV)" {...common("sales")}
+          templates={[["Accounts → CSM", () => salesTemplate()], ["Onboarding", () => onboardingTemplate(), "data-onboarding-template"]]}>
+          <label className="flex flex-wrap items-center gap-1 text-xs text-slate-600">Sales rows go to
+            <select data-sales-default className="nm-inset rounded px-1 py-0.5 text-xs" value={integ.salesDefault || "accounts"}
+              onChange={e => dispatch({ type: "SET_INTEGRATIONS", integrations: { salesDefault: e.target.value } })}>
+              <option value="accounts">Accounts (straight to CSM)</option>
+              <option value="onboarding">Onboarding (implementation project)</option>
+            </select></label>
+          <span className="text-xs text-slate-500">Onboarding applies to new accounts only. To start a project for an existing account, put onboarding in its destination column.</span>
+        </FeedCard>
+        <FeedCard feed="finance" label="Finance feed" hint="purchase orders, payments or billing CSVs — recognised by their columns" {...common("finance")}
+          notice={finAllowed ? null : "Only finance users can sync this folder"}
+          templates={[["Purchase orders", () => download("finance-purchase-orders.csv", poTemplateCSV())],
+            ["Payments", () => download("finance-payments.csv", paymentTemplateCSV())],
+            ["Billing completed", () => financeTemplate()]]} />
       </div>
-      <p className="mb-2 text-xs text-slate-500">Point these at folders synced from your shared drive (Google Drive / OneDrive desktop). New CSV files are imported once (re-import by re-saving the file); auto-checks every 5 min while the app is open.</p>
-      {integ.log.length > 0 && <div className="max-h-32 overflow-y-auto border-t border-slate-100 pt-2 text-xs">
-        {[...integ.log].reverse().map((l, i) => <div key={i} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
-      </div>}
+      <SyncLog log={integ.log} />
+      <p className="mt-2 text-xs text-slate-500">Works in Chrome or Edge, and only while a OneVio tab is open (checks every 5 minutes). Each file is imported once per saved version; editing and re-saving a file imports it again, and duplicate projects and POs are refused, so that's safe. Finance files are recognised by their columns, not their names; put each PO's PDF in the same folder.</p>
     </Card>
   );
 }
-

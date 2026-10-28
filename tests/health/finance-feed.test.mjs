@@ -42,7 +42,7 @@ const open = async (opts = {}) => {
 const setFolder = (page, files) => page.evaluate(f => { window.__folder.files = f; }, files);
 const syncNow = async page => {
   await page.evaluate(() => { window.__n0 = document.body.textContent.length; });
-  await page.click('button:has-text("Sync now")');
+  await page.click('[data-feed=finance] button:has-text("Sync now")');
   await page.waitForFunction(() => /Sync now/.test(document.body.innerText) && !/Syncing/.test(document.body.innerText), null, { timeout: 10000 });
   await page.waitForTimeout(300);
 };

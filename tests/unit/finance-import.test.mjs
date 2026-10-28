@@ -88,3 +88,16 @@ test("planPORows refuses an ambiguous account name but accountNo still resolves 
   const byNo = good.map((c, k) => (k === 1 ? "acme" : c));
   assert.equal(planPORows([PO_H, byNo], dupAccts).items[0].account.id, "a1");
 });
+
+import { poTemplateCSV, paymentTemplateCSV } from "../../src/lib/finance-import.js";
+import { parseCSV } from "../../src/lib/csv.js";
+
+test("poTemplateCSV exact text and kind", () => {
+  assert.equal(poTemplateCSV(), "accountNo,name,po_number,po_date,po_value,currency,years,billing_cycle,billing_start,po_file\nACC-1,Example Co (delete this row),PO-001,2026-11-01,100000,INR,1,annual,2026-11-01,PO-001.pdf");
+  assert.equal(financeFileKind(parseCSV(poTemplateCSV())[0]), "po");
+});
+
+test("paymentTemplateCSV exact text and kind", () => {
+  assert.equal(paymentTemplateCSV(), "invoice_number,status,paid_date,payment_ref,reason\nINV-0001,paid,2026-11-01,UTR123,");
+  assert.equal(financeFileKind(parseCSV(paymentTemplateCSV())[0]), "payment");
+});
