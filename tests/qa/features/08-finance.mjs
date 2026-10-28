@@ -264,8 +264,8 @@ export const scenarios = [
       await nav(page, "Accounts").waitFor({ timeout: 20000 });
       await waitForRunAccounts(page, runId);
       const po = `${thisRunId}-FEED`, pdf = `${po}.pdf`;
-      const csv = `name,po_date,po_value,currency,years,billing_cycle,billing_start,po_file
-${PO_ACCT(runId)},${isoPlus(0)},12000,PHP,1,annual,${isoPlus(200)},${pdf}
+      const csv = `name,po_number,po_date,po_value,currency,years,billing_cycle,billing_start,po_file
+${PO_ACCT(runId)},${po},${isoPlus(0)},12000,PHP,1,annual,${isoPlus(200)},${pdf}
 `;
       const files = lm => [{ name: `qa-${thisRunId}-po.csv`, text: csv, lastModified: lm }, { name: pdf, bytes: PO_PDF.toString("base64"), lastModified: lm }];
       const first = await feedFinance(page, files(Date.now()));

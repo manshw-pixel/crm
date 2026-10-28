@@ -71,3 +71,20 @@ test("planPaymentRows", () => {
   assert.equal(pay(["INV-0001", "paid", "", "", ""])[0].reason, "paid date required");
   assert.equal(pay(["INV-0001", "refund", "", "", ""])[0].reason, 'bad status "refund"');
 });
+
+test("planPaymentRows refuses an invoice number shared by two invoices", () => {
+  const dup = [{ id: "i1", number: "INV-0001", status: "pending" }, { id: "i9", number: "inv-0001", status: "pending" }];
+  const r = planPaymentRows([PAY_H, ["INV-0001", "paid", "30-10-2026", "", ""]], dup).items[0];
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "ambiguous invoice number INV-0001");
+});
+
+test("planPORows refuses an ambiguous account name but accountNo still resolves it", () => {
+  const dupAccts = [{ id: "a1", name: "Acme", accountNo: "ACC-1" }, { id: "a3", name: "ACME", accountNo: "ACC-3" }];
+  const byName = good.map((c, k) => (k === 0 ? "" : k === 1 ? "acme" : c));
+  const r = planPORows([PO_H, byName], dupAccts).items[0];
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, 'ambiguous account name "acme" — add accountNo');
+  const byNo = good.map((c, k) => (k === 1 ? "acme" : c));
+  assert.equal(planPORows([PO_H, byNo], dupAccts).items[0].account.id, "a1");
+});

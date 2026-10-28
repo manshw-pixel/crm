@@ -40,11 +40,14 @@ export function planPORows(rows, accounts) {
   const order = csvDateOrder(data.flatMap(({ r }) => [col(r, "podate"), col(r, "billingstart")]));
   if (!order) return { err: MIXED_DATES, items: [] };
   const byNo = new Map((accounts || []).filter(a => a.accountNo).map(a => [String(a.accountNo).trim().toLowerCase(), a]));
-  const byName = new Map((accounts || []).map(a => [String(a.name).trim().toLowerCase(), a]));
+  const byName = new Map();
+  for (const a of accounts || []) { const k = String(a.name).trim().toLowerCase(); byName.set(k, byName.has(k) ? "dup" : a); }
   const items = data.map(({ r, row }) => {
     const no = col(r, "accountno"), nm = col(r, "name");
-    const acct = (no && byNo.get(no.toLowerCase())) || (nm && byName.get(nm.toLowerCase())) || null;
     const refuse = reason => ({ row, ok: false, reason });
+    const byNameHit = !(no && byNo.get(no.toLowerCase())) && nm ? byName.get(nm.toLowerCase()) : null;
+    if (byNameHit === "dup") return refuse(`ambiguous account name "${nm}" — add accountNo`);
+    const acct = (no && byNo.get(no.toLowerCase())) || byNameHit || null;
     if (!acct) return refuse(`unknown account "${no || nm}"`);
     const po_number = col(r, "ponumber");
     if (!po_number) return refuse("po_number required");
@@ -77,11 +80,13 @@ export function planPaymentRows(rows, invoices) {
   const data = rows.slice(1).map((r, i) => ({ r, row: i + 2 })).filter(x => !blank(x.r));
   const order = csvDateOrder(data.map(({ r }) => col(r, "paiddate")));
   if (!order) return { err: MIXED_DATES, items: [] };
-  const byNo = new Map((invoices || []).map(i => [String(i.number).trim().toLowerCase(), i]));
+  const byNo = new Map();
+  for (const i of invoices || []) { const k = String(i.number).trim().toLowerCase(); byNo.set(k, byNo.has(k) ? "dup" : i); }
   const items = data.map(({ r, row }) => {
     const refuse = reason => ({ row, ok: false, reason });
     const num = col(r, "invoicenumber");
     const inv = byNo.get(num.toLowerCase());
+    if (inv === "dup") return refuse(`ambiguous invoice number ${num}`);
     if (!inv) return refuse(`unknown invoice ${num}`);
     const raw = col(r, "status");
     const status = raw.toLowerCase();
