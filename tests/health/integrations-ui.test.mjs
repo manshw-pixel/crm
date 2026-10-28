@@ -57,7 +57,6 @@ test("integrations ui: finance card offers three templates", async () => {
 
 const LOG = { log: [{ t: "2026-10-27T10:00:00.000Z", folder: "sales", file: "a.csv", msg: "all good", err: false },
   { t: "2026-10-28T10:00:00.000Z", folder: "finance", file: "b.csv", msg: "boom", err: true }] };
-const rows = page => page.$$eval("[data-synclog] [data-log-err], [data-synclog] .max-h-48 > div", els => els.length);
 const logText = page => page.evaluate(() => document.querySelector("[data-synclog] .max-h-48").innerText);
 test("integrations ui: log filter narrows to errors", async () => {
   const { page, browser } = await open({ integrations: LOG });

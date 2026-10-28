@@ -76,6 +76,29 @@ export const scenarios = [
       await page.locator("h1", { hasText: /^Tasks$/ }).waitFor({ timeout: 10000 });
     } },
 
+  { id: `${F}/integrations-cards`, feature: F, title: "Settings → Integrations shows the sales and finance cards, three finance templates, and the log filter switches", role: "admin",
+    run: async ({ page }) => {
+      const errors = [];
+      page.on("pageerror", e => errors.push(String(e?.message || e)));
+      await page.locator(MAIN).waitFor({ timeout: 20000 });
+      await nav(page, "Settings").click();
+      const card = page.locator("#set-integrations");
+      await card.waitFor({ timeout: 15000 });
+      await card.scrollIntoViewIfNeeded();
+      assert.equal(await card.locator("[data-feed]").count(), 2, "expected two feed cards");
+      await card.locator("[data-feed='sales']").waitFor({ timeout: 5000 });
+      const fin = card.locator("[data-feed='finance']");
+      await fin.waitFor({ timeout: 5000 });
+      const text = await fin.innerText();
+      for (const t of ["Purchase orders", "Payments", "Billing completed"]) assert.ok(text.includes(t), `finance card lacks template "${t}"`);
+      for (const f of ["All", "Sales", "Finance", "Errors"]) {
+        const b = card.locator(`[data-log-filter='${f}']`);
+        await b.click();
+        assert.equal(await card.locator("[data-synclog]").count(), 1, `activity log gone after filter ${f}`);
+      }
+      assert.deepEqual(errors, [], `page errors: ${errors.join("; ")}`);
+    } },
+
   { id: `${F}/bell`, feature: F, title: "Bell opens the alerts panel without a crash and closes on Escape", role: "csm",
     run: async ({ page }) => {
       const errors = [];

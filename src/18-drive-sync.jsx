@@ -50,7 +50,7 @@ function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, bus
       <div className="text-xs text-slate-500">{notice || hint}</div>
       <div className="flex flex-wrap items-center gap-2">
         {handle ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handle.name}</span>
-          {needsGrant && <span data-grant={feed} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
+          {needsGrant && !notice && <span data-grant={feed} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
             <Btn onClick={onSync}>Grant access</Btn></span>}
           <button className="text-xs text-rose-500 hover:underline" onClick={onClear}>disconnect</button></>
           : <Btn onClick={onPick}>Choose folder…</Btn>}
