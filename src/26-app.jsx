@@ -432,11 +432,11 @@ function App({ user, onBackToClients }) {
   return (
     <div className="flex min-h-screen">
       {mobileNav && <div data-nav-backdrop className="fixed inset-0 z-20 bg-scrim/30 lg:hidden" onClick={() => setMobileNav(false)} />}
-      <aside className={`fixed inset-y-0 left-0 z-30 flex flex-col border-r border-slate-200 bg-white transition-all ${mobileNav ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 ${collapsed ? "w-14" : "w-52"}`}>
+      <aside data-sidebar className={`fixed inset-y-0 left-0 z-30 flex flex-col transition-all ${mobileNav ? "translate-x-0" : "-translate-x-full"} lg:translate-x-0 ${collapsed ? "w-14" : "w-52"}`}>
         <div className={`flex items-center pb-4 pt-5 ${collapsed ? "justify-center px-0" : "justify-between px-5"}`}>
-          {!collapsed && <span className="text-lg font-extrabold tracking-tight text-slate-900">One<span className="text-indigo-600">Vio</span></span>}
+          {!collapsed && <span data-brand><span data-logo-tile aria-hidden="true">O</span>OneVio</span>}
           <button title={collapsed ? "Expand sidebar" : "Collapse sidebar"} aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"} onClick={() => setCollapsed(c => !c)}
-            className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700">
+            data-collapse className="rounded-md p-1">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               {collapsed ? <polyline points="9 18 15 12 9 6" /> : <polyline points="15 18 9 12 15 6" />}
             </svg>
@@ -446,34 +446,35 @@ function App({ user, onBackToClients }) {
           {views.map(v => (
             <button key={v} title={v} aria-label={v} aria-current={view === v ? "page" : undefined}
               onClick={() => { setMobileNav(false); if (v === "Accounts") resetAccounts(); else { setView(v); setAcctId(null); } }}
-              className={`flex w-full items-center rounded-lg py-2 text-sm font-medium ${collapsed ? "justify-center px-0" : "gap-2.5 px-3"} ${view === v ? "bg-indigo-50 font-semibold text-indigo-700" : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"}`}>
+              className={`flex w-full items-center ${collapsed ? "justify-center" : ""}`}>
               {NAV_ICONS[v]}{!collapsed && <span className="flex-1 text-left">{v}</span>}
             </button>
           ))}
         </nav>
-        <div className={`border-t border-slate-200 ${collapsed ? "p-2" : "p-4"}`}>
+        <div data-profile>
           {!collapsed && <>
             {user.platform_admin && <div data-current-org className="mb-1 flex items-center gap-1 truncate rounded bg-amber-50 px-1.5 py-0.5 text-xs font-semibold text-amber-700" title="You are viewing this workspace as platform admin">
               <button data-back-to-clients className="hover:underline" onClick={onBackToClients}>← Clients</button>
               <span className="truncate">· {orgName || "…"}</span>
             </div>}
-            <div className="truncate text-sm font-semibold text-slate-900">{user.name}</div>
-            <div className="text-xs text-slate-500">{user.role}{loaded ? "" : " · loading…"}</div>
+            <div data-avatar aria-hidden="true">{initialsOf(user.name, user.email)}</div>
+            <div data-profile-name className="truncate">{user.name}</div>
+            <div data-profile-role>{user.role}{loaded ? "" : " · loading…"}</div>
           </>}
           {/* Light -> Dark -> Auto. Settings is admin-only, so this is the control most users
               have and it must reach all three choices. */}
           <button data-theme-toggle onClick={() => theme.choose(nextChoice(theme.choice))}
             aria-label={`Theme: ${{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]}. Switch to ${{ light: "Light", dark: "Dark", auto: "Auto" }[nextChoice(theme.choice)]}`}
             title={`Theme: ${{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]}`}
-            className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "mb-2 flex h-9 w-9 items-center justify-center" : "mt-3 flex w-full items-center justify-center gap-1.5 px-3 py-1.5"}`}>
+            data-side-btn className={`flex items-center justify-center ${collapsed ? "mb-2 h-9 w-9" : "w-full gap-1.5"}`}>
             <span aria-hidden="true">{{ light: "☀", dark: "☾", auto: "A" }[theme.choice]}</span>
             {!collapsed && <span>{{ light: "Light", dark: "Dark", auto: "Auto" }[theme.choice]} theme</span>}
           </button>
-          <button title={`Sign out (${user.name})`} className={`nm-btn text-xs font-semibold text-slate-600 ${collapsed ? "flex h-9 w-9 items-center justify-center" : "mt-2 w-full px-3 py-1.5"}`}
+          <button title={`Sign out (${user.name})`} data-side-btn className={`flex items-center justify-center ${collapsed ? "h-9 w-9" : "w-full"}`}
             onClick={signOut}>{collapsed ? "⎋" : "Sign out"}</button>
         </div>
       </aside>
-      <main className={`${collapsed ? "lg:ml-14" : "lg:ml-52"} min-w-0 flex-1 px-4 py-4 transition-all lg:px-6 lg:py-5`}>
+      <main data-main className={`${collapsed ? "lg:ml-14" : "lg:ml-52"} min-w-0 flex-1 px-4 py-4 transition-all lg:px-6 lg:py-5`}>
       <div className="mb-5 flex flex-wrap items-center gap-3">
         <button data-nav-toggle aria-label="Open menu" onClick={() => setMobileNav(true)}
           className="nm-btn flex h-9 w-9 items-center justify-center text-slate-600 lg:hidden">
@@ -597,7 +598,7 @@ function Root() {
           const { data: o } = await sb.from("orgs").select("disabled").eq("id", data.org_id).single();
           suspended = !!o?.disabled;
         }
-        CURRENT_ORG = data.org_id; setOrgDisabled(suspended); setProfile(data);
+        CURRENT_ORG = data.org_id; setOrgDisabled(suspended); setProfile({ ...data, email: data.email ?? session.user?.email });
       })
       // A throw (network failure, or the orgs read rejecting) would otherwise leave
       // "Loading profile…" on screen forever with no way out.

@@ -51,3 +51,70 @@ test("stage 1: a frame-level button is 40px with a 12px radius", async () => {
     assert(b[0] === 40 && b[1] === "12px", "bell button: " + b);
   } finally { await browser.close(); }
 });
+
+// ---- Task 2: sidebar shell ----
+// the mock returns the whole seeded profile row, so an email on it stands in for the session email
+const asUser = (name, email) => `window.__seedProfile = { id: "u1", name: ${JSON.stringify(name)}, role: "admin", org_id: "org-a", platform_admin: false${email ? `, email: ${JSON.stringify(email)}` : ""} };`;
+for (const [name, want] of [["Priya Shah", "PS"], ["Rahul", "R"], ["", "Z"]]) {
+  test(`sidebar shows the logo tile and the signed-in user's initials (${JSON.stringify(name)} -> ${want})`, async () => {
+    const pre = asUser(name, name ? "" : "z@x.io");
+    const { page, browser } = await open("light", pre);
+    try {
+      await page.setViewportSize({ width: 1440, height: 900 });
+      const tile = await page.$eval("[data-logo-tile]", e => [e.innerText.trim(), getComputedStyle(e).width, getComputedStyle(e).backgroundColor]);
+      assert(tile[0] === "O" && tile[1] === "32px" && tile[2] === "rgb(99, 102, 241)", "logo tile: " + tile);
+      const av = await page.$eval("[data-avatar]", e => [e.innerText.trim(), getComputedStyle(e).width]);
+      assert(av[0] === want && av[1] === "34px", "avatar: " + av);
+      const side = await page.$eval("[data-sidebar]", e => [getComputedStyle(e).backgroundColor, e.getBoundingClientRect().width]);
+      assert(side[0] === "rgb(17, 24, 39)" && side[1] === 248, "sidebar: " + side);
+    } finally { await browser.close(); }
+  });
+}
+
+test("active nav item is highlighted", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.click('nav[aria-label="Main"] button[title="Tasks"]');
+    await page.waitForSelector('nav[aria-label="Main"] button[title="Tasks"][aria-current="page"]');
+    const bgc = await page.$eval('nav[aria-label="Main"] [aria-current="page"]', e => getComputedStyle(e).backgroundColor);
+    assert(bgc === "rgb(31, 41, 55)", "active bg: " + bgc);
+    const other = await page.$eval('nav[aria-label="Main"] button[title="Accounts"]', e => getComputedStyle(e).backgroundColor);
+    assert(other === "rgba(0, 0, 0, 0)", "inactive bg: " + other);
+  } finally { await browser.close(); }
+});
+
+test("collapsed sidebar shows icons only and still navigates", async () => {
+  const { page, browser } = await open("dark");
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.click('[aria-label="Collapse sidebar"]');
+    await page.waitForFunction(() => document.querySelector("[data-sidebar]").getBoundingClientRect().width === 56, null, { timeout: 3000 }).catch(() => {}); // width transitions
+    const t = await page.$eval('nav[aria-label="Main"]', e => e.innerText.trim());
+    assert(t === "", "collapsed nav must show no labels: " + JSON.stringify(t));
+    const s = await page.$eval("[data-sidebar]", e => [e.getBoundingClientRect().width, getComputedStyle(e).backgroundColor]);
+    assert(s[0] === 56 && s[1] === "rgb(7, 11, 22)", "collapsed sidebar: " + s);
+    await page.click('nav[aria-label="Main"] button[title="Accounts"]');
+    await page.waitForSelector('nav[aria-label="Main"] button[title="Accounts"][aria-current="page"]');
+    const h = await page.$eval("main h1", e => e.innerText.trim());
+    assert(h === "Accounts", "navigated: " + h);
+  } finally { await browser.close(); }
+});
+
+test("phone menu opens and closes at 390px", async () => {
+  const { page, browser } = await open("light");
+  try {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const x = () => page.$eval("[data-sidebar]", e => e.getBoundingClientRect().right);
+    const startClosed = await page.waitForFunction(() => document.querySelector("[data-sidebar]").getBoundingClientRect().right <= 0, null, { timeout: 3000 }).then(() => true).catch(() => false);
+    assert(startClosed, "menu starts closed: right=" + await x());
+    await page.click("[data-nav-toggle]");
+    const opened = await page.waitForFunction(() => document.querySelector("[data-sidebar]").getBoundingClientRect().left >= 0, null, { timeout: 3000 }).then(() => true).catch(() => false);
+    assert(opened, "menu opens");
+    const label = await page.$eval('nav[aria-label="Main"] button[title="Tasks"]', e => [e.innerText.trim(), getComputedStyle(e).color]);
+    assert(label[0] === "Tasks" && label[1] === "rgb(203, 213, 225)", "readable label: " + label);
+    await page.click('nav[aria-label="Main"] button[title="Tasks"]');
+    const closed = await page.waitForFunction(() => document.querySelector("[data-sidebar]").getBoundingClientRect().right <= 0, null, { timeout: 3000 }).then(() => true).catch(() => false);
+    assert(closed, "menu closes after navigating");
+  } finally { await browser.close(); }
+});
