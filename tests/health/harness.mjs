@@ -364,3 +364,11 @@ export async function gotoSettings(page) {
   await page.click("text=Settings");
   await page.waitForSelector("#set-users", { timeout: 10000 });
 }
+
+// ExcelJS is lazy-loaded from unpkg (src/18-drive-sync.jsx). Serve the identical npm file instead of the
+// network; the app's SRI hash is of this exact file, so a version drift fails the load loudly.
+export const EXCELJS_URL = "https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js";
+export async function routeExcelJS(page) {
+  const body = readFileSync(fileURLToPath(new URL("../node_modules/exceljs/dist/exceljs.min.js", import.meta.url)));
+  await page.route(EXCELJS_URL, r => r.fulfill({ status: 200, contentType: "application/javascript", headers: { "access-control-allow-origin": "*" }, body }));
+}

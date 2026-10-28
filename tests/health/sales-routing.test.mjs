@@ -145,7 +145,7 @@ test("onboarding template lists checklist ids", async () => {
       URL.createObjectURL = b => { b.text().then(t => { window.__dlText = t; }); return orig.call(URL, b); };
       HTMLAnchorElement.prototype.click = function () { window.__dl = this.download; };
     });
-    await page.click("[data-onboarding-template]");
+    await page.click('[data-feed=sales] [data-csv-template="Onboarding"]'); // the CSV link; the Excel button is covered by integrations-xlsx
     await page.waitForFunction(() => window.__dlText, null, { timeout: 5000 });
     const { name, text } = await page.evaluate(() => ({ name: window.__dl, text: window.__dlText }));
     const head = text.split("\n")[0];

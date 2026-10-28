@@ -48,7 +48,7 @@ test("integrations ui: finance card offers three templates", async () => {
   const { page, browser } = await open();
   const t = await feedText(page, "finance");
   for (const n of ["Purchase orders", "Payments", "Billing completed"]) assert(t.includes(n), "missing template " + n);
-  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), page.click('[data-feed=finance] button:has-text("Purchase orders")')]);
+  const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 10000 }), page.click('[data-feed=finance] [data-csv-template="Purchase orders"]')]);
   assert(dl.suggestedFilename() === "finance-purchase-orders.csv", dl.suggestedFilename());
   const s = await feedText(page, "sales");
   assert(s.includes("Accounts → CSM") && s.includes("Onboarding"), "sales templates: " + s);

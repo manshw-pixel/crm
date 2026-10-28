@@ -2,5 +2,8 @@
   "name": "crm-health-tests",
   "private": true,
   "type": "module",
-  "devDependencies": { "playwright": "^1.47.0" }
+  "devDependencies": {
+    "exceljs": "4.4.0",
+    "playwright": "^1.47.0"
+  }
 }

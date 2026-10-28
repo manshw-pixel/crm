@@ -207,7 +207,8 @@ const scriptHashes = [...out.matchAll(/<script>([\s\S]*?)<\/script>/g)]
   .map(m => `'sha256-${createHash("sha256").update(m[1], "utf8").digest("base64")}'`);
 const csp = [
   "default-src 'none'",
-  `script-src ${scriptHashes.join(" ")} data:`,
+  // ExcelJS is fetched on demand (src/18-drive-sync.jsx loadExcelJS, SRI-pinned): this one file only.
+  `script-src ${scriptHashes.join(" ")} data: https://unpkg.com/exceljs@4.4.0/dist/exceljs.min.js`,
   "style-src 'unsafe-inline'",
   "font-src data:",
   `img-src data: blob: ${sbOrigin}`,
