@@ -91,6 +91,11 @@ export const scenarios = [
       await fin.waitFor({ timeout: 5000 });
       const text = await fin.innerText();
       for (const t of ["Purchase orders", "Payments", "Billing completed"]) assert.ok(text.includes(t), `finance card lacks template "${t}"`);
+      // Excel template button plus the secondary CSV link (read-only: nothing is downloaded)
+      assert.equal(await fin.locator("button", { hasText: /^Purchase orders$/ }).count(), 1, "finance card lacks the Excel Purchase orders button");
+      const csvLink = fin.locator("[data-csv-template='Purchase orders']");
+      assert.equal(await csvLink.count(), 1, "finance card lacks the Purchase orders CSV link");
+      assert.equal((await csvLink.innerText()).trim(), "CSV", "CSV link text");
       for (const f of ["All", "Sales", "Finance", "Errors"]) {
         const b = card.locator(`[data-log-filter='${f}']`);
         await b.click();
