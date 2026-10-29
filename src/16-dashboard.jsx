@@ -230,8 +230,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           {qSnaps.length < 2 && <div className="text-sm text-slate-500 md:col-span-2 xl:col-span-3">ARR, NRR and GRR are shown by quarter (average of the months in it) — the lines appear once a second quarter has snapshots.</div>}
           {qSnaps.length >= 2 && <>
           <LineChart title="Total ARR (USD) · quarterly avg" points={qSnaps.map(s => s.totalARR)} months={qSnaps.map(s => s.quarter)} fmt={fmtMoney} />
-          <LineChart title="NRR · quarterly avg" points={qSnaps.map(s => s.nrr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="bg-emerald-500" />
-          <LineChart title="GRR · quarterly avg" points={qSnaps.map(s => s.grr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="bg-amber-500" />
+          <LineChart title="NRR · quarterly avg" points={qSnaps.map(s => s.nrr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#10b981" />
+          <LineChart title="GRR · quarterly avg" points={qSnaps.map(s => s.grr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#f59e0b" />
           </>}
           <StackedBars months={snaps.map(s => s.month)} series={[
             { label: "Green", values: snaps.map(s => s.Green || 0), color: RISK_HEX.Green },

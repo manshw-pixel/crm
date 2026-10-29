@@ -65,3 +65,35 @@ for (const theme of ["light", "dark"]) test(`bell badge text contrast >= 4.5:1 (
     assert(c[2] === "10.5px", "badge font: " + c[2]);
   } finally { await browser.close(); }
 });
+
+// Pills must land on Accounts actually filtered, not just navigate there.
+const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const P = [
+  seedAccount({ id: "g1", name: "Green One", csm: "Priya Shah", inputs: { usage: 95, sentiment: 95, tickets: 0, nps: 60 }, nextQbrDate: day(10), qbrFrequency: "Quarterly" }),
+  seedAccount({ id: "y1", name: "Yellow One", csm: "Priya Shah", inputs: { usage: 55, sentiment: 55, tickets: 3, nps: 0 }, nextQbrDate: day(120), qbrFrequency: "Quarterly" }),
+  seedAccount({ id: "r1", name: "Red One", csm: "Priya Shah", inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 }, nextQbrDate: day(-5), qbrFrequency: "Quarterly" }),
+];
+const pillRows = `window.__seedRows = { accounts: ${JSON.stringify(P.map(d => ({ id: d.id, data: d })))},
+  contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };
+  window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`;
+
+test("health and QBR pills open Accounts filtered to exactly the matching accounts", async () => {
+  const { page, browser } = await launch(pillRows);
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+    const names = async () => (await page.$$eval("[data-account-row]", r => r.map(x => x.textContent))).map(t => ["Green One", "Yellow One", "Red One"].filter(n => t.includes(n))[0]).sort();
+    const cases = [["Healthy", ["Green One"], "Green"], ["Watch", ["Yellow One"], "Yellow"], ["At risk", ["Red One"], "Red"], ["QBRs due (30d)", ["Green One", "Red One"], "All"]];
+    for (const [pill, want, riskSel] of cases) {
+      await page.goto(page.url()); // fresh dashboard each time
+      await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 3);
+      await page.waitForSelector(`[data-health-pill="${pill}"]`);
+      await page.click(`[data-health-pill="${pill}"]`);
+      await page.waitForSelector("[data-account-row]");
+      const got = await names();
+      assert(JSON.stringify(got) === JSON.stringify([...want].sort()), `${pill}: rows ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+      const sel = await page.$eval('select[aria-label="Filter by health risk"]', e => e.value);
+      assert(sel === riskSel, `${pill}: health filter ${sel}, wanted ${riskSel}`);
+    }
+  } finally { await browser.close(); }
+});
