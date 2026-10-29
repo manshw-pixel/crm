@@ -26,7 +26,7 @@ function TrendLine({ label, points, months, fmt, w = 150, h = 28 }) {
       <span className="w-28 shrink-0 text-xs text-slate-500">{label}</span>
       <svg width={w} height={h}><path d={d} fill="none" stroke={last >= first ? "#10b981" : "#f43f5e"} strokeWidth="2" />
         {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2" style={{ fill: "rgb(var(--slate-500))" }} />)}</svg>
-      <span className={`text-xs font-bold tabular-nums ${last >= first ? "text-emerald-600" : "text-rose-600"}`}>{fmt(last)}</span>
+      <span className={`text-xs font-bold tabular-nums ${last >= first ? "text-emerald-700" : "text-rose-600"}`}>{fmt(last)}</span>
     </div>
   );
 }

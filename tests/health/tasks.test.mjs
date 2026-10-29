@@ -227,3 +227,81 @@ window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin"
   assert(/Nothing in the queue — tasks appear here as playbooks seed them\./.test(txt), "empty state missing: " + txt.slice(0, 400));
   await browser.close();
 });
+
+/* ---------------- Stage 2 hand-off: owner filter + __goTasks ---------------- */
+test("filterTasks owner keeps only that owner's tasks; Unassigned matches empty owner; omitted is unchanged", async () => {
+  const { page, browser } = await bootHelpers();
+  const r = await page.evaluate(a => {
+    const tasks = [...a.tasks, { id: "u1", accountId: "a2", title: "Orphan", owner: "" }, { id: "u2", accountId: "a2", title: "No owner field" }];
+    const ids = o => window.__health.filterTasks(tasks, a.accts, o).map(x => x.id).join();
+    return { marco: ids({ owner: "Marco" }), unassigned: ids({ owner: "Unassigned" }), none: ids({}) };
+  }, { tasks: FTASKS, accts: ACCTS });
+  assert(r.marco === "r1", "owner Marco wrong: " + r.marco);
+  assert(r.unassigned === "u1,u2", "Unassigned wrong: " + r.unassigned);
+  assert(r.none === "h1,r1,m1,u1,u2", "omitted owner must not filter: " + r.none);
+  await browser.close();
+});
+
+const titlesOf = page => page.$$eval("[data-task-row] [data-task-title]", els => els.map(e => e.textContent.trim()));
+
+test("__goTasks({ owner }) opens Tasks filtered to that owner and the chip clears it", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length && window.__goTasks);
+  await page.evaluate(() => window.__goTasks({ owner: "Marco" }));
+  await page.waitForSelector("[data-task-owner-filter]");
+  assert(/Marco/.test(await page.textContent("[data-task-owner-filter]")), "chip should name Marco");
+  assert(await page.textContent("main h1") === "Tasks", "should be on Tasks");
+  // Marco owns only the q-week task, which sits in the (collapsed) This week section.
+  await page.getByText("This week", { exact: false }).first().click();
+  const t = await titlesOf(page);
+  assert(t.join() === "Send renewal quote", "only Marco's rows expected, got " + t);
+  await page.click("[data-task-owner-filter]");
+  await page.waitForFunction(() => !document.querySelector("[data-task-owner-filter]"));
+  const all = await titlesOf(page);
+  assert(all.includes("Escalate to exec") && all.includes("Send renewal quote"), "all rows back after clear: " + all);
+  await browser.close();
+});
+
+test("__goTasks({ overdue }) opens only the Overdue section", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length && window.__goTasks);
+  const hasToday = await page.evaluate(() => window.__store.getState().tasks.some(t => t.id === "q-today" && t.status !== "Done"));
+  assert(hasToday, "precondition: an open Today task must exist so a collapsed Today section is observable");
+  await page.evaluate(() => window.__goTasks({ overdue: true }));
+  await page.waitForSelector("[data-task-row]");
+  const t = await titlesOf(page);
+  assert(t.join() === "Escalate to exec", "only overdue rows should be open, got " + t);
+  await browser.close();
+});
+
+test("a plain Tasks visit drops a stale owner filter: sidebar while already on Tasks, and the palette", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length && window.__goTasks);
+  await page.evaluate(() => window.__goTasks({ owner: "Marco" }));
+  await page.waitForSelector("[data-task-owner-filter]");
+  // already on Tasks: clicking the sidebar item must reset to the unfiltered queue
+  await page.getByRole("button", { name: "Tasks" }).first().click();
+  await page.waitForFunction(() => !document.querySelector("[data-task-owner-filter]"));
+  assert((await titlesOf(page)).includes("Escalate to exec"), "unfiltered rows expected after sidebar click");
+  // palette: hand-off filter, leave to Dashboard, return via palette -> no stale chip
+  await page.evaluate(() => window.__goTasks({ owner: "Marco" }));
+  await page.waitForSelector("[data-task-owner-filter]");
+  await page.getByRole("button", { name: "Dashboard" }).first().click();
+  await page.keyboard.press("Control+k");
+  await page.keyboard.type("go to Tasks");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => /Work queue/.test(document.querySelector("#root")?.textContent || ""));
+  assert(!(await page.$("[data-task-owner-filter]")), "palette visit must not re-apply the old owner filter");
+  await browser.close();
+});
+
+test("owner chip truncates a long name and keeps the full name in its title", async () => {
+  const { page, browser } = await launch(QUEUE_SEED());
+  await page.waitForFunction(() => window.__goTasks);
+  const long = "Bartholomew-Maximilian Featherstonehaugh-Cholmondeley the Third";
+  await page.evaluate(n => window.__goTasks({ owner: n }), long);
+  await page.waitForSelector("[data-task-owner-filter]");
+  const r = await page.$eval("[data-task-owner-filter]", e => ({ title: e.title, trunc: !!e.querySelector(".truncate") }));
+  assert(r.title.includes(long) && r.trunc, "chip should truncate and carry the full name: " + JSON.stringify(r));
+  await browser.close();
+});

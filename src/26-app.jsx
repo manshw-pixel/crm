@@ -109,10 +109,11 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     </div>
   );
 }
-function SyncStatus() {
+const greetingFor = h => h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+function SyncStatus({ quietSaved }) {
   const [s, setS] = useState(() => writeQueue.queueState());
   useEffect(() => { window.__onQueueChange = setS; return () => { window.__onQueueChange = null; }; }, []);
-  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-500">Saved</span>;
+  if (s.status === "saved") return <span data-sync-status="saved" className={quietSaved ? "sr-only" : "text-xs text-slate-500"}>Saved</span>;
   if (s.status === "saving") return <span data-sync-status="saving" className="text-xs text-slate-500">Saving…</span>;
   // Deliberately persistent. A toast scrolls away; an unsaved change must not. This is also
   // the first honest answer to the observability gap -- an error state that STAYS on screen.
@@ -177,6 +178,11 @@ function App({ user, onBackToClients }) {
   const [acctId, setAcctId] = useState(null);
   const [implProjectId, setImplProjectId] = useState(null); // project detail open on the Implementation page
   useEffect(() => { if (view !== "Implementation") setImplProjectId(null); }, [view]); // returning shows the Board
+  const [taskFilter, setTaskFilter] = useState(null); // {owner?, overdue?} from a dashboard card/row
+  const goTasks = f => { setView("Tasks"); setAcctId(null); setTaskFilter({ ...(f || {}), t: Date.now() }); };
+  const plainTasks = () => goTasks({ owner: "" }); // sidebar / number key / palette: unfiltered queue, even if already on Tasks
+  const openProject = id => { setImplProjectId(id); setView("Implementation"); };
+  useEffect(() => { window.__goTasks = goTasks; });
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [pendingForm, setPendingForm] = useState(null); // form to auto-open on next AccountDetail mount (from palette)
@@ -265,7 +271,7 @@ function App({ user, onBackToClients }) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === "/") { e.preventDefault(); resetAccounts(); setTimeout(() => searchRef.current?.focus(), 50); }
       const i = "123456789".indexOf(e.key); // one key per sidebar item, in sidebar order
-      if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else { setView(views[i]); setAcctId(null); } }
+      if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else if (views[i] === "Tasks") plainTasks(); else { setView(views[i]); setAcctId(null); } }
       if (e.key === "Escape") setAcctId(null);
     };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
@@ -334,7 +340,8 @@ function App({ user, onBackToClients }) {
     if (!pb.length) return;
     st.accounts.forEach(a => {
       // no lower bound on daysUntil: accounts already past renewal still seed (spec: include overdue)
-      if (a.churn || daysUntil(a.renewalDate) > 90 || a.playbookSeededFor === a.renewalDate) return;
+      // `!(<= 90)` also skips an unparseable renewalDate (NaN), which crashed the whole app in isoMinus
+      if (a.churn || !(daysUntil(a.renewalDate) <= 90) || a.playbookSeededFor === a.renewalDate) return;
       const items = pb.filter(p => p.title.trim()).map(p => ({
         id: `pb-${a.id}-${a.renewalDate}-${p.id}`, accountId: a.id, playbook: true, renewalFor: a.renewalDate,
         title: "▶ " + p.title, due: isoMinus(a.renewalDate, p.offsetDays),
@@ -445,7 +452,7 @@ function App({ user, onBackToClients }) {
         <nav aria-label="Main" className={`flex-1 space-y-0.5 ${collapsed ? "px-2" : "px-3"}`}>
           {views.map(v => (
             <button key={v} title={v} aria-label={v} aria-current={view === v ? "page" : undefined}
-              onClick={() => { setMobileNav(false); if (v === "Accounts") resetAccounts(); else { setView(v); setAcctId(null); } }}
+              onClick={() => { setMobileNav(false); if (v === "Accounts") resetAccounts(); else if (v === "Tasks") plainTasks(); else { setView(v); setAcctId(null); } }}
               className={`flex w-full items-center ${collapsed ? "justify-center" : ""}`}>
               {NAV_ICONS[v]}{!collapsed && <span className="flex-1 text-left">{v}</span>}
             </button>
@@ -480,16 +487,22 @@ function App({ user, onBackToClients }) {
           className="nm-btn flex h-9 w-9 items-center justify-center text-slate-600 lg:hidden">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" /></svg>
         </button>
-        <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
+        {view === "Dashboard" && !acctId ? (
+          <div className="min-w-0 flex-1 basis-[280px]">
+            <p data-dash-date className="text-[13px] text-slate-500">{new Date().toLocaleDateString("en-GB", { weekday: "long" })}, {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long" })}</p>
+            <h1 data-dash-greeting title={`${greetingFor(new Date().getHours())}, ${(user.name || "").trim().split(/\s+/)[0] || "there"}`} className="mt-0.5 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">
+              {greetingFor(new Date().getHours())}, {(user.name || "").trim().split(/\s+/)[0] || "there"}</h1>
+          </div>
+        ) : <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
-          : view}</h1>
-        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className="nm-inset flex items-center lg:ml-3">
-          {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
+          : view}</h1>}
+        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className={`nm-inset flex items-center ${view === "Dashboard" && !acctId ? "lg:ml-auto" : "lg:ml-3"}`}>
+          {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "Whole team"]].map(([k, label]) => (
             <button key={k} aria-pressed={scope === k} onClick={() => setScopeSel(k)}
               className={scope === k ? "" : "hover:text-slate-900"}>{label}</button>
           ))}
         </div>}
-        <div className="ml-1"><SyncStatus /></div>
+        <div className="ml-1"><SyncStatus quietSaved={view === "Dashboard"} /></div>
         <div className="relative ml-1">
           <button data-bell ref={bellRef} onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notifOpen}
@@ -544,10 +557,10 @@ function App({ user, onBackToClients }) {
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
         {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} projectId={implProjectId} setProjectId={setImplProjectId} />}
-        {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} />}
-        {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} />}
+        {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} goTasks={goTasks} openProject={openProject} goRenewals={() => setView("Renewals")} />}
+        {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} initialFilter={taskFilter} />}
         {view === "Accounts" && (acctId
-          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={id => { setImplProjectId(id); setView("Implementation"); }} />
+          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={openProject} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} />)}
         {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
         {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
@@ -555,7 +568,7 @@ function App({ user, onBackToClients }) {
         </>}
       </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
-        go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
+        go={(v, id, form) => { if (id) openAccount(id, form); else if (v === "Tasks") plainTasks(); else { setView(v); setAcctId(null); } }} />
       <Copyright />
       </main>
     </div>

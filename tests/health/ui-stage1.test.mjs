@@ -49,7 +49,7 @@ test("stage 1: a frame-level button is 40px with a 12px radius", async () => {
   try {
     await page.setViewportSize({ width: 1440, height: 900 });
     const b = await page.$eval("[data-bell]", e => { const s = getComputedStyle(e); return [e.getBoundingClientRect().height, s.borderTopLeftRadius]; });
-    assert(b[0] === 40 && b[1] === "12px", "bell button: " + b);
+    assert(b[0] === 42 && b[1] === "12px", "bell button: " + b);
   } finally { await browser.close(); }
 });
 

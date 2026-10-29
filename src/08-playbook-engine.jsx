@@ -54,8 +54,9 @@ const bucketTasks = (tasks, today) => {
 /* Source of a task: the two seeders tag their own rows, anything untagged is hand-created. */
 const taskSource = t => (t.healthPlaybook ? "health" : t.playbook ? "renewal" : "manual");
 /* accountsById maps account id -> scored account (carries `risk` and `name`). */
-const filterTasks = (tasks, accountsById, { scope = "all", userName = "", source = "all", band = "all", q = "" } = {}) =>
+const filterTasks = (tasks, accountsById, { scope = "all", userName = "", source = "all", band = "all", q = "", owner = "" } = {}) =>
   tasks.filter(t => {
+    if (owner && (t.owner || "Unassigned") !== owner) return false;
     if (scope === "mine" && t.owner !== userName) return false;
     if (source !== "all" && taskSource(t) !== source) return false;
     const a = accountsById[t.accountId];

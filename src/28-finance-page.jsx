@@ -133,21 +133,22 @@ function FinanceCard({ goFinance }) {
   const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
   return (
     <div data-finance-card>
-      <Card title="Finance · this quarter" className="!p-3">
+      <Card title="Finance this quarter" className="!p-3"
+        right={<button data-fin-card-link type="button" className="text-[13px] font-semibold text-indigo-600 hover:underline" onClick={goFinance}>Open Finance</button>}>
         {err && <div className="mb-2 text-sm text-rose-600" data-fin-card-error>Could not load finance data: {err}</div>}
         {top && <div className="mb-2 flex items-center gap-3">
           <Donut data-fin-card-donut parts={[{ label: "Paid", value: s[top].paid, color: "#10b981" }, { label: "Pending", value: s[top].pending, color: "#f59e0b" },
             { label: "Waived", value: s[top].waived, color: "#94a3b8" }]} centre={top} />
           <div className="text-xs text-slate-500">{top} · {plural(count(top), "invoice")}</div></div>}
-        {curs.map(cur => <div key={cur} {...{ [`data-fin-card-${cur}`]: "" }} className="mb-2 text-sm">
-          <div className="font-semibold">{cur}</div>
-          <div className="tabular-nums text-emerald-700">Paid {cur} {amt(cur, "paid")}</div>
-          <div className="tabular-nums text-amber-700">Pending (incl. overdue) {cur} {amt(cur, "pending")}</div>
-          <div className="tabular-nums text-slate-600">Waived {cur} {amt(cur, "waived")}</div>
+        {curs.map(cur => <div key={cur} {...{ [`data-fin-card-${cur}`]: "" }} className="mb-2 space-y-1 text-[13.5px]">
+          <div className="font-semibold text-slate-900">{cur}</div>
+          {[["Paid", "paid", "bg-emerald-500"], ["Pending (incl. overdue)", "pending", "bg-amber-500"], ["Waived", "waived", "bg-slate-400"]].map(([label, k, dot]) => (
+            <div key={k} className="flex items-center gap-2.5"><span aria-hidden="true" className={`dash-dot ${dot}`} />
+              <span className="min-w-0 flex-1 truncate text-slate-500">{label}</span>
+              <b className="shrink-0 whitespace-nowrap tabular-nums text-slate-900">{cur} {amt(cur, k)}</b></div>))}
           {s[cur].overdueCount > 0 && <div className="text-rose-700">{s[cur].overdueCount} overdue</div>}</div>)}
-        {awaiting > 0 && <div data-fin-card-pos className="text-sm">{plural(awaiting, "PO")} awaiting approval</div>}
-        {due > 0 && <div data-fin-card-due className="text-sm">{plural(due, "invoice")} due to raise</div>}
-        <button data-fin-card-link className="mt-2 text-sm text-indigo-600 hover:underline" onClick={goFinance}>Open Finance →</button>
+        {awaiting > 0 && <div data-fin-card-pos className="border-t border-slate-100 pt-2 text-[12.5px] text-slate-500">{plural(awaiting, "PO")} awaiting approval</div>}
+        {due > 0 && <div data-fin-card-due className="border-t border-slate-100 pt-2 text-[12.5px] text-slate-500">{plural(due, "invoice")} due to raise</div>}
       </Card>
     </div>
   );
