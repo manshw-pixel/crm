@@ -34,14 +34,21 @@ function TaskRow({ t, a, dispatch, openAccount }) {
     </div>
   );
 }
-function TasksView({ st, scored, dispatch, user, openAccount }) {
+function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   const [scope, setScope] = useState("all");
   const [source, setSource] = useState("all");
   const [band, setBand] = useState("all");
   const [q, setQ] = useState("");
+  const [owner, setOwner] = useState("");
   const [open, setOpen] = useState({ overdue: true, today: true, week: false, later: false, done: false });
+  // Hand-off from a dashboard card/row: pre-apply an owner filter and/or open only Overdue.
+  useEffect(() => {
+    if (!initialFilter) return;
+    if (initialFilter.owner !== undefined) { setOwner(initialFilter.owner); setScope("all"); }
+    if (initialFilter.overdue) setOpen({ overdue: true, today: false, week: false, later: false, done: false });
+  }, [initialFilter]);
   const byId = useMemo(() => Object.fromEntries(scored.map(a => [a.id, a])), [scored]);
-  const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q });
+  const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q, owner });
   const buckets = bucketTasks(filtered, iso(Date.now()));
   const total = Object.values(buckets).reduce((n, list) => n + list.length, 0);
   const SECTIONS = [
@@ -50,6 +57,7 @@ function TasksView({ st, scored, dispatch, user, openAccount }) {
   return (
     <Card title={`Work queue (${total})`} right={
       <div className="flex flex-wrap items-center gap-2">
+        {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="nm-btn px-2 py-1 text-xs font-semibold text-indigo-700" aria-label={`Clear owner filter ${owner}`}>Owner: {owner} ×</button>}
         <Btn kind={scope === "mine" ? "primary" : "default"} onClick={() => setScope("mine")}>Mine</Btn>
         <Btn kind={scope === "all" ? "primary" : "default"} onClick={() => setScope("all")}>All</Btn>
         {/* plain <select> rather than the shared Select: these need readable labels with
