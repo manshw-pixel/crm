@@ -18,7 +18,7 @@ const tasks = Array.from({ length: 10 }, (_, i) => {
 export const crowdSeed = `window.__seedRows = { accounts: ${JSON.stringify(accts.map(a => ({ id: a.id, data: a })))}, contacts: [], activities: [],
   tasks: ${JSON.stringify(tasks)}, opportunities: [], team: [{ id: "u1", data: { name: "Priya" } }], settings: [] };`;
 
-const CARDS = ["Renewals in the next 90 days", "Needs attention", "Tasks this week", "Team tasks by owner"];
+const CARDS = ["Renewals in the next 90 days", "Needs attention", "Tasks this week", "Team tasks"];
 
 for (const width of [1280, 1440]) test(`dashboard narrow cards do not crowd at ${width}px with long names`, async () => {
   const { page, browser } = await launch(crowdSeed);

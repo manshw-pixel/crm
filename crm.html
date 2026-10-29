@@ -171,6 +171,9 @@
   [data-scope-toggle] { background: var(--f-seg-bg); border: 0; border-radius: 12px; padding: 4px; gap: 0; box-shadow: none; }
   [data-scope-toggle] > button { font-size: 13px; font-weight: 600; color: var(--f-seg-tx); padding: 8px 14px; border-radius: 9px; background: transparent; }
   [data-scope-toggle] > button[aria-pressed="true"] { background: var(--f-seg-on); color: var(--f-seg-on-tx); box-shadow: var(--f-seg-shadow); }
+  .seg-toggle { display: flex; background: var(--f-seg-bg); border-radius: 12px; padding: 4px; }
+  .seg-toggle > button { font-size: 13px; font-weight: 600; color: var(--f-seg-tx); padding: 6px 12px; border-radius: 9px; background: transparent; cursor: pointer; }
+  .seg-toggle > button[aria-pressed="true"] { background: var(--f-seg-on); color: var(--f-seg-on-tx); box-shadow: var(--f-seg-shadow); }
   /* data tables (a table with a <thead>): header band, row rules; only numeric/date cells and
      the virtualized account rows stay on one line, text cells wrap */
   main :where(table:has(> thead)) { border-collapse: collapse; }

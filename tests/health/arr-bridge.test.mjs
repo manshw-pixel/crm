@@ -21,9 +21,10 @@ test("ARR bridge shows new customers as new business and adds up to today's ARR"
     const v = await read(page);
     const want = { opening: "$250K", new: "+$300K", expansion: "+$20K", contraction: "-$10K", churn: "-$50K", closing: "$510K" };
     assert(JSON.stringify(v) === JSON.stringify(want), "bridge: " + JSON.stringify(v));
-    const tiles = await page.textContent("#root");
-    assert(/NRR \(12m\)\s*84%/.test(tiles), "NRR tile should be 84% (new logo excluded)");
-    assert(/existing customers: \+\$20K exp · −\$10K contr/.test(tiles), "NRR sub-line must use existing-customer figures");
+    const nrr = (await page.textContent('[data-stat="NRR (12m)"] [data-stat-value]')).trim();
+    assert(nrr === "84%", "NRR card should be 84% (new logo excluded), got " + nrr);
+    const grr = (await page.textContent('[data-bridge-head] [data-stat="GRR (12m)"] [data-stat-value]')).trim();
+    assert(/^\d+%$/.test(grr), "GRR in the bridge header should be a percentage, got " + grr);
   } finally { await browser.close(); }
 });
 

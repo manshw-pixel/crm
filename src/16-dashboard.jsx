@@ -67,6 +67,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
     if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
   });
   const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
+  const teamDue7 = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) >= 0 && daysUntil(t.due) <= 7).length;
   // open implementation projects for the panel: progress = share of the project's tasks done (as the board card shows)
   const implOpen = (st.projects || []).filter(p => p.stage !== "live" && p.stage !== "cancelled")
     .map(p => {
@@ -178,39 +179,46 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           ))}
         </Card>}
       </div>
-      {/* Team and growth. */}
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-      <Card title="Team tasks by owner" className="!p-3">
-        <ScrollList label="Team tasks by owner" className="max-h-40">
-        {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
-        {owners.map(([name, o]) => (
-          <div key={name} data-row className="border-b border-slate-100 py-1.5 text-sm last:border-0">
-            <div className="truncate font-bold text-slate-700" title={name}>{name}{name === user.name && <span className="font-normal text-slate-400"> (you)</span>}</div>
-            <div className="flex items-center gap-3">
-            <span className="shrink-0 whitespace-nowrap tabular-nums text-slate-600">{o.open} open</span>
-            {o.overdue > 0
-              ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-600">{o.overdue} overdue</span>
-              : <span className="shrink-0 whitespace-nowrap text-xs text-emerald-600">on track</span>}
-            <span className="ml-auto shrink-0 whitespace-nowrap text-xs tabular-nums text-slate-500">next due {fmtDate(o.next)}</span>
-            </div>
-          </div>
-        ))}
-        </ScrollList>
-      </Card>
-      <Card title={`Expansion pipeline · ${fmtMoney(pipeTotal)}`} className={`!p-3 ${snaps.length < 2 ? "lg:col-span-2" : ""}`} right={<span className="text-xs font-semibold tabular-nums text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
-        <ScrollList label="Expansion pipeline">
-        {openOpps.length === 0 && <div className="text-sm text-slate-500">No open opportunities — add them from an account page.</div>}
-        {openOpps.map(o => (
-          <button key={o.id} data-row onClick={() => openAccount(o.accountId)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
-            <span className="min-w-0 truncate">{o.acct.name} <span className="text-xs text-slate-500">· {o.type}</span></span>
-            <span className="flex shrink-0 items-center gap-2 text-xs">
-              <span className={`rounded px-1.5 py-0.5 font-semibold ${o.stage === "Stalled" ? "bg-amber-100 text-amber-700" : "bg-indigo-50 text-indigo-600"}`}>{o.stage}</span>
-              <span className="font-bold tabular-nums text-slate-700">{fmtMoney(o.valueUSD)}</span>
-            </span>
-          </button>
-        ))}
-        </ScrollList>
-      </Card>
+      <div data-dash-more className="mt-1.5 flex items-center gap-3"><h2 className="text-[13px] font-bold uppercase tracking-[.06em] text-slate-500">More detail</h2><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /></div>
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 lg:[&>*:last-child:nth-child(2)]:col-span-2">
+        <Card title={<>Team tasks<span className="ml-2.5 text-[12.5px] font-normal text-slate-500">{teamDue7} due in 7 days</span></>} className="!p-3">
+          <ScrollList label="Team tasks" className="max-h-60">
+            {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
+            {owners.map(([name, o]) => (
+              <button key={name} data-row data-team-row={name} onClick={() => goTasks({ owner: name })}
+                className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2.5 text-left first:border-0 hover:bg-slate-50">
+                <span aria-hidden="true" className="dash-av !h-[30px] !w-[30px] !rounded-full !text-[11.5px]"><span>{initialsOf(name)}</span></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] font-semibold text-slate-900" title={name === user.name ? name + " (you)" : name}>{name}{name === user.name && " (you)"}</span>
+                  <span className="block truncate text-xs text-slate-500" title={`${o.open} open · next ${fmtDate(o.next)}`}>{o.open} open · next {fmtDate(o.next)}</span></span>
+                {o.overdue > 0
+                  ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700">{o.overdue} overdue</span>
+                  : <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-emerald-700">on track</span>}
+              </button>
+            ))}
+          </ScrollList>
+        </Card>
+        <Card title="Expansion pipeline" className="!p-3" right={<span className="text-[13px] font-semibold tabular-nums text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
+          <div className="mb-1 text-[26px] font-extrabold tabular-nums text-slate-900">{fmtMoney(pipeTotal)}</div>
+          <ScrollList label="Expansion pipeline">
+            {openOpps.length === 0 && <div className="text-sm text-slate-500">No open opportunities — add them from an account page.</div>}
+            {openOpps.map(o => (
+              <button key={o.id} data-row onClick={() => openAccount(o.accountId)} className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2 text-left text-[13.5px] first:border-0 hover:bg-slate-50">
+                <span className="min-w-0 flex-1 truncate" title={`${o.acct.name} · ${o.type}`}><b className="font-semibold text-slate-900">{o.acct.name}</b> <span className="text-slate-500">· {o.type}</span></span>
+                <span className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${o.stage === "Stalled" ? "bg-amber-100 text-amber-700" : "bg-indigo-50 text-indigo-700"}`}>{o.stage}</span>
+                <b className="shrink-0 whitespace-nowrap tabular-nums text-slate-900">{fmtMoney(o.valueUSD)}</b>
+              </button>
+            ))}
+          </ScrollList>
+        </Card>
+        <FinanceCard goFinance={goFinance} />
+      </div>
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        <ArrBridgeCard b={bridge} grr={grr} churnedARR={churnedARR} lost={lost} pct={pct} onAccounts={() => openAccounts()}
+          onChurned={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
+        <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
+      </div>
+      <ImplProjectsCard projects={st.projects || []} accounts={st.accounts || []} />
+      <AnalyticsSection user={user}>
       {snaps.length >= 2 && <Card title="Trends (monthly)" className="!p-3">
         <div className="space-y-2">
           <TrendLine label="Total ARR (USD)" points={snaps.map(s => s.totalARR)} months={snaps.map(s => s.month)} fmt={fmtMoney} />
@@ -218,18 +226,6 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           <TrendLine label="GRR" points={snaps.map(s => s.grr)} months={snaps.map(s => s.month)} fmt={x => x === null ? "—" : (100 * x).toFixed(0) + "%"} />
         </div>
       </Card>}
-      </div>
-      {/* Revenue movement and adoption. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        <ArrBridgeCard b={bridge} />
-        <div data-license-card><LicenseCard accounts={scored} openAccount={openAccount} /></div>
-      </div>
-      {/* Delivery and billing; a lone card (FinanceCard renders nothing without data) takes the full row. */}
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 lg:[&>*:only-child]:col-span-2">
-        <ImplProjectsCard projects={st.projects || []} accounts={st.accounts || []} />
-        <FinanceCard goFinance={goFinance} />
-      </div>
-      <AnalyticsSection user={user}>
       <AmBookCard book={amBook} openAccount={openAccount} />
       <Card title="Recently declined" className="!p-3">
         <ScrollList label="Recently declined">
@@ -276,16 +272,17 @@ function LicenseCard({ accounts, openAccount }) {
   const s = licenseSummary(accounts);
   const n = x => x.toLocaleString("en-IN");
   return (
-    <Card title="License deployment" className="!p-3">
+    <Card title="License deployment" className="!p-3" right={s.pct != null ? <span className="text-[13px] tabular-nums text-slate-500">{n(s.total)} total · {n(s.deployed)} deployed</span> : undefined}>
       {s.counted === 0
         ? <div className="text-sm text-slate-500">No accounts have licenses yet. Add Total licenses on an account's Edit form.</div>
         : <div className="space-y-2">
             {s.pct == null
               ? <div className="text-sm text-slate-500">No deployed counts recorded yet.</div>
               : <>
-                  <div data-license-summary className="text-sm font-semibold tabular-nums">{n(s.total)} total · {n(s.deployed)} deployed · {s.pct}%</div>
-                  <div className="h-2 w-full overflow-hidden rounded bg-slate-100">
-                    <div data-license-bar className="h-full rounded bg-indigo-500" style={{ width: `${Math.min(100, s.pct)}%` }} />
+                  <div className="flex items-baseline gap-2.5"><span className="text-[26px] font-extrabold tabular-nums text-slate-900">{s.pct}%</span><span className="text-[12.5px] text-slate-500">deployed across the book</span></div>
+                  <div data-license-summary className="text-xs tabular-nums text-slate-500">{n(s.total)} total · {n(s.deployed)} deployed · {s.pct}%</div>
+                  <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+                    <div data-license-bar className="h-full rounded-full bg-indigo-500" style={{ width: `${Math.min(100, s.pct)}%` }} />
                   </div>
                 </>}
             {s.missingDeployed > 0 && <div data-license-missing className="text-xs text-slate-500">
@@ -309,7 +306,7 @@ function LicenseCard({ accounts, openAccount }) {
 /* ARR bridge (12m): how today's ARR was built from a year ago. New customers are shown as
    new business here -- they are deliberately NOT in NRR/GRR, which measure existing
    customers only. Rows carry data-bridge-* so tests target them, not page copy. */
-function ArrBridgeCard({ b }) {
+function ArrBridgeCard({ b, grr, churnedARR, lost, pct, onAccounts, onChurned }) {
   const rows = [
     ["opening", "ARR 12 months ago", b.opening, "existing customers", "base"],
     ["new", "+ New customers", b.newARR, `${b.newLogos - b.newLost} signed in the last 12m${b.newLost ? ` (${b.newLost} more signed and already lost)` : ""}`, "up"],
@@ -321,7 +318,12 @@ function ArrBridgeCard({ b }) {
   const max = Math.max(b.opening, b.closing, 1);
   const tone = { base: "bg-indigo-400", up: "bg-emerald-500", down: "bg-rose-500" };
   return (
-    <Card title="ARR bridge (12m, USD)" className="!p-3" right={<span className="text-[11px] text-slate-500">NRR/GRR use existing customers only</span>}>
+    <Card title="ARR bridge · 12 months" className="!p-3" right={<span className="text-xs text-slate-500">USD</span>}>
+      <div data-bridge-head className="mb-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-slate-500">
+        <button type="button" data-stat="GRR (12m)" onClick={onAccounts} className="hover:underline">GRR <b data-stat-value className="tabular-nums text-slate-900">{grr === null ? "—" : pct(grr)}</b></button>
+        <button type="button" data-stat="Churned ARR (12m)" onClick={onChurned} disabled={!onChurned} className="enabled:hover:underline">Churned ARR <b data-stat-value className={`tabular-nums ${churnedARR ? "text-rose-700" : "text-slate-900"}`}>{fmtMoney(churnedARR)}</b></button>
+        <span>{lost} account(s) lost</span>
+      </div>
       <div data-arr-bridge className="space-y-1.5">
         {rows.map(([k, label, v, sub, kind]) => (
           <div key={k} data-bridge-row={k} title={sub} className={`grid grid-cols-[minmax(0,9rem)_minmax(0,1fr)_auto] items-center gap-2 text-sm ${kind === "base" ? "font-semibold" : ""}`}>
@@ -331,6 +333,7 @@ function ArrBridgeCard({ b }) {
           </div>
         ))}
         {b.newLogos > 0 && <p data-bridge-note className="pt-1 text-[11px] text-slate-500">{b.newLogos - b.newLost} new customer(s) signed in the last 12 months{b.newLost ? `; ${b.newLost} more signed and already lost` : ""}. Their revenue is new business, not retention.</p>}
+        <p className="text-[11px] text-slate-500">NRR/GRR use existing customers only</p>
       </div>
     </Card>
   );
@@ -379,9 +382,8 @@ function ImplProjectsCard({ projects, accounts }) {
   return (
     <Card title="Implementation projects" className="!p-3" right={
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex gap-1" role="group" aria-label="Period">
-          {[["month", "Month"], ["quarter", "Quarter"]].map(([k, l]) => <button key={k} data-impl-mode={k} aria-pressed={mode === k}
-            className={`nm-btn px-2 py-1 text-xs font-bold ${mode === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => { setPick(null); setMode(k); }}>{l}</button>)}
+        <div className="seg-toggle" role="group" aria-label="Period">
+          {[["month", "Month"], ["quarter", "Quarter"]].map(([k, l]) => <button key={k} data-impl-mode={k} aria-pressed={mode === k} onClick={() => { setPick(null); setMode(k); }}>{l}</button>)}
         </div>
         <Select data-impl-year aria-label="Year" value={String(year)} onChange={e => { setPick(null); setYear(+e.target.value); }} options={years.map(String)} />
         <Select data-impl-tier-filter aria-label="Tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", ...tiers]} labels={{ All: "All tiers" }} />

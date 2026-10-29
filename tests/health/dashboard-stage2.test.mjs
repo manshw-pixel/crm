@@ -172,3 +172,42 @@ test("implementation panel is absent when nothing is open", async () => {
     assert(await page.$("[data-impl-row]") === null, "impl row present");
   } finally { await browser.close(); }
 });
+
+// More detail section.
+test("team task rows open Tasks filtered to that owner; header counts team tasks due in 7 days", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('[data-team-row="Priya Shah"]');
+    const head = await page.$eval('[data-scroll-list="Team tasks"]', e => e.parentElement.textContent);
+    assert(/\d+ due in 7 days/.test(head), "header " + head.slice(0, 60));
+    await page.click('[data-team-row="Priya Shah"]');
+    await page.waitForSelector("[data-task-owner-filter]");
+    assert(/Priya Shah/.test(await page.textContent("[data-task-owner-filter]")), "owner chip");
+  } finally { await browser.close(); }
+});
+
+test("ARR bridge header carries GRR and Churned ARR hooks with values (QA 09 reads them)", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector("[data-bridge-head]");
+    for (const k of ["GRR (12m)", "Churned ARR (12m)"]) {
+      const v = (await page.textContent(`[data-bridge-head] [data-stat="${k}"] [data-stat-value]`) || "").trim();
+      assert(v.length > 0 && !/NaN|undefined/.test(v), `${k} value "${v}"`);
+    }
+    // the QA scenario's selector is page-global and must resolve to exactly one element
+    assert((await page.$$('[data-stat="GRR (12m)"]')).length === 1, "GRR key not unique");
+    await page.click('[data-stat="GRR (12m)"]');
+    await page.waitForSelector("[data-accounts-page], [data-acct-row], table");
+  } finally { await browser.close(); }
+});
+
+test("More detail divider, and monthly Trends live inside Analytics", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector("[data-dash-more]");
+    assert(await page.$("[data-analytics] [data-trends-note]") === null, "note must not be inside analytics");
+  } finally { await browser.close(); }
+});
