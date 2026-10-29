@@ -3,6 +3,7 @@ import { EXPECTED } from "../fixtures/expected.mjs";
 import { nav } from "./_users-card.mjs";
 import { waitForRunAccounts } from "./_store.mjs";
 import { fmtMoney } from "../../../src/lib/money.js";
+import { SkipScenario } from "../core.mjs";
 
 const F = "09-dashboard";
 const stat = (page, label) => page.locator(`[data-stat="${label}"] [data-stat-value]`);
@@ -92,5 +93,98 @@ export const scenarios = [
       await page.locator("[data-arr-bridge]").waitFor({ timeout: 10000 });
       await page.waitForTimeout(2000); // late fetches / realtime subscribe
       assert.deepEqual(errors, [], `errors during dashboard load:\n${errors.join("\n")}`);
+    } },
+  // ---- UI refresh stage 2: the new headline cards, pills and panels (read-only: clicks navigate, nothing is written). ----
+  { id: `${F}/headline-cards`, feature: F, title: "Four headline cards show numbers; Renewals count = its rows; Overdue sub reads 'N due in the next 7 days'", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      const kpis = page.locator("[data-kpi]");
+      assert.equal(await kpis.count(), 4, "headline cards");
+      for (const v of await page.locator("[data-kpi] [data-stat-value]").allTextContents())
+        assert.match(v.trim(), /^(\$?[\d.]+[KM]?%?|—)$/, `headline value "${v}"`);
+      const ren = (await page.locator('[data-kpi][data-stat="Renewals · 90 days"] [data-stat-value]').textContent()).trim();
+      assert.equal(+ren, await page.locator("[data-renewal-row]").count(), "Renewals card count vs panel rows");
+      const sub = (await page.locator('[data-kpi][data-stat="Overdue tasks"] [data-stat-value] + div').textContent()).trim();
+      assert.match(sub, /^\d+ due in the next 7 days$/, "Overdue card sub");
+      assert.doesNotMatch(await page.locator("[data-dash]").innerText(), /\bNaN\b|\bundefined\b|Infinity|Invalid Date/, "junk token on the dashboard");
+    } },
+
+  { id: `${F}/risk-card-filters-red`, feature: F, title: "ARR at risk card opens Accounts showing only Red accounts", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      // the card's own count ("N accounts in red health") is the Red set the list must show
+      const sub = (await page.locator('[data-kpi][data-stat="ARR at risk (USD)"] [data-stat-value] + div').textContent()).trim();
+      const m = /^(\d+) accounts in red health$/.exec(sub);
+      assert.ok(m, `ARR at risk sub "${sub}"`);
+      await page.locator('[data-kpi][data-stat="ARR at risk (USD)"]').click();
+      await page.locator("main h1", { hasText: /^Accounts$/ }).waitFor({ timeout: 10000 });
+      assert.equal(await page.locator('select[aria-label="Filter by health risk"]').inputValue(), "Red", "risk filter");
+      await page.waitForTimeout(500);
+      const n = await page.locator("[data-account-row]").count();
+      // the list is windowed for long books: every rendered row is Red, so never more than the card's count
+      if (+m[1] <= 20) assert.equal(n, +m[1], "rows vs the card's Red count");
+      else assert.ok(n > 0 && n <= +m[1], `rows ${n} vs Red ${m[1]}`);
+    } },
+
+  { id: `${F}/pills-navigate`, feature: F, title: "Healthy pill opens Accounts filtered to Green; Total ARR pill equals the Total ARR stat", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      const total = (await stat(page, "Total ARR (USD)").textContent()).trim();
+      assert.equal((await page.locator('[data-health-pill="Total ARR (USD)"] [data-stat-value]').textContent()).trim(), total, "Total ARR pill value");
+      await page.locator('[data-health-pill="Healthy"]').click();
+      await page.locator("main h1", { hasText: /^Accounts$/ }).waitFor({ timeout: 10000 });
+      assert.equal(await page.locator('select[aria-label="Filter by health risk"]').inputValue(), "Green", "risk filter");
+      await openDashboard(page, runId);
+      assert.equal((await stat(page, "Total ARR (USD)").textContent()).trim(), total, "Total ARR after returning");
+    } },
+
+  { id: `${F}/renewals-card-opens-renewals`, feature: F, title: "Renewals · 90 days card opens Renewals", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      await page.locator('[data-kpi][data-stat="Renewals · 90 days"]').click();
+      await page.locator("main h1", { hasText: /^Renewals$/ }).waitFor({ timeout: 10000 });
+    } },
+
+  { id: `${F}/overdue-card-opens-tasks`, feature: F, title: "Overdue tasks card opens Tasks with the Overdue section expanded", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      await page.locator('[data-kpi][data-stat="Overdue tasks"]').click();
+      await page.locator("main h1", { hasText: /^Tasks$/ }).waitFor({ timeout: 10000 });
+      const head = page.locator("main button", { hasText: /^Overdue/ });
+      if (!(await head.count())) return; // no overdue tasks in the org: nothing to expand
+      assert.match(await head.first().innerText(), /▾/, "Overdue section collapsed");
+    } },
+
+  { id: `${F}/team-row-filters-tasks`, feature: F, title: "First Team tasks row opens Tasks filtered to that owner", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      const row = page.locator("[data-team-row]").first();
+      if (!(await page.locator("[data-team-row]").count())) throw new SkipScenario("no open tasks in the org, so no Team tasks rows");
+      const name = await row.getAttribute("data-team-row");
+      await row.click();
+      await page.locator("[data-task-owner-filter]").waitFor({ timeout: 10000 });
+      assert.equal(await page.locator("[data-task-owner-filter]").getAttribute("title"), `Owner: ${name}`, "owner chip");
+    } },
+
+  { id: `${F}/impl-row-opens-project`, feature: F, title: "An Implementation panel row opens that project's detail", role: "admin",
+    run: async ({ page, runId }) => {
+      await openDashboard(page, runId);
+      if (!(await page.locator("[data-impl-row]").count())) throw new SkipScenario("no open implementation projects in the org");
+      await page.locator("[data-impl-row]").first().click();
+      await page.locator("main h1", { hasText: /^Implementation$/ }).waitFor({ timeout: 10000 });
+      await page.locator("[data-project-stage]").waitFor({ timeout: 10000 });
+      assert.equal(await page.locator("[data-board-project]").count(), 0, "board shown instead of the project");
+    } },
+
+  { id: `${F}/phone-no-overflow`, feature: F, title: "Dashboard at 390px has no horizontal overflow", role: "admin",
+    run: async ({ page, runId }) => {
+      const before = page.viewportSize();
+      try {
+        await page.setViewportSize({ width: 390, height: 844 });
+        await openDashboard(page, runId);
+        await page.locator("[data-kpi]").first().waitFor({ timeout: 10000 });
+        const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+        assert.ok(over <= 0, `horizontal overflow ${over}px at 390`);
+      } finally { if (before) await page.setViewportSize(before); }
     } },
 ];
