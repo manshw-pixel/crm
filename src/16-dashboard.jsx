@@ -68,7 +68,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
     byOwner[o] = byOwner[o] || { open: 0, overdue: 0, next: null };
     byOwner[o].open++;
     if (daysUntil(t.due) < 0) byOwner[o].overdue++;
-    if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
+    if (!isNaN(daysUntil(t.due)) && (!byOwner[o].next || t.due < byOwner[o].next)) byOwner[o].next = t.due; // an unparseable due never becomes "next"
   });
   const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
   const teamDue7 = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) >= 0 && daysUntil(t.due) <= 7).length;
@@ -165,7 +165,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
               const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
               return (
                 <div key={t.id} data-row data-week-task={t.id} className="flex items-center gap-3 border-t border-slate-100 px-1 py-2.5 text-sm">
-                  <label className="dash-check"><input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
+                  <label className="dash-check"><input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
                   <span className="min-w-0 flex-1 truncate font-medium text-slate-900" title={t.title}>{t.title}</span>
                   <button className="min-w-0 max-w-[40%] truncate text-[12.5px] font-semibold text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
                   <span className={`w-[88px] shrink-0 whitespace-nowrap text-end text-[12.5px] tabular-nums ${d < 0 ? "font-semibold text-rose-700" : d === 0 ? "text-orange-700" : "text-slate-600"}`}>{d < 0 ? "Overdue" : d === 0 ? "Today" : fmtDate(t.due)}</span>
@@ -194,7 +194,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
                 className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2.5 text-start first:border-0 hover:bg-slate-50">
                 <span aria-hidden="true" className="dash-av !h-[30px] !w-[30px] !rounded-full !text-[11.5px]"><span>{initialsOf(name)}</span></span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] font-semibold text-slate-900" title={name === user.name ? name + " (you)" : name}>{name}{name === user.name && " (you)"}</span>
-                  <span className="block truncate text-xs text-slate-500" title={`${o.open} open · next ${fmtDate(o.next)}`}>{o.open} open · next {fmtDate(o.next)}</span></span>
+                  <span className="block truncate text-xs text-slate-500" title={`${o.open} open · next ${o.next ? fmtDate(o.next) : "—"}`}>{o.open} open · next {o.next ? fmtDate(o.next) : "—"}</span></span>
                 {o.overdue > 0
                   ? <span className="shrink-0 whitespace-nowrap rounded-full bg-rose-100 px-2.5 py-0.5 text-xs font-bold text-rose-700">{o.overdue} overdue</span>
                   : <span className="shrink-0 whitespace-nowrap text-xs font-semibold text-emerald-700">on track</span>}

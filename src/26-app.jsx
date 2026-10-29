@@ -340,7 +340,8 @@ function App({ user, onBackToClients }) {
     if (!pb.length) return;
     st.accounts.forEach(a => {
       // no lower bound on daysUntil: accounts already past renewal still seed (spec: include overdue)
-      if (a.churn || daysUntil(a.renewalDate) > 90 || a.playbookSeededFor === a.renewalDate) return;
+      // `!(<= 90)` also skips an unparseable renewalDate (NaN), which crashed the whole app in isoMinus
+      if (a.churn || !(daysUntil(a.renewalDate) <= 90) || a.playbookSeededFor === a.renewalDate) return;
       const items = pb.filter(p => p.title.trim()).map(p => ({
         id: `pb-${a.id}-${a.renewalDate}-${p.id}`, accountId: a.id, playbook: true, renewalFor: a.renewalDate,
         title: "▶ " + p.title, due: isoMinus(a.renewalDate, p.offsetDays),

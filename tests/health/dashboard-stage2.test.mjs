@@ -1,6 +1,6 @@
 // Dashboard stage 2: header (date line, greeting, "Whole team", quiet Saved, 42px bell).
 import { test, assert } from "./framework.mjs";
-import { launch, seedAccount } from "./harness.mjs";
+import { launch, launchFinance, launchPersistent, seedAccount } from "./harness.mjs";
 
 const A = [seedAccount({ id: "s1", name: "Stage Co", csm: "Priya Shah" })];
 const rows = `window.__seedRows = { accounts: ${JSON.stringify(A.map(d => ({ id: d.id, data: d })))},
@@ -47,19 +47,17 @@ const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 
 const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
 const rgb = s => s.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
 
-for (const theme of ["light", "dark"]) test(`bell badge text contrast >= 4.5:1 (${theme})`, async () => {
-  const { page, browser } = await launch(`try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}` + rows);
+// A real unread alert (x1 renews in 12 days, inside the bell's 30-day window): the app renders the badge itself.
+for (const theme of ["light", "dark"]) test(`bell badge text contrast >= 4.5:1 with a real unread alert (${theme})`, async () => {
+  const { page, browser } = await openDash(theme);
   try {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await page.reload(); await ready(page);
-    await page.waitForSelector("[data-dash-greeting]");
-    // the badge only renders with unread alerts: force one in the DOM if none is derived from the seed
     const c = await page.evaluate(() => {
-      const b = document.querySelector("[data-bell]");
-      let s = b.querySelector(":scope > span");
-      if (!s) { s = document.createElement("span"); s.className = "absolute"; s.textContent = "1"; b.appendChild(s); }
-      const cs = getComputedStyle(s); return [cs.color, cs.backgroundColor, cs.fontSize];
+      const s = document.querySelector("[data-bell] > span");
+      if (!s) return null;
+      const cs = getComputedStyle(s); return [cs.color, cs.backgroundColor, cs.fontSize, s.textContent, document.querySelector("[data-bell]").getAttribute("aria-label")];
     });
+    assert(c, "no unread badge rendered for the seeded renewal alert");
+    assert(/^\d+$/.test(c[3]) && +c[3] >= 1 && c[4] === `Notifications, ${c[3]} unread`, "badge " + JSON.stringify(c));
     const r = ratio(rgb(c[0]), rgb(c[1]));
     assert(r >= 4.5, `badge contrast ${r.toFixed(2)} (${c})`);
     assert(c[2] === "10.5px", "badge font: " + c[2]);
@@ -515,5 +513,468 @@ test("empty org and loading: no NaN/undefined/Infinity/Invalid Date; empty lines
     assert(/No accounts need attention\./.test(await page.textContent('[data-scroll-list="Needs attention"]')), "needs-attention empty line");
     assert((await page.textContent('[data-scroll-list="Team tasks"]')).trim() === "No open tasks.", "team tasks empty line");
     assert((await page.textContent('[data-stat="NRR (12m)"] [data-stat-value]')).trim() === "—", "NRR dash");
+    // Task 7 (owner item 6): every panel's empty line, no Implementation panel, dashes where data is missing
+    assert((await page.textContent('[data-scroll-list="Renewals in the next 90 days"]')).trim() === "No renewals in the next 90 days.", "renewals empty line");
+    assert((await page.textContent('[data-scroll-list="Tasks this week"]')).trim() === "Nothing due.", "my tasks empty line");
+    assert((await page.textContent('[data-scroll-list="Needs attention"]')).trim() === "No accounts need attention.", "needs-attention exact line");
+    const implCard = await page.$$eval("[data-dash] h3", hs => hs.filter(h => h.textContent.trim() === "Implementation").length);
+    assert(implCard === 0 && await page.$("[data-impl-row]") === null, "Implementation panel shown for an empty org");
+    assert((await page.textContent('[data-stat="GRR (12m)"] [data-stat-value]')).trim() === "—", "GRR dash");
+    const kpis = await page.$$eval("[data-kpi] [data-stat-value]", e => e.map(x => x.textContent.trim()));
+    assert(kpis.length === 4 && kpis.every(v => /^(\$0|0|—)$/.test(v)), "KPI values " + JSON.stringify(kpis));
+  } finally { await browser.close(); }
+});
+
+// ---- Task 7: every new click target, keyboard, shortcuts, error/empty states, phone per panel. ----
+const GREEN = { usage: 95, sentiment: 95, tickets: 0, nps: 60 }, YELLOW = { usage: 55, sentiment: 55, tickets: 3, nps: 0 }, RED = { usage: 5, sentiment: 5, tickets: 20, nps: -80 };
+const N = { g1: "Green Gamma Global Manufacturing Holdings Private Limited", y1: "Yellow Yonder Worldwide Logistics Services Corporation", r1: "Red Rocket Interplanetary Freight and Logistics Limited", c1: "Churned Cobalt Consolidated Enterprises" };
+const T7 = (churned = true) => [
+  seedAccount({ id: "g1", name: N.g1, csm: "Priya Shah", renewalDate: day(60), billingCompleted: true, billingCompletedDate: day(-5), licenses: 100, deployedLicenses: 30, inputs: GREEN, nextQbrDate: day(10), qbrFrequency: "Quarterly" }),
+  seedAccount({ id: "y1", name: N.y1, csm: "Priya Shah", inputs: YELLOW, nextQbrDate: day(120), qbrFrequency: "Quarterly" }),
+  seedAccount({ id: "r1", name: N.r1, csm: "Priya Shah", renewalDate: day(10), inputs: RED, nextQbrDate: day(120), qbrFrequency: "Quarterly" }),
+  ...(churned ? [seedAccount({ id: "c1", name: N.c1, csm: "Priya Shah", churn: { date: day(-20), arr: 100000, reason: "Price" } })] : []),
+];
+const T7_TASKS = [
+  { id: "t1", accountId: "r1", title: "Rahul overdue call", due: day(-3), owner: "Rahul", priority: "High", status: "Open", createdAt: day(-9) },
+  { id: "t2", accountId: "g1", title: "Priya prep deck", due: day(3), owner: "Priya Shah", priority: "Medium", status: "Open", createdAt: day(-9) },
+  { id: "t3", accountId: "y1", title: "Nobody owns this yet", due: day(5), owner: "", priority: "Low", status: "Open", createdAt: day(-9) },
+  { id: "t4", accountId: "y1", title: "Long owner task", due: day(20), owner: "Bartholomew Montgomery-Fitzgerald Venkataraman", priority: "Low", status: "Open", createdAt: day(-9) },
+];
+const SNAPS2 = [{ month: mo(3), totalARR: 100000, nrr: 1, grr: 1, Green: 1, Yellow: 1, Red: 1 }, { month: mo(2), totalARR: 120000, nrr: 1.05, grr: 0.95, Green: 2, Yellow: 1, Red: 0 }];
+const wrapRows = l => l.map(d => ({ id: d.id, data: d }));
+const TODAY7 = day(0);
+// launchFinance so the "Finance this quarter" card has an invoice to show (the default mock has no invoices table).
+async function t7Launch({ theme = "light", w = 1440, h = 900, snaps = [], churned = true, accounts, tasks = T7_TASKS, projects } = {}) {
+  const accts = accounts || T7(churned);
+  const r = await launchFinance({
+    user: { name: "Priya Shah", role: "admin", finance: true },
+    seed: `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}`,
+    tables: { accounts: wrapRows(accts), contacts: [], activities: [], team: [],
+      tasks: wrapRows(tasks),
+      opportunities: wrapRows([{ id: "o1", accountId: "g1", name: "Add-on", type: "Upsell", value: 40000, stage: "Proposal", probability: 50, closeDate: day(40) }]),
+      projects: wrapRows(projects || [{ ...proj("p1", "in_progress", day(30)), accountId: "r1" }]),
+      project_tasks: wrapRows([ptask("pt1", "p1", "done"), ptask("pt2", "p1", "open")]),
+      settings: [{ id: 1, data: { snapshots: snaps } }],
+      invoices: [{ id: "i1", number: "A", account_id: "g1", currency: "INR", total: 100, subtotal: 100, status: "paid", paid_date: TODAY7, issue_date: TODAY7, due_date: TODAY7, sent_at: TODAY7 + "T00:00:00Z", entity_id: "e1", pdf_path: "org-a/x.pdf" }],
+      billing_entities: [] },
+  });
+  if (theme !== "light") await r.page.reload(); // the head theme script reads the stored theme on the next load
+  await r.page.setViewportSize({ width: w, height: h });
+  await r.page.waitForFunction(n => window.__store && window.__store.getState().accounts.length === n, accts.length);
+  await r.page.waitForSelector("[data-kpi]");
+  await r.page.waitForTimeout(300);
+  return r;
+}
+const h1 = async page => (await page.textContent("main h1")).replace(/\s+/g, " ").trim();
+const waitH1 = (page, want) => page.waitForFunction(w => { const e = document.querySelector("main h1"); return e && e.textContent.replace(/\s+/g, " ").trim().startsWith(w); }, want, { timeout: 5000 })
+  .catch(async () => { throw new Error(`h1 "${await h1(page)}", wanted "${want}"`); });
+// Account list rows -> seed ids (each row's text matched to the seeded names, row by row).
+const acctRows = page => page.$$eval("[data-account-row]", (rs, n) => rs.map(r => Object.keys(n).find(k => r.textContent.includes(n[k])) || "?").sort(), N);
+const riskSel = page => page.$eval('select[aria-label="Filter by health risk"]', e => e.value);
+const home = async page => { await page.keyboard.press("1"); await page.waitForSelector("[data-kpi]"); await page.waitForTimeout(150); };
+const crumbIs = async (page, id) => { await page.waitForSelector("[data-crumb-accounts]", { timeout: 5000 }); const t = await h1(page); assert(t.includes(N[id]), `crumb "${t}" wanted ${N[id]}`); };
+
+test("T7 click 1: ARR at risk card (click and Enter) opens Accounts filtered to Red", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    for (const how of ["click", "enter"]) {
+      if (how === "click") await page.click('[data-kpi][data-stat="ARR at risk (USD)"]');
+      else { await page.focus('[data-kpi][data-stat="ARR at risk (USD)"]'); await page.keyboard.press("Enter"); }
+      await waitH1(page, "Accounts");
+      await page.waitForSelector("[data-account-row]");
+      assert(await riskSel(page) === "Red", `${how}: risk ${await riskSel(page)}`);
+      const rows = await acctRows(page);
+      assert(rows.join() === "r1", `${how}: rows ${rows}`);
+      await home(page);
+    }
+  } finally { await browser.close(); }
+});
+
+test("T7 click 2-4: Renewals card opens Renewals; NRR opens Accounts unfiltered; Overdue opens Tasks with only Overdue open", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.click('[data-kpi][data-stat="Renewals · 90 days"]');
+    await waitH1(page, "Renewals");
+    await home(page);
+    await page.click('[data-kpi][data-stat="NRR (12m)"]');
+    await waitH1(page, "Accounts");
+    await page.waitForSelector("[data-account-row]");
+    const rows = await acctRows(page);
+    assert(await riskSel(page) === "All" && rows.join() === "g1,r1,y1", `NRR: risk ${await riskSel(page)} rows ${rows}`);
+    await home(page);
+    await page.click('[data-kpi][data-stat="Overdue tasks"]');
+    await waitH1(page, "Tasks");
+    await page.waitForSelector("[data-task-row]");
+    // section header buttons are [label, (count), arrow]; only Overdue is expanded
+    const secs = await page.$$eval("main button", bs => bs.map(b => Array.from(b.children).map(c => c.textContent.trim())).filter(c => c.length === 3 && /^[▾▸]$/.test(c[2])).map(c => [c[0], c[2]]));
+    const open = Object.fromEntries(secs.map(([l, a]) => [l.toLowerCase(), a === "▾"]));
+    assert(open.overdue === true && !open.today && !open["this week"] && secs.length >= 2, "sections " + JSON.stringify(secs));
+    const titles = await page.$$eval("[data-task-row] [data-task-title]", e => e.map(x => x.textContent));
+    assert(titles.includes("Rahul overdue call") && !titles.includes("Priya prep deck"), "rows " + JSON.stringify(titles));
+  } finally { await browser.close(); }
+});
+
+test("T7 click 5: pills -- Total ARR all, Healthy/Watch/At risk one each, QBRs due flag, Billing completed filter", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    for (const [pill, want, risk] of [["Total ARR (USD)", "g1,r1,y1", "All"], ["Healthy", "g1", "Green"], ["Watch", "y1", "Yellow"], ["At risk", "r1", "Red"]]) {
+      await page.click(`[data-health-pill="${pill}"]`);
+      await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+      const rows = (await acctRows(page)).join();
+      assert(rows === want && await riskSel(page) === risk, `${pill}: rows ${rows} risk ${await riskSel(page)}`);
+      await home(page);
+    }
+    await page.click('[data-health-pill="QBRs due (30d)"]');
+    await waitH1(page, "Accounts");
+    await page.waitForSelector('button[title="Remove QBR-due filter"]', { timeout: 5000 });
+    assert((await acctRows(page)).join() === "g1", "QBR rows " + await acctRows(page));
+    await home(page);
+    await page.click('[data-health-pill="Billing completed"]');
+    await waitH1(page, "Accounts");
+    const bill = await page.$eval('select[aria-label="Filter by billing status"]', e => e.value);
+    assert(bill === "Completed" && (await acctRows(page)).join() === "g1", `billing ${bill} rows ${await acctRows(page)}`);
+  } finally { await browser.close(); }
+});
+
+test("T7 click 6: renewal, needs-attention and license rows open that account", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    for (const [sel, id] of [['[data-renewal-row="r1"]', "r1"], ['[data-attention-row="r1"]', "r1"], ['[data-license-row="g1"]', "g1"]]) {
+      await page.click(sel);
+      await crumbIs(page, id);
+      await home(page);
+    }
+  } finally { await browser.close(); }
+});
+
+test("T7 click 7: My tasks checkbox completes in the store; account link opens it; Tab goes checkbox -> link", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.focus('[data-week-task="t3"] input');
+    await page.keyboard.press("Tab");
+    const next = await page.evaluate(() => document.activeElement === document.querySelector('[data-week-task="t3"] button'));
+    assert(next, "Tab from the checkbox did not reach the account link");
+    await page.click('[data-week-task="t2"] input');
+    const st = await page.evaluate(async () => { await new Promise(r => setTimeout(r, 50)); return window.__store.getState().tasks.find(t => t.id === "t2").status; });
+    assert(st === "Done", "t2 status " + st);
+    await page.click('[data-week-task="t3"] button');
+    await crumbIs(page, "y1");
+  } finally { await browser.close(); }
+});
+
+test("T7 click 8: implementation row opens that project's detail, not the board", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.click('[data-impl-row="p1"]');
+    await waitH1(page, "Implementation");
+    await page.waitForSelector("[data-project-stage]", { timeout: 5000 });
+    assert(await page.$("[data-board-project]") === null, "board still shown");
+    assert(await visible(page, "[data-project-stage]"), "project detail hidden");
+  } finally { await browser.close(); }
+});
+
+test("T7 click 9: team row Rahul opens Tasks filtered to Rahul's tasks only", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.click('[data-team-row="Rahul"]');
+    await waitH1(page, "Tasks");
+    await page.waitForSelector("[data-task-owner-filter]", { timeout: 5000 }).catch(() => { throw new Error("no owner filter chip on Tasks"); });
+    assert(await page.getAttribute("[data-task-owner-filter]", "title") === "Owner: Rahul", "owner chip");
+    const titles = await page.$$eval("[data-task-row] [data-task-title]", e => e.map(x => x.textContent));
+    assert(JSON.stringify(titles) === '["Rahul overdue call"]', "rows " + JSON.stringify(titles));
+  } finally { await browser.close(); }
+});
+
+test("T7 click 10: Finance card's Open Finance opens Finance", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.waitForSelector("[data-fin-card-link]", { timeout: 10000 });
+    await page.click("[data-fin-card-link]");
+    await waitH1(page, "Finance");
+  } finally { await browser.close(); }
+});
+
+test("T7 click 11: ARR bridge GRR opens Accounts; Churned ARR opens churned-only; disabled with no churn", async () => {
+  let { page, browser } = await t7Launch();
+  try {
+    await page.click('[data-bridge-head] [data-stat="GRR (12m)"]');
+    await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+    assert((await acctRows(page)).join() === "g1,r1,y1", "GRR rows " + await acctRows(page));
+    await home(page);
+    await page.click('[data-bridge-head] [data-stat="Churned ARR (12m)"]');
+    await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+    assert((await acctRows(page)).join() === "c1", "churned rows " + await acctRows(page));
+    await browser.close();
+    ({ page, browser } = await t7Launch({ churned: false }));
+    assert(await page.$eval('[data-stat="Churned ARR (12m)"]', e => e.disabled), "Churned ARR enabled with no churned account");
+  } finally { await browser.close(); }
+});
+
+const T7_TARGETS = ["[data-kpi]", "[data-health-pill]", "[data-renewal-row]", "[data-attention-row]", "[data-impl-row]", "[data-team-row]", "[data-view-all]",
+  "[data-week-task] input", "[data-week-task] button", "[data-bridge-head] button:not(:disabled)", "[data-fin-card-link]", "[data-license-row]"];
+test("T7 click 12: every new target has a pointer cursor and is keyboard focusable; Enter activates (3 spot checks)", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.waitForSelector("[data-fin-card-link]");
+    const r = await page.evaluate(sels => sels.map(s => {
+      const els = Array.from(document.querySelectorAll(s));
+      return [s, els.length, els.filter(e => getComputedStyle(e).cursor !== "pointer" || !(e.tabIndex >= 0)).map(e => e.outerHTML.slice(0, 60))];
+    }), T7_TARGETS);
+    assert(r.every(([, n]) => n > 0), "missing targets " + JSON.stringify(r.filter(([, n]) => !n).map(x => x[0])));
+    const bad = r.filter(([, , b]) => b.length);
+    assert(bad.length === 0, "not pointer/focusable: " + JSON.stringify(bad));
+    for (const [sel, check] of [['[data-health-pill="Watch"]', async () => { await waitH1(page, "Accounts"); assert(await riskSel(page) === "Yellow", "Watch via Enter"); }],
+      ['[data-team-row="Rahul"]', () => page.waitForSelector("[data-task-owner-filter]", { timeout: 5000 })],
+      ['[data-view-all="renewals"]', () => waitH1(page, "Renewals")]]) {
+      await page.focus(sel); await page.keyboard.press("Enter"); await check(); await home(page);
+    }
+  } finally { await browser.close(); }
+});
+
+test("T7 click 13: no trend line with under 2 snapshots; one on the NRR card only with 2", async () => {
+  let { page, browser } = await t7Launch();
+  try {
+    assert((await page.$$("[data-kpi-trend]")).length === 0, "trend drawn with no snapshot series");
+    await browser.close();
+    ({ page, browser } = await t7Launch({ snaps: SNAPS2 }));
+    const where = await page.$$eval("[data-kpi-trend]", e => e.map(x => x.closest("[data-stat]")?.getAttribute("data-stat")));
+    assert(JSON.stringify(where) === '["NRR (12m)"]', "trend cards " + JSON.stringify(where));
+  } finally { await browser.close(); }
+});
+
+test("T7 click 14: nothing dropped -- GRR, Churned ARR, 7-day subs, pills sum to active accounts", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    const r = await page.evaluate(() => {
+      const v = s => (document.querySelector(s) || {}).textContent;
+      return { grr: v('[data-stat="GRR (12m)"] [data-stat-value]'), ch: v('[data-stat="Churned ARR (12m)"] [data-stat-value]'),
+        sub: v('[data-stat="Overdue tasks"] [data-stat-value] + div'), team: (document.querySelector('[data-scroll-list="Team tasks"]')?.closest(".nm")?.querySelector("h3") || {}).textContent,
+        pills: ["Healthy", "Watch", "At risk"].map(k => +v(`[data-health-pill="${k}"] [data-stat-value]`)),
+        active: window.__store.getState().accounts.filter(a => !a.churn).length };
+    });
+    assert(/^(\d+%|—)$/.test(r.grr) && /^\$/.test(r.ch), `GRR ${r.grr} churned ${r.ch}`);
+    assert(/^\d+ due in the next 7 days$/.test(r.sub), "overdue sub " + r.sub);
+    assert(/\d+ due in 7 days$/.test(r.team), "team header " + r.team);
+    assert(r.pills.reduce((a, b) => a + b, 0) === r.active && r.active === 3 && r.pills.every(n => n === 1), `pills ${r.pills} vs ${r.active}`);
+  } finally { await browser.close(); }
+});
+
+// Owner item 2 (and brief step 3): each named panel at 390x844, light and dark, with long names.
+const PANELS = {
+  "Renewals in the next 90 days": '[data-scroll-list="Renewals in the next 90 days"]', "Needs attention": '[data-scroll-list="Needs attention"]',
+  "My tasks this week": "#week-tasks", "Implementation": "[data-impl-row]", "Team tasks": '[data-scroll-list="Team tasks"]',
+  "Expansion pipeline": '[data-scroll-list="Expansion pipeline"]', "Finance this quarter": "[data-finance-card] .nm", "ARR bridge": "[data-arr-bridge]",
+  "License deployment": "[data-license-card] .nm", "Implementation chart": "[data-impl-chart]" };
+for (const theme of ["light", "dark"]) test(`T7 390px (${theme}): every named panel present, no page or panel overflow`, async () => {
+  const { page, browser } = await t7Launch({ theme, w: 390, h: 844 });
+  try {
+    await page.waitForSelector("[data-finance-card]", { timeout: 10000 });
+    const r = await page.evaluate(P => {
+      const out = { page: document.documentElement.scrollWidth - document.documentElement.clientWidth, panels: {}, stray: [] };
+      for (const [name, sel] of Object.entries(P)) {
+        const hit = document.querySelector(sel), card = hit && (hit.matches(".nm") ? hit : hit.closest(".nm"));
+        if (!card) { out.panels[name] = "MISSING"; continue; }
+        const b = card.getBoundingClientRect();
+        // rows must fit their card too: a scroll list clips a too-wide row instead of overflowing the page
+        const wide = Array.from(card.querySelectorAll("[data-row], [data-impl-row]")).filter(x => x.getBoundingClientRect().right > b.right + 0.5).length;
+        out.panels[name] = card.scrollWidth <= card.clientWidth && b.right <= 390.5 && b.width > 50 && !wide ? "ok" : `scroll ${card.scrollWidth}/${card.clientWidth} right ${b.right} wide rows ${wide}`;
+      }
+      const clipped = e => { for (let x = e.parentElement; x && !x.matches("[data-dash]"); x = x.parentElement) if (getComputedStyle(x).overflowX !== "visible") return true; return false; };
+      for (const e of document.querySelectorAll("[data-dash] *")) { const b = e.getBoundingClientRect(); if (b.width && b.right > 390.5 && !clipped(e)) out.stray.push(e.tagName + "." + String(e.className).slice(0, 40) + " " + Math.round(b.right)); }
+      return out;
+    }, PANELS);
+    assert(r.page <= 0, "page h-scroll " + r.page);
+    const bad = Object.entries(r.panels).filter(([, v]) => v !== "ok");
+    assert(bad.length === 0, "panels: " + JSON.stringify(bad));
+    assert(r.stray.length === 0, "past 390: " + r.stray.slice(0, 5).join(" | "));
+  } finally { await browser.close(); }
+});
+
+// Owner item 3: real Tab presses reach every new target, never stall, and Enter lands per the click table.
+const mark = `(() => { const a = document.activeElement; if (!a || a === document.body) return null;
+  if (!a.dataset.t7k) a.dataset.t7k = String(window.__t7k = (window.__t7k || 0) + 1); return a; })()`;
+const tabTo = async (page, sel, max = 250) => {
+  let last = null;
+  for (let i = 0; i < max; i++) {
+    await page.keyboard.press("Tab");
+    const r = await page.evaluate(([s, m]) => { const a = eval(m); return a ? { at: a.matches(s), id: a.dataset.t7k } : { at: false, id: null }; }, [sel, mark]);
+    if (r.at) return true;
+    if (r.id && r.id === last) throw new Error(`Tab stuck on element ${r.id} looking for ${sel}`);
+    last = r.id;
+  }
+  return false;
+};
+test("T7 keyboard: Tab reaches every new target (and passes bell, Analytics, Month/Quarter) without sticking", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    await page.waitForSelector("[data-fin-card-link]");
+    const want = await page.evaluate(sels => { let n = 0; const out = [];
+      for (const s of [...sels, "[data-bell]", "[data-analytics-toggle]", "[data-impl-mode]"]) for (const e of document.querySelectorAll(s)) { e.dataset.t7want = ++n; out.push(n); }
+      return out; }, T7_TARGETS);
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    const seen = new Set(); let prev = null, first = null;
+    for (let i = 0; i < 400; i++) {
+      await page.keyboard.press("Tab");
+      const r = await page.evaluate(m => { const a = eval(m); return a ? [a.dataset.t7k, a.dataset.t7want || null] : null; }, mark);
+      if (!r) continue;
+      assert(r[0] !== prev, "Tab stuck on " + r[0]);
+      if (r[0] === first) break; // wrapped round
+      first = first || r[0]; prev = r[0];
+      if (r[1]) seen.add(+r[1]);
+    }
+    const miss = want.filter(n => !seen.has(n));
+    const names = await page.evaluate(m => m.map(n => document.querySelector(`[data-t7want="${n}"]`).outerHTML.slice(0, 70)), miss);
+    assert(want.length > 25 && miss.length === 0, `never reached by Tab (${miss.length}/${want.length}): ` + names.join(" | "));
+  } finally { await browser.close(); }
+});
+
+const ENTER_TABLE = [
+  ['[data-kpi][data-stat="ARR at risk (USD)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Red", "risk"); }],
+  ['[data-kpi][data-stat="Renewals · 90 days"]', p => waitH1(p, "Renewals")],
+  ['[data-kpi][data-stat="NRR (12m)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "All", "risk"); }],
+  ['[data-kpi][data-stat="Overdue tasks"]', p => waitH1(p, "Tasks")],
+  ['[data-health-pill="Total ARR (USD)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "All", "risk"); }],
+  ['[data-health-pill="Healthy"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Green", "risk"); }],
+  ['[data-health-pill="Watch"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Yellow", "risk"); }],
+  ['[data-health-pill="At risk"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Red", "risk"); }],
+  ['[data-health-pill="QBRs due (30d)"]', p => p.waitForSelector('button[title="Remove QBR-due filter"]', { timeout: 5000 })],
+  ['[data-health-pill="Billing completed"]', async p => { await waitH1(p, "Accounts"); assert(await p.$eval('select[aria-label="Filter by billing status"]', e => e.value) === "Completed", "billing"); }],
+  ['[data-renewal-row="r1"]', p => crumbIs(p, "r1")],
+  ['[data-attention-row="r1"]', p => crumbIs(p, "r1")],
+  ['[data-impl-row="p1"]', p => p.waitForSelector("[data-project-stage]", { timeout: 5000 })],
+  ['[data-team-row="Rahul"]', async p => { await p.waitForSelector("[data-task-owner-filter]", { timeout: 5000 }); assert(await p.getAttribute("[data-task-owner-filter]", "title") === "Owner: Rahul", "owner"); }],
+  ['[data-view-all="renewals"]', p => waitH1(p, "Renewals")],
+  ['[data-view-all="attention"]', p => waitH1(p, "Accounts")],
+  ['[data-view-all="tasks"]', p => waitH1(p, "Tasks")],
+  ['[data-week-task="t3"] button', p => crumbIs(p, "y1")],
+  ['[data-bridge-head] [data-stat="GRR (12m)"]', p => waitH1(p, "Accounts")],
+  ['[data-bridge-head] [data-stat="Churned ARR (12m)"]', p => p.waitForSelector('button[title="Remove churned-only filter"]', { timeout: 5000 })],
+  ["[data-fin-card-link]", p => waitH1(p, "Finance")],
+  ['[data-license-row="g1"]', p => crumbIs(p, "g1")],
+];
+test("T7 keyboard: Tab to each new target and press Enter -- lands where the click does; Space ticks the week checkbox", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    for (const [sel, check] of ENTER_TABLE) {
+      await page.waitForSelector("[data-fin-card-link]");
+      await page.evaluate(() => document.activeElement && document.activeElement.blur());
+      assert(await tabTo(page, sel), "Tab never reached " + sel);
+      await page.keyboard.press("Enter");
+      try { await check(page); } catch (e) { throw new Error(`${sel}: ${e.message}`); }
+      await home(page);
+    }
+    await page.evaluate(() => document.activeElement && document.activeElement.blur());
+    assert(await tabTo(page, '[data-week-task="t2"] input'), "Tab never reached the week checkbox");
+    await page.keyboard.press("Space");
+    await page.waitForFunction(() => window.__store.getState().tasks.find(t => t.id === "t2").status === "Done", null, { timeout: 5000 });
+  } finally { await browser.close(); }
+});
+
+// Owner item 4: shortcuts on the new dashboard.
+test("T7 shortcuts: number keys in sidebar order, Ctrl+K go to Tasks unfiltered, Esc closes, keys inert in inputs and on the checkbox", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    const order = await page.$$eval("aside button[title]", els => [...new Set(els.map(e => e.getAttribute("title")))].filter(t => ["Dashboard", "Implementation", "Tasks", "Accounts", "Renewals", "Finance", "Settings"].includes(t)));
+    assert(order[3] === "Accounts" && order[2] === "Tasks", "sidebar " + order);
+    for (const [k, v] of [["4", "Accounts"], ["5", "Renewals"], ["2", "Implementation"], ["1", null]]) {
+      await page.keyboard.press(k);
+      if (v) await waitH1(page, v); else await page.waitForSelector("[data-kpi]");
+    }
+    // a filtered Tasks hand-off first, so "unfiltered" from the palette is a real reset
+    await page.click('[data-team-row="Rahul"]');
+    await page.waitForSelector("[data-task-owner-filter]");
+    await home(page);
+    await page.keyboard.press("Control+k");
+    await page.waitForSelector('[role=dialog][aria-label="Command palette"]');
+    await page.keyboard.type("go to Tasks");
+    await page.keyboard.press("Enter");
+    await waitH1(page, "Tasks");
+    assert(await page.$('[role=dialog][aria-label="Command palette"]') === null, "palette still open");
+    assert(await page.$("[data-task-owner-filter]") === null, "Tasks opened filtered from the palette");
+    await home(page);
+    await page.keyboard.press("Control+k");
+    await page.waitForSelector('[role=dialog][aria-label="Command palette"]');
+    await page.keyboard.press("4"); // typed into the palette's text input, not a view switch
+    await page.waitForTimeout(150);
+    assert(await page.$("[data-kpi]") !== null, "4 in the palette input switched view");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector('[role=dialog][aria-label="Command palette"]'));
+    assert(await page.$("[data-kpi]") !== null, "Esc left the dashboard");
+    await page.focus('[data-week-task="t3"] input');
+    await page.keyboard.press("4");
+    await page.focus("[data-impl-year]");
+    await page.keyboard.press("4");
+    await page.waitForTimeout(200);
+    assert(await page.$("[data-kpi]") !== null && await page.$("[data-account-row]") === null, "4 on the checkbox / year select switched view");
+    const t3 = await page.evaluate(() => window.__store.getState().tasks.find(t => t.id === "t3").status);
+    assert(t3 === "Open", "number key toggled the checkbox: " + t3);
+  } finally { await browser.close(); }
+});
+
+// Owner item 5a: malformed rows render without a crash or a junk token.
+const BAD_TOKENS = /NaN|undefined|Infinity|Invalid Date/;
+test("T7 errors (a): malformed data renders the dashboard with no throw and no NaN/undefined/Invalid Date", async () => {
+  const { page, browser } = await t7Launch({
+    snaps: [{ month: mo(3), totalARR: 100000, nrr: null, grr: null, Green: 1, Yellow: 0, Red: 0 }, { month: mo(2), totalARR: null, nrr: null, grr: 0.9 }],
+    accounts: [
+      seedAccount({ id: "g1", name: N.g1, csm: "Priya Shah", arr: null, renewalDate: day(20) }),
+      seedAccount({ id: "y1", name: N.y1, csm: "Priya Shah", arr: "", renewalDate: undefined, healthBand: "Purple" }),
+      seedAccount({ id: "r1", name: N.r1, csm: "Priya Shah", renewalDate: "not-a-date", startDate: "31/31/2026", inputs: RED }),
+    ],
+    tasks: [{ id: "t1", title: "No owner, no account", due: day(2), status: "Open" }, { id: "t2", accountId: "zz", title: "Bad due", due: "garbage", owner: "Rahul", status: "Open" }],
+    projects: [{ ...proj("p9", "in_progress", "not-a-date"), accountId: "nope" }],
+  });
+  try {
+    const errs = [];
+    page.on("pageerror", e => errs.push(e.message));
+    await page.click("[data-analytics-toggle]");
+    await page.waitForTimeout(300);
+    assert(await page.$("[data-viewerror]") === null, "view crashed: " + await page.textContent("[data-viewerror]").catch(() => ""));
+    assert(await page.$("[data-impl-row]") !== null, "precondition: the task-less project renders");
+    const t = await page.innerText("[data-dash]");
+    const m = t.match(new RegExp(".{0,30}(" + BAD_TOKENS.source + ").{0,30}"));
+    assert(!m, "junk token: " + (m && m[0]));
+    assert(errs.length === 0, "page errors " + errs.join(" | "));
+  } finally { await browser.close(); }
+});
+
+// Owner items 5b and 5d: a failed save shows the existing "Not saved" on the dashboard (readable in both
+// themes); ticking a week checkbox while saves fail takes that path rather than losing the change silently.
+const failSeed = theme => `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}
+  window.__seedRows = { accounts: ${JSON.stringify(wrapRows(T7()))}, contacts: [], activities: [], team: [], opportunities: [], projects: [], project_tasks: [], settings: [],
+  tasks: ${JSON.stringify(wrapRows(T7_TASKS))}, profiles: [{ id: "u1", org_id: "org-a", name: "Priya Shah", role: "admin" }] };`;
+for (const theme of ["light", "dark"]) test(`T7 errors (b, d): week checkbox save failure shows "Not saved" on the dashboard, >= 4.5:1 (${theme})`, async () => {
+  const { page, browser } = await launchPersistent(failSeed(theme));
+  try {
+    await page.reload();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('[data-week-task="t2"] input');
+    // let the load-time playbook writes drain first, so the failure lands on the checkbox's write
+    await page.waitForFunction(() => window.__health.writeQueue.queueState().status === "saved", null, { timeout: 15000 });
+    await page.evaluate(() => { window.__rpcFailures = 99; });
+    await page.click('[data-week-task="t2"] input');
+    await page.waitForSelector('[data-sync-status="error"]', { timeout: 30000 });
+    // the existing rollback: the unsaved tick is undone (refetch), not left looking saved
+    await page.waitForFunction(() => window.__store.getState().tasks.find(t => t.id === "t2").status === "Open", null, { timeout: 10000 });
+    await page.addScriptTag({ content: PAGE_FNS });
+    const r = await page.evaluate(() => { const e = document.querySelector('[data-sync-status="error"]'); return { shown: window.__c.shown(e), k: window.__c.textOn(e), dash: !!document.querySelector("[data-dash]") }; });
+    assert(r.dash && r.shown, "Not saved not visible on the dashboard " + JSON.stringify(r));
+    assert(r.k !== null && r.k >= 4.5, "Not saved contrast " + r.k);
+  } finally { await browser.close(); }
+});
+
+// Owner item 5c: a throwing dashboard child is caught by the view boundary; the sidebar still navigates.
+test("T7 errors (c): a throwing panel shows the ViewBoundary message and the sidebar still works", async () => {
+  const { page, browser } = await t7Launch();
+  try {
+    const ok = await page.evaluate(() => { if (typeof window.LicenseCard !== "function") return false; window.LicenseCard = () => { throw new Error("t7 deliberate panel crash"); }; return true; });
+    assert(ok, "precondition: LicenseCard is a replaceable global");
+    await page.click('[data-scope-toggle] button[aria-pressed="false"]'); // re-render the dashboard
+    await page.waitForSelector("[data-viewerror]", { timeout: 5000 });
+    const msg = await page.textContent("[data-viewerror]");
+    assert(/Something went wrong in Dashboard/.test(msg) && /t7 deliberate panel crash/.test(msg), "boundary text " + msg.slice(0, 120));
+    await page.click('aside button[title="Accounts"]');
+    await waitH1(page, "Accounts");
+    assert(await page.$("[data-viewerror]") === null, "boundary stuck after navigating");
   } finally { await browser.close(); }
 });
