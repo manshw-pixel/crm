@@ -1,15 +1,18 @@
-// Whole class strings so the Tailwind scanner sees them; themed for dark mode (inline hex was 4.4:1 for Red).
-const RISK_TEXT = { Green: "text-emerald-600", Yellow: "text-amber-600", Red: "text-rose-600" };
+// Whole class strings so the Tailwind scanner sees them; themed for dark mode. 700 shades: the 600s were
+// under 4.5:1 on a white card (emerald 3.77, amber 3.19).
+const RISK_TEXT = { Green: "text-emerald-700", Yellow: "text-amber-700", Red: "text-rose-700" };
+// Status in words, so no row or bar relies on colour alone (same words as the health pills).
+const RISK_WORD = { Green: "Healthy", Yellow: "Watch", Red: "At risk" };
 
 // Tiny NRR trend: stored snapshot values only, null points skipped, scaled to their own min/max.
-function KpiSpark({ points }) {
+function KpiSpark({ points, label }) {
   const v = points.map((p, i) => [i, p]).filter(([, p]) => p !== null && p !== undefined);
   if (v.length < 2) return null;
   const lo = Math.min(...v.map(x => x[1])), hi = Math.max(...v.map(x => x[1])), span = hi - lo || 1;
   const xs = v.map(([i, p]) => [i * (200 / (points.length - 1)), 34 - ((p - lo) / span) * 28]);
   const line = "M" + xs.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L");
   return (
-    <svg data-kpi-trend viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true" className="mt-1 h-10 w-full text-emerald-600">
+    <svg data-kpi-trend role="img" aria-label={`${label} trend, last ${points.length} months`} viewBox="0 0 200 40" preserveAspectRatio="none" className="mt-1 h-10 w-full text-emerald-600">
       <path d={line + ` L${xs[xs.length - 1][0].toFixed(1)} 40 L${xs[0][0].toFixed(1)} 40 Z`} fill="currentColor" fillOpacity="0.15" />
       <path d={line} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
     </svg>
@@ -82,7 +85,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const qbrAccts = scored.map(a => ({ a, s: qbrStatus(a) })).filter(x => x.s && (x.s.kind === "due" || x.s.kind === "overdue"));
   const qbrOverdue = qbrAccts.filter(x => x.s.kind === "overdue").length;
   return (
-    <div className="space-y-3">
+    <div data-dash className="space-y-3">
       {scored.length === 0 && <div className="nm-sm p-4 text-sm text-indigo-500">
         {user.role === "lead" ? "No accounts are assigned to you yet."
           : scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
@@ -95,9 +98,9 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Stat kpi size="hero" icon="R" iconTone="bg-orange-100 text-orange-600" label="Renewals · 90 days" value={ren90.length}
           sub={`${fmtMoney(ren90ARR)} ARR · ${ren30} within 30 days`} onClick={() => goRenewals()} />
         <Stat kpi size="hero" icon="%" iconTone="bg-emerald-100 text-emerald-600" label="Net revenue retention" statKey="NRR (12m)" value={nrr === null ? "—" : pct(nrr)}
-          tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={<><div>{`Gross retention ${grr === null ? "—" : pct(grr)}`}</div>
+          tone={nrr !== null && nrr < 1 ? "text-amber-700" : "text-emerald-700"} sub={<><div>{`Gross retention ${grr === null ? "—" : pct(grr)}`}</div>
             <div data-nrr-sub className="truncate" title={nrrSub}>{nrrSub}</div></>} onClick={() => openAccounts()}
-          trend={snaps.length >= 2 ? <KpiSpark points={snaps.map(s => s.nrr)} /> : null} />
+          trend={snaps.length >= 2 ? <KpiSpark label="NRR" points={snaps.map(s => s.nrr)} /> : null} />
         <Stat kpi size="hero" icon="✓" iconTone="bg-indigo-100 text-indigo-600" label="Overdue tasks" value={overdueTasks.length}
           sub={`${due7.length} due in the next 7 days`} onClick={() => goTasks({ overdue: true, ...(scope === "mine" ? { owner: user.name } : {}) })} />
       </section>
@@ -127,13 +130,13 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
             {ren90.length === 0 && <div className="text-sm text-slate-500">No renewals in the next 90 days.</div>}
             {[...ren90].sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate)).map(a => (
               <button key={a.id} data-row data-renewal-row={a.id} onClick={() => openAccount(a.id)}
-                className="flex w-full items-center gap-3.5 border-t border-slate-100 px-1 py-2.5 text-left first:border-0 hover:bg-slate-50">
+                className="flex w-full items-center gap-3.5 border-t border-slate-100 px-1 py-2.5 text-start first:border-0 hover:bg-slate-50">
                 <span aria-hidden="true" className="dash-av"><span>{initialsOf(a.name)}</span></span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
                   <span className="block truncate text-[12.5px] text-slate-500" title={`${a.tier || "—"} · CSM ${a.csm || "—"}`}>{a.tier || "—"} · CSM {a.csm || "—"}</span></span>
-                <span className="w-[70px] shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-slate-900">{fmtMoney(a.arrUSD)}</span>
-                <span className="shrink-0"><HealthChip score={a.score} /></span>
-                <span className="hidden w-[110px] shrink-0 whitespace-nowrap text-right text-[13px] text-slate-600 sm:inline">{fmtDate(a.renewalDate)}</span>
+                <span className="w-[70px] shrink-0 truncate whitespace-nowrap text-end text-sm font-semibold tabular-nums text-slate-900" title={fmtMoney(a.arrUSD)}>{fmtMoney(a.arrUSD)}</span>
+                <span className="shrink-0" title={`Health ${a.score} · ${RISK_WORD[a.risk]}`}><HealthChip score={a.score} /></span>
+                <span className="hidden w-[110px] shrink-0 whitespace-nowrap text-end text-[13px] text-slate-600 sm:inline">{fmtDate(a.renewalDate)}</span>
                 <span className="shrink-0"><DaysChip days={daysUntil(a.renewalDate)} /></span>
               </button>
             ))}
@@ -142,17 +145,17 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Card title="Needs attention" className="!p-3"
           right={<button data-view-all="attention" onClick={() => openAccounts()} className="text-[13px] font-semibold text-indigo-600 hover:underline">View all {flagged.length}</button>}>
           <ScrollList label="Needs attention" className="max-h-80">
-            {flagged.length === 0 && <div className="text-sm text-slate-500">No flags.</div>}
+            {flagged.length === 0 && <div className="text-sm text-slate-500">No accounts need attention.</div>}
             {[...flagged].sort((x, y) => (y.risk === "Red") - (x.risk === "Red") || x.score - y.score).map(a => (
-              <button key={a.id} data-row data-attention-row={a.id} onClick={() => openAccount(a.id)} className="flex w-full gap-3 border-t border-slate-100 py-3 text-left first:border-0 hover:bg-slate-50">
-                <span aria-hidden="true" className={`w-1 shrink-0 rounded ${a.risk === "Red" ? "bg-rose-600" : "bg-amber-500"}`} />
+              <button key={a.id} data-row data-attention-row={a.id} onClick={() => openAccount(a.id)} className="flex w-full gap-3 border-t border-slate-100 py-3 text-start first:border-0 hover:bg-slate-50">
+                <span aria-hidden="true" data-sev-bar className={`w-1 shrink-0 rounded ${a.risk === "Red" ? "bg-rose-600" : "bg-amber-500"}`} />
                 <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
-                  <span className="block truncate text-[12.5px] text-slate-500" title={a.flags.join(" · ")}>{a.flags.join(" · ")}</span></span>
+                  <span className="block truncate text-[12.5px] text-slate-500" title={`${RISK_WORD[a.risk]} · ${a.flags.join(" · ")}`}><span data-sev={a.risk} className={`font-semibold ${a.risk === "Red" ? "text-rose-700" : "text-amber-700"}`}>{RISK_WORD[a.risk]}</span> · {a.flags.join(" · ")}</span></span>
               </button>
             ))}
           </ScrollList>
         </Card>
-        <Card title={<>{scope === "mine" ? "My tasks this week" : "Tasks this week"}{overdueTasks.length > 0 && <span className="ml-2.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">{overdueTasks.length} overdue</span>}</>}
+        <Card title={<>{scope === "mine" ? "My tasks this week" : "Tasks this week"}{overdueTasks.length > 0 && <span className="ms-2.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">{overdueTasks.length} overdue</span>}</>}
           className={`!p-3 ${implOpen.length ? "lg:col-span-2" : "lg:col-span-3"}`} id="week-tasks"
           right={<button data-view-all="tasks" onClick={() => goTasks(scope === "mine" ? { owner: user.name } : {})} className="text-[13px] font-semibold text-indigo-600 hover:underline">Open Tasks</button>}>
           <ScrollList label="Tasks this week" className="max-h-72">
@@ -162,10 +165,10 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
               const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
               return (
                 <div key={t.id} data-row data-week-task={t.id} className="flex items-center gap-3 border-t border-slate-100 px-1 py-2.5 text-sm">
-                  <input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+                  <label className="dash-check"><input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
                   <span className="min-w-0 flex-1 truncate font-medium text-slate-900" title={t.title}>{t.title}</span>
                   <button className="min-w-0 max-w-[40%] truncate text-[12.5px] font-semibold text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
-                  <span className={`w-[88px] shrink-0 whitespace-nowrap text-right text-[12.5px] tabular-nums ${d < 0 ? "font-semibold text-rose-700" : d === 0 ? "text-orange-700" : "text-slate-600"}`}>{d < 0 ? "Overdue" : d === 0 ? "Today" : fmtDate(t.due)}</span>
+                  <span className={`w-[88px] shrink-0 whitespace-nowrap text-end text-[12.5px] tabular-nums ${d < 0 ? "font-semibold text-rose-700" : d === 0 ? "text-orange-700" : "text-slate-600"}`}>{d < 0 ? "Overdue" : d === 0 ? "Today" : fmtDate(t.due)}</span>
                 </div>
               );
             })}
@@ -174,21 +177,21 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </Card>
         {implOpen.length > 0 && <Card title="Implementation" className="!p-3">
           {implOpen.map(({ p, name, pct }) => (
-            <button key={p.id} data-impl-row={p.id} onClick={() => openProject(p.id)} className="block w-full rounded px-1 py-1.5 text-left hover:bg-slate-50">
-              <span className="flex text-[13.5px]"><b className="min-w-0 truncate font-semibold text-slate-900" title={name}>{name}</b><span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-slate-500">{STAGE_LABEL[p.stage] || p.stage}</span></span>
-              <span className="mt-1.5 block h-2 rounded-full bg-indigo-50"><span className="block h-2 rounded-full bg-indigo-500" style={{ width: pct + "%" }} /></span>
+            <button key={p.id} data-impl-row={p.id} onClick={() => openProject(p.id)} className="block w-full rounded px-1 py-1.5 text-start hover:bg-slate-50">
+              <span className="flex text-[13.5px]"><b className="min-w-0 truncate font-semibold text-slate-900" title={name}>{name}</b><span className="ms-auto shrink-0 whitespace-nowrap ps-2 text-slate-500">{STAGE_LABEL[p.stage] || p.stage}</span></span>
+              <span role="progressbar" aria-label={`${name} progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(pct)} className="dash-bar mt-1.5 block h-2 rounded-full bg-indigo-50"><span className="block h-2 rounded-full bg-indigo-500" style={{ width: pct + "%" }} /></span>
             </button>
           ))}
         </Card>}
       </div>
       <div data-dash-more className="mt-1.5 flex items-center gap-3"><h2 className="text-[13px] font-bold uppercase tracking-[.06em] text-slate-500">More detail</h2><span aria-hidden="true" className="h-px flex-1 bg-slate-200" /></div>
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 lg:[&>*:last-child:nth-child(2)]:col-span-2">
-        <Card title={<>Team tasks<span className="ml-2.5 text-[12.5px] font-normal text-slate-500">{teamDue7} due in 7 days</span></>} className="!p-3">
+        <Card title={<>Team tasks<span className="ms-2.5 text-[12.5px] font-normal text-slate-500">{teamDue7} due in 7 days</span></>} className="!p-3">
           <ScrollList label="Team tasks" className="max-h-60">
-            {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks anywhere. 🎉</div>}
+            {owners.length === 0 && <div className="text-sm text-slate-500">No open tasks.</div>}
             {owners.map(([name, o]) => (
               <button key={name} data-row data-team-row={name} onClick={() => goTasks({ owner: name })}
-                className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2.5 text-left first:border-0 hover:bg-slate-50">
+                className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2.5 text-start first:border-0 hover:bg-slate-50">
                 <span aria-hidden="true" className="dash-av !h-[30px] !w-[30px] !rounded-full !text-[11.5px]"><span>{initialsOf(name)}</span></span>
                 <span className="min-w-0 flex-1"><span className="block truncate text-[13.5px] font-semibold text-slate-900" title={name === user.name ? name + " (you)" : name}>{name}{name === user.name && " (you)"}</span>
                   <span className="block truncate text-xs text-slate-500" title={`${o.open} open · next ${fmtDate(o.next)}`}>{o.open} open · next {fmtDate(o.next)}</span></span>
@@ -199,15 +202,15 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
             ))}
           </ScrollList>
         </Card>
-        <Card title="Expansion pipeline" className="!p-3" right={<span className="text-[13px] font-semibold tabular-nums text-indigo-600">{fmtMoney(pipeWeighted)} weighted</span>}>
-          <div className="mb-1 text-[26px] font-extrabold tabular-nums text-slate-900">{fmtMoney(pipeTotal)}</div>
+        <Card title="Expansion pipeline" className="!p-3" right={<span className="min-w-0 truncate text-[13px] font-semibold tabular-nums text-indigo-600" title={`${fmtMoney(pipeWeighted)} weighted`}>{fmtMoney(pipeWeighted)} weighted</span>}>
+          <div className="mb-1 truncate text-[26px] font-extrabold tabular-nums text-slate-900" title={fmtMoney(pipeTotal)}>{fmtMoney(pipeTotal)}</div>
           <ScrollList label="Expansion pipeline">
             {openOpps.length === 0 && <div className="text-sm text-slate-500">No open opportunities — add them from an account page.</div>}
             {openOpps.map(o => (
-              <button key={o.id} data-row onClick={() => openAccount(o.accountId)} className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2 text-left text-[13.5px] first:border-0 hover:bg-slate-50">
+              <button key={o.id} data-row onClick={() => openAccount(o.accountId)} className="flex w-full items-center gap-2.5 border-t border-slate-100 px-1 py-2 text-start text-[13.5px] first:border-0 hover:bg-slate-50">
                 <span className="min-w-0 flex-1 truncate" title={`${o.acct.name} · ${o.type}`}><b className="font-semibold text-slate-900">{o.acct.name}</b> <span className="text-slate-500">· {o.type}</span></span>
                 <span className={`shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-xs font-semibold ${o.stage === "Stalled" ? "bg-amber-100 text-amber-700" : "bg-indigo-50 text-indigo-700"}`}>{o.stage}</span>
-                <b className="shrink-0 whitespace-nowrap tabular-nums text-slate-900">{fmtMoney(o.valueUSD)}</b>
+                <b className="min-w-0 max-w-[40%] shrink-0 truncate whitespace-nowrap tabular-nums text-slate-900" title={fmtMoney(o.valueUSD)}>{fmtMoney(o.valueUSD)}</b>
               </button>
             ))}
           </ScrollList>
@@ -294,9 +297,9 @@ function LicenseCard({ accounts, openAccount }) {
               {s.lowest.map(x => (
                 <button key={x.id} data-license-row={x.id} onClick={() => openAccount(x.id)}
                   className="flex w-full items-center gap-2 border-b border-slate-100 py-1 text-left text-sm last:border-0 hover:bg-slate-50">
-                  <span className="min-w-0 flex-1 truncate">{x.name}</span>
+                  <span className="min-w-0 flex-1 truncate" title={x.name}>{x.name}</span>
                   <span className="tabular-nums text-slate-500">{n(x.deployed)} / {n(x.total)}</span>
-                  <span data-low={x.pct < 50 ? "" : undefined} className={`w-12 text-right tabular-nums font-semibold ${x.pct < 50 ? "text-amber-600" : ""}`}>{x.pct}%</span>
+                  <span data-low={x.pct < 50 ? "" : undefined} className={`w-12 text-right tabular-nums font-semibold ${x.pct < 50 ? "text-amber-700" : ""}`}>{x.pct}%</span>
                 </button>))}
             </div>}
           </div>}

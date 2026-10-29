@@ -207,6 +207,37 @@
   .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
   main .text-slate-500:where(:not(:is(.nm, .nm-sm) *)) { color: var(--f-page-meta); }
   main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }
+  /* ---- stage 2 dashboard: theme, focus, motion, high contrast, touch, print ---- */
+  /* dark tints from the approved mockup where the remapped palette differs */
+  html.dark main [data-dash] .bg-rose-100 { background-color: #4c0519; }
+  html.dark main [data-dash] [data-kpi-icon].bg-orange-100 { background-color: #3b1d07; color: #fdba74; }
+  main [data-dash] :is(button, [role=button]):focus-visible, main [data-bell]:focus-visible, main [data-scope-toggle] button:focus-visible { outline: 2px solid rgb(var(--indigo-500)) !important; outline-offset: 2px; border-radius: 10px; }
+  .dash-check { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 24px; min-height: 24px; margin: -3px; cursor: pointer; }
+  /* small text buttons get a 24px hit area without moving anything */
+  main [data-dash] :is([data-view-all], [data-bridge-head] button, [data-week-task] > button) { min-height: 24px; padding-block: 2px; margin-block: -2px; }
+  main [data-dash] [data-analytics] button { min-height: 24px; }
+  @media (max-width: 639px) {
+    main [data-dash] .dash-pill, main [data-dash] [data-row], main [data-dash] [data-impl-row], main [data-scope-toggle] button { min-height: 44px; }
+    main [data-dash] :is([data-view-all], [data-bridge-head] button, [data-week-task] > button) { min-height: 44px; padding-block: 12px; margin-block: -12px; }
+    main [data-dash] .dash-check { min-width: 44px; min-height: 44px; margin: -13px -13px -13px -13px; }
+    main button[data-bell].nm-btn { width: 44px; height: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main [data-dash] :is(.nm, .dash-pill, [data-row], [data-impl-row], [data-kpi-trend], [role=progressbar], [role=progressbar] > span), main [data-dash] :is(.nm, .dash-pill, [data-row], [data-impl-row]):hover { transform: none !important; animation: none !important; transition: none !important; }
+  }
+  @media (forced-colors: active) {
+    main [data-dash] :is(.nm, .dash-pill, [data-row], [data-days-chip], [data-health-pill]), main [data-dash] span.rounded-full { border: 1px solid CanvasText; }
+    main [data-dash] :is(button, [role=button]):focus-visible, main [data-bell]:focus-visible { outline: 2px solid Highlight !important; }
+    main [data-dash] :is(.dash-dot, [data-sev-bar], [role=progressbar] > span, [data-arr-bridge] span > span, [data-license-bar]) { forced-color-adjust: none; background: Highlight; }
+    main [data-dash] [role=progressbar] { border: 1px solid CanvasText; }
+    main [data-dash] [data-kpi-trend] { forced-color-adjust: none; color: Highlight; }
+  }
+  @media print {
+    main [data-bell], main [data-scope-toggle], main [data-dash] [data-view-all] { display: none !important; }
+    main [data-dash] :is(.nm, .dash-pill, section) { break-inside: avoid; }
+    main [data-dash] [data-stat-value], main [data-dash] .truncate { overflow: visible; text-overflow: clip; white-space: normal; }
+    main [data-dash] { max-width: 100%; }
+  }
 </style>
 </head>
 <body class="text-slate-700">

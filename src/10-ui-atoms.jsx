@@ -22,7 +22,7 @@ const Stat = ({ label, value, sub, tone, onClick, size, statKey, icon, iconTone,
         ? <div className="flex items-center gap-2"><span aria-hidden="true" data-kpi-icon className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] text-sm font-extrabold ${iconTone}`}>{icon}</span>
             <span className="min-w-0 truncate text-[13px] font-semibold text-slate-600" title={label}>{label}</span></div>
         : <div className={`${size === "sm" ? "truncate " : ""}text-[11px] font-bold uppercase tracking-widest text-slate-500`}>{label}</div>}
-      <div data-stat-value data-size={size || "md"} className={`mt-1 ${STAT_SIZE[size] || "text-2xl"} font-extrabold tabular-nums ${tone || "text-slate-700"}`}>{value}</div>
+      <div data-stat-value data-size={size || "md"} title={kpi ? String(value) : undefined} className={`mt-1 ${STAT_SIZE[size] || "text-2xl"}${kpi ? " truncate" : ""} font-extrabold tabular-nums ${tone || "text-slate-700"}`}>{value}</div>
       {sub && <div className="text-xs text-slate-500">{sub}</div>}
       {trend}
     </div>

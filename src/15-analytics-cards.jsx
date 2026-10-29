@@ -97,7 +97,7 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
                 <td className="px-2 py-1.5 text-right">{r.slipped || "—"}</td>
                 <td className="px-2 py-1.5 text-right">{wrChip(r.wr)}</td>
                 {anyForecast && <td className="px-2 py-1.5 text-right text-xs">{r.forecast === null ? "—"
-                  : <span>{fmtMoney(r.forecast)} <span className={r.renewed >= r.forecast ? "text-emerald-600" : "text-rose-600"}>({r.renewed >= r.forecast ? "+" : "−"}{fmtMoney(Math.abs(r.renewed - r.forecast))})</span></span>}</td>}
+                  : <span>{fmtMoney(r.forecast)} <span className={r.renewed >= r.forecast ? "text-emerald-700" : "text-rose-600"}>({r.renewed >= r.forecast ? "+" : "−"}{fmtMoney(Math.abs(r.renewed - r.forecast))})</span></span>}</td>}
               </tr>
             ))}
           </tbody>
@@ -127,9 +127,9 @@ function AmBookCard({ book, openAccount }) {
   const Row = ({ label, r, pending, onClick, indent }) => (
     <div onClick={onClick} role={onClick ? "button" : undefined}
       className={`${GRID} py-1 text-sm ${indent ? "pl-4 text-slate-600" : "font-semibold text-slate-800"} ${onClick ? "cursor-pointer rounded hover:bg-slate-50" : ""}`}>
-      <span className="truncate">{label}</span>
+      <span className="truncate" title={typeof label === "string" ? label : undefined}>{label}</span>
       <span className="text-right tabular-nums">{pending ? "—" : money(r.opening)}</span>
-      <span className="text-right tabular-nums text-emerald-600">{pending ? "—" : (r.expansion ? "+" + money(r.expansion) : "—")}</span>
+      <span className="text-right tabular-nums text-emerald-700">{pending ? "—" : (r.expansion ? "+" + money(r.expansion) : "—")}</span>
       <span className="text-right tabular-nums text-rose-600">{pending ? "—" : (r.reduction ? "-" + money(r.reduction) : "—")}</span>
       <span className="text-right tabular-nums">{money(r.current)}</span>
     </div>
