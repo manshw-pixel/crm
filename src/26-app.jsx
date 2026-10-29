@@ -180,6 +180,7 @@ function App({ user, onBackToClients }) {
   useEffect(() => { if (view !== "Implementation") setImplProjectId(null); }, [view]); // returning shows the Board
   const [taskFilter, setTaskFilter] = useState(null); // {owner?, overdue?} from a dashboard card/row
   const goTasks = f => { setView("Tasks"); setAcctId(null); setTaskFilter({ ...(f || {}), t: Date.now() }); };
+  const plainTasks = () => goTasks({ owner: "" }); // sidebar / number key / palette: unfiltered queue, even if already on Tasks
   const openProject = id => { setImplProjectId(id); setView("Implementation"); };
   useEffect(() => { window.__goTasks = goTasks; });
   const [acctFilter, setAcctFilter] = useState(null); // {risk, showChurned} applied to AccountList on dashboard card click
@@ -270,7 +271,7 @@ function App({ user, onBackToClients }) {
       if (["INPUT", "SELECT", "TEXTAREA"].includes(e.target.tagName)) return;
       if (e.key === "/") { e.preventDefault(); resetAccounts(); setTimeout(() => searchRef.current?.focus(), 50); }
       const i = "123456789".indexOf(e.key); // one key per sidebar item, in sidebar order
-      if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else { if (views[i] === "Tasks") setTaskFilter(null); setView(views[i]); setAcctId(null); } }
+      if (i >= 0 && i < views.length) { if (views[i] === "Accounts") resetAccounts(); else if (views[i] === "Tasks") plainTasks(); else { setView(views[i]); setAcctId(null); } }
       if (e.key === "Escape") setAcctId(null);
     };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
@@ -450,7 +451,7 @@ function App({ user, onBackToClients }) {
         <nav aria-label="Main" className={`flex-1 space-y-0.5 ${collapsed ? "px-2" : "px-3"}`}>
           {views.map(v => (
             <button key={v} title={v} aria-label={v} aria-current={view === v ? "page" : undefined}
-              onClick={() => { setMobileNav(false); if (v === "Accounts") resetAccounts(); else { if (v === "Tasks") setTaskFilter(null); setView(v); setAcctId(null); } }}
+              onClick={() => { setMobileNav(false); if (v === "Accounts") resetAccounts(); else if (v === "Tasks") plainTasks(); else { setView(v); setAcctId(null); } }}
               className={`flex w-full items-center ${collapsed ? "justify-center" : ""}`}>
               {NAV_ICONS[v]}{!collapsed && <span className="flex-1 text-left">{v}</span>}
             </button>
@@ -566,7 +567,7 @@ function App({ user, onBackToClients }) {
         </>}
       </ViewBoundary>
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} accounts={scored} user={user}
-        go={(v, id, form) => { if (id) openAccount(id, form); else { setView(v); setAcctId(null); } }} />
+        go={(v, id, form) => { if (id) openAccount(id, form); else if (v === "Tasks") plainTasks(); else { setView(v); setAcctId(null); } }} />
       <Copyright />
       </main>
     </div>

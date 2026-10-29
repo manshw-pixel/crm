@@ -45,7 +45,8 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   useEffect(() => {
     if (!initialFilter) return;
     if (initialFilter.owner !== undefined) { setOwner(initialFilter.owner); setScope("all"); }
-    if (initialFilter.overdue) setOpen({ overdue: true, today: false, week: false, later: false, done: false });
+    setOpen(initialFilter.overdue ? { overdue: true, today: false, week: false, later: false, done: false }
+      : { overdue: true, today: true, week: false, later: false, done: false });
   }, [initialFilter]);
   const byId = useMemo(() => Object.fromEntries(scored.map(a => [a.id, a])), [scored]);
   const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q, owner });
@@ -57,7 +58,7 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   return (
     <Card title={`Work queue (${total})`} right={
       <div className="flex flex-wrap items-center gap-2">
-        {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="nm-btn px-2 py-1 text-xs font-semibold text-indigo-700" aria-label={`Clear owner filter ${owner}`}>Owner: {owner} ×</button>}
+        {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="nm-btn px-2 py-1 text-xs font-semibold text-indigo-700" aria-label={`Clear owner filter ${owner}`} title={`Owner: ${owner}`}>Owner: <span className="inline-block max-w-[16rem] truncate align-bottom">{owner}</span> ×</button>}
         <Btn kind={scope === "mine" ? "primary" : "default"} onClick={() => setScope("mine")}>Mine</Btn>
         <Btn kind={scope === "all" ? "primary" : "default"} onClick={() => setScope("all")}>All</Btn>
         {/* plain <select> rather than the shared Select: these need readable labels with
