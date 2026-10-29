@@ -203,11 +203,22 @@ test("ARR bridge header carries GRR and Churned ARR hooks with values (QA 09 rea
   } finally { await browser.close(); }
 });
 
-test("More detail divider, and monthly Trends live inside Analytics", async () => {
-  const { page, browser } = await launch(panelSeed([]));
+const mo = n => { const d = new Date(); d.setUTCMonth(d.getUTCMonth() - n, 1); return d.toISOString().slice(0, 7); };
+const snapSeed = `window.__seedRows = { accounts: ${wrap(T)}, contacts: [], activities: [], opportunities: [], team: [], tasks: [], projects: [], project_tasks: [],
+  settings: [{ id: 1, data: { snapshots: [{ month: "${mo(3)}", totalARR: 100000, nrr: 1, grr: 1, Green: 1, Yellow: 1, Red: 1 }, { month: "${mo(2)}", totalARR: 120000, nrr: 1.05, grr: 0.95, Green: 2, Yellow: 1, Red: 0 }] } }] };
+  window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`;
+
+test("More detail divider shows, and monthly Trends sit inside Analytics (not above it) once 2 snapshots exist", async () => {
+  const { page, browser } = await launch(snapSeed);
   try {
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.waitForSelector("[data-dash-more]");
-    assert(await page.$("[data-analytics] [data-trends-note]") === null, "note must not be inside analytics");
+    await page.click("[data-analytics-toggle]");
+    const where = await page.evaluate(() => {
+      const cards = Array.from(document.querySelectorAll("h3")).filter(h => h.textContent.trim() === "Trends (monthly)");
+      return { n: cards.length, inside: cards.filter(h => h.closest("[data-analytics]")).length };
+    });
+    assert(where.n === 1 && where.inside === 1, "Trends (monthly) cards " + JSON.stringify(where));
+    assert(await page.$("[data-trends-note]") === null, "no-data note shown despite 2 snapshots");
   } finally { await browser.close(); }
 });
