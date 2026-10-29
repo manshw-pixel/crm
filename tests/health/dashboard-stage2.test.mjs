@@ -582,6 +582,8 @@ test("T7 click 1: ARR at risk card (click and Enter) opens Accounts filtered to 
       else { await page.focus('[data-kpi][data-stat="ARR at risk (USD)"]'); await page.keyboard.press("Enter"); }
       await waitH1(page, "Accounts");
       await page.waitForSelector("[data-account-row]");
+      // the list applies the hand-off filter in an effect: wait for it rather than reading the first render
+      await page.waitForFunction(() => document.querySelector('select[aria-label="Filter by health risk"]')?.value === "Red", null, { timeout: 5000 }).catch(() => {});
       assert(await riskSel(page) === "Red", `${how}: risk ${await riskSel(page)}`);
       const rows = await acctRows(page);
       assert(rows.join() === "r1", `${how}: rows ${rows}`);
@@ -776,7 +778,7 @@ for (const theme of ["light", "dark"]) test(`T7 390px (${theme}): every named pa
         if (!card) { out.panels[name] = "MISSING"; continue; }
         const b = card.getBoundingClientRect();
         // rows must fit their card too: a scroll list clips a too-wide row instead of overflowing the page
-        const wide = Array.from(card.querySelectorAll("[data-row], [data-impl-row]")).filter(x => x.getBoundingClientRect().right > b.right + 0.5).length;
+        const wide = Array.from(card.querySelectorAll("[data-row], [data-impl-row]")).filter(x => x.getBoundingClientRect().right > b.right + 0.5).map(x => Math.round(x.getBoundingClientRect().right) + ":" + Math.round(x.getBoundingClientRect().width)).join(",");
         out.panels[name] = card.scrollWidth <= card.clientWidth && b.right <= 390.5 && b.width > 50 && !wide ? "ok" : `scroll ${card.scrollWidth}/${card.clientWidth} right ${b.right} wide rows ${wide}`;
       }
       const clipped = e => { for (let x = e.parentElement; x && !x.matches("[data-dash]"); x = x.parentElement) if (getComputedStyle(x).overflowX !== "visible") return true; return false; };

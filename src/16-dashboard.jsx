@@ -160,7 +160,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           right={<button data-view-all="tasks" onClick={() => goTasks(scope === "mine" ? { owner: user.name } : {})} className="text-[13px] font-semibold text-indigo-600 hover:underline">Open Tasks</button>}>
           <ScrollList label="Tasks this week" className="max-h-72">
             {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
-            <div className="grid gap-x-6 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
             {[...weekTasks].sort((x, y) => x.due.localeCompare(y.due)).map(t => {
               const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
               return (
