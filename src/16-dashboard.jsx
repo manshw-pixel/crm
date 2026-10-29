@@ -1,7 +1,22 @@
 // Whole class strings so the Tailwind scanner sees them; themed for dark mode (inline hex was 4.4:1 for Red).
 const RISK_TEXT = { Green: "text-emerald-600", Yellow: "text-amber-600", Red: "text-rose-600" };
 
-function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts, goFinance }) {
+// Tiny NRR trend: stored snapshot values only, null points skipped, scaled to their own min/max.
+function KpiSpark({ points }) {
+  const v = points.map((p, i) => [i, p]).filter(([, p]) => p !== null && p !== undefined);
+  if (v.length < 2) return null;
+  const lo = Math.min(...v.map(x => x[1])), hi = Math.max(...v.map(x => x[1])), span = hi - lo || 1;
+  const xs = v.map(([i, p]) => [i * (200 / (points.length - 1)), 34 - ((p - lo) / span) * 28]);
+  const line = "M" + xs.map(p => p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" L");
+  return (
+    <svg data-kpi-trend viewBox="0 0 200 40" preserveAspectRatio="none" aria-hidden="true" className="mt-1 h-10 w-full text-emerald-600">
+      <path d={line + ` L${xs[xs.length - 1][0].toFixed(1)} 40 L${xs[0][0].toFixed(1)} 40 Z`} fill="currentColor" fillOpacity="0.15" />
+      <path d={line} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts, goFinance, goTasks, openProject, goRenewals }) {
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   // `today` is in the deps so the card re-bases itself when the year turns, even in a
   // session that was left open over New Year -- without it the memo would hold last
@@ -14,6 +29,12 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
   const counts = { Green: 0, Yellow: 0, Red: 0 };
   scored.forEach(a => counts[a.risk]++);
+  const ren90 = scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 90; });
+  const ren90ARR = ren90.reduce((s, a) => s + a.arrUSD, 0);
+  const ren30 = ren90.filter(a => daysUntil(a.renewalDate) <= 30).length;
+  const openMine = st.tasks.filter(t => t.status !== "Done" && (scope !== "mine" || t.owner === user.name));
+  const overdueTasks = openMine.filter(t => daysUntil(t.due) < 0);
+  const due7 = openMine.filter(t => { const d = daysUntil(t.due); return d >= 0 && d <= 7; });
   const flagged = scored.filter(a => a.flags.length);
   const declines = scored
     .flatMap(a => (a.healthEvents || [])
@@ -55,27 +76,36 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           : scope === "mine" ? <>No accounts assigned to you yet — switch to <b>All</b> (top right) or assign yourself as CSM on an account.</>
           : <>Fresh start — no accounts yet. Head to <b>Accounts</b> (press <kbd className="rounded border border-indigo-300 px-1">4</kbd>) and click <b>+ New account</b>, import a JSON backup, or load sample data from Settings.</>}
       </div>}
-      {/* Headline: size and direction of the book. */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Stat size="hero" label={`Total ARR (USD)${scope === "mine" ? " · my book" : ""}`} value={fmtMoney(totalARR)} sub={`${scored.length} active accounts`} onClick={() => openAccounts()} />
-        <Stat size="hero" label="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-600" sub={`${atRisk.length} red accounts`} onClick={() => openAccounts({ risk: "Red" })} />
-        <Stat size="hero" label="NRR (12m)" value={nrr === null ? "—" : pct(nrr)} tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`existing customers: +${fmtMoney(bridge.expansion)} exp · −${fmtMoney(bridge.contraction)} contr`} onClick={() => openAccounts()} />
-        <Stat size="hero" label="GRR (12m)" value={grr === null ? "—" : pct(grr)} tone={grr !== null && grr < 0.9 ? "text-rose-600" : "text-emerald-600"} sub="gross revenue retention" onClick={() => openAccounts()} />
-        <Stat size="hero" label="Churned ARR (12m)" value={fmtMoney(churnedARR)} tone={churnedARR ? "text-rose-600" : undefined} sub={`${lost} account(s) lost`}
-          onClick={retAccounts.some(a => a.churn) ? () => openAccounts({ showChurned: true, onlyChurned: true }) : undefined} />
-      </div>
-      {/* Needs attention now: counts, then the lists behind them. */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-5">
-        <Card title="Health distribution" className="!p-3 col-span-2 md:col-span-1"><DistBar counts={counts} /></Card>
-        <Stat size="sm" label="At-risk accounts" value={atRisk.length} tone="text-rose-600" sub="health score below 40" onClick={() => openAccounts({ risk: "Red" })} />
-        <Stat size="sm" label="QBRs due (30d)" value={qbrAccts.length}
-          tone={qbrOverdue ? "text-rose-600" : qbrAccts.length ? "text-amber-600" : undefined}
-          sub={qbrOverdue ? `${qbrOverdue} overdue` : "on schedule"} onClick={() => openAccounts({ qbrDue: true })} />
-        <Stat size="sm" label="Tasks due 7d" value={weekTasks.length} tone={weekTasks.length ? "text-amber-600" : undefined} sub={`${weekTasks.some(t => daysUntil(t.due) < 0) ? `${weekTasks.filter(t => daysUntil(t.due) < 0).length} overdue · ` : ""}${scope === "mine" ? "owned by you" : "whole team"}`} onClick={() => document.getElementById("week-tasks")?.scrollIntoView({ behavior: "smooth" })} />
-        <Stat size="sm" label="Billing completed" value={`${scored.filter(a => a.billingCompleted).length} / ${scored.length}`}
-          tone={scored.some(a => !a.billingCompleted) ? "text-amber-600" : "text-emerald-600"}
-          sub={`${scored.filter(a => !a.billingCompleted).length} pending this term`} onClick={() => openAccounts({ billing: "Completed" })} />
-      </div>
+      {/* Headline: four cards that each lead somewhere. */}
+      <section aria-label="Headline numbers" className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <Stat kpi size="hero" icon="!" iconTone="bg-rose-100 text-rose-600" label="ARR at risk" statKey="ARR at risk (USD)" value={fmtMoney(arrAtRisk)} tone="text-rose-700"
+          sub={`${atRisk.length} accounts in red health`} onClick={() => openAccounts({ risk: "Red" })} />
+        <Stat kpi size="hero" icon="R" iconTone="bg-orange-100 text-orange-600" label="Renewals · 90 days" value={ren90.length}
+          sub={`${fmtMoney(ren90ARR)} ARR · ${ren30} within 30 days`} onClick={() => goRenewals()} />
+        <Stat kpi size="hero" icon="%" iconTone="bg-emerald-100 text-emerald-600" label="Net revenue retention" statKey="NRR (12m)" value={nrr === null ? "—" : pct(nrr)}
+          tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`Gross retention ${grr === null ? "—" : pct(grr)}`} onClick={() => openAccounts()}
+          trend={snaps.length >= 2 ? <KpiSpark points={snaps.map(s => s.nrr)} /> : null} />
+        <Stat kpi size="hero" icon="✓" iconTone="bg-indigo-100 text-indigo-600" label="Overdue tasks" value={overdueTasks.length}
+          sub={`${due7.length} due in the next 7 days`} onClick={() => goTasks({ overdue: true, ...(scope === "mine" ? { owner: user.name } : {}) })} />
+      </section>
+      {snaps.length < 2 && <p data-trends-note className="-mt-1 text-xs text-slate-500">Trend lines appear once a second monthly snapshot exists (one is taken each month).</p>}
+      {/* Health strip: where the book stands. */}
+      <section aria-label="Team health" className="flex flex-wrap gap-2.5">
+        {[
+          ["Total ARR", "Total ARR (USD)", fmtMoney(totalARR), "bg-indigo-500", () => openAccounts(), undefined],
+          ["Healthy", "Healthy", counts.Green, "bg-emerald-500", () => openAccounts({ risk: "Green" }), undefined],
+          ["Watch", "Watch", counts.Yellow, "bg-amber-500", () => openAccounts({ risk: "Yellow" }), undefined],
+          ["At risk", "At risk", counts.Red, "bg-red-500", () => openAccounts({ risk: "Red" }), undefined],
+          ["QBRs due (30d)", "QBRs due (30d)", qbrAccts.length, "bg-sky-500", () => openAccounts({ qbrDue: true }), qbrOverdue ? `${qbrOverdue} overdue` : undefined],
+          ["Billing completed", "Billing completed", `${scored.filter(a => a.billingCompleted).length} / ${scored.length}`, "bg-slate-400", () => openAccounts({ billing: "Completed" }), undefined],
+        ].map(([label, key, value, dot, go, title]) => (
+          <button key={key} type="button" data-health-pill={key} data-stat={key} title={title} onClick={go} className="dash-pill">
+            <span aria-hidden="true" className={`dash-dot ${dot}`} />
+            <span className="text-slate-500">{label}</span>
+            <b data-stat-value data-size="pill" className="tabular-nums text-slate-900">{value}</b>
+          </button>
+        ))}
+      </section>
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
         <Card title="Renewals due" className="!p-3">
           <ScrollList label="Renewals due">
@@ -167,7 +197,6 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         </div>
       </Card>}
       </div>
-      {snaps.length < 2 && <p data-trends-note className="-mt-1 text-xs text-slate-500">Trend lines appear once a second monthly snapshot exists (one is taken each month).</p>}
       {/* Revenue movement and adoption. */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <ArrBridgeCard b={bridge} />
@@ -201,8 +230,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           {qSnaps.length < 2 && <div className="text-sm text-slate-500 md:col-span-2 xl:col-span-3">ARR, NRR and GRR are shown by quarter (average of the months in it) — the lines appear once a second quarter has snapshots.</div>}
           {qSnaps.length >= 2 && <>
           <LineChart title="Total ARR (USD) · quarterly avg" points={qSnaps.map(s => s.totalARR)} months={qSnaps.map(s => s.quarter)} fmt={fmtMoney} />
-          <LineChart title="NRR · quarterly avg" points={qSnaps.map(s => s.nrr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#10b981" />
-          <LineChart title="GRR · quarterly avg" points={qSnaps.map(s => s.grr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="#f59e0b" />
+          <LineChart title="NRR · quarterly avg" points={qSnaps.map(s => s.nrr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="bg-emerald-500" />
+          <LineChart title="GRR · quarterly avg" points={qSnaps.map(s => s.grr)} months={qSnaps.map(s => s.quarter)} fmt={x => x === null || x === undefined ? "—" : (100 * x).toFixed(0) + "%"} color="bg-amber-500" />
           </>}
           <StackedBars months={snaps.map(s => s.month)} series={[
             { label: "Green", values: snaps.map(s => s.Green || 0), color: RISK_HEX.Green },

@@ -13,14 +13,14 @@ async function open(seed) {
 const A = seedAccount({ id: "s1", name: "Second Co", renewalDate: day(40) });
 const playbookTask = { id: "p1", accountId: "s1", title: "▶ Renewal kickoff call", due: day(-3), status: "Open", owner: "Test User", priority: "High", playbook: true, renewalFor: A.renewalDate };
 
-test("dashboard: trends shrink to a note without data, and overdue shows on Tasks due 7d", async () => {
+test("dashboard: trends shrink to a note without data, and the Overdue tasks card shows the 7-day count", async () => {
   const { page, browser } = await open(seedOf([A], { tasks: [playbookTask] }));
   try {
     await page.waitForSelector("[data-trends-note]", { timeout: 8000 });
     assert(!/Trends \(monthly\)/i.test(await rootText(page)), "empty Trends card still rendered");
-    const sub = await page.$eval('[data-stat^="Tasks due 7d"]', e => e.textContent);
+    const sub = await page.$eval('[data-stat="Overdue tasks"]', e => e.textContent);
     // the renewal playbook auto-seeds its own steps for this account, so assert the shape, not a count
-    assert(/\d+ overdue · /.test(sub), "Tasks due 7d does not mention overdue: " + sub);
+    assert(/\d+ due in the next 7 days/.test(sub), "Overdue tasks card lacks the 7-day sub: " + sub);
   } finally { await browser.close(); }
 });
 

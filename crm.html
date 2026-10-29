@@ -191,8 +191,15 @@
   /* pills: shape and type only; each chip keeps its own padding */
   main span.rounded-full:where([class*="px-"]), [data-days-chip] { border-radius: 999px; font-weight: 600; }
   /* KPI labels and in-card small labels: sentence case */
-  [data-stat] > div:first-child, .nm-sm .uppercase { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--f-kpi); }
-  [data-stat] > div:first-child { font-size: 13px; }
+  [data-stat]:not([data-kpi]) > div:first-child, .nm-sm .uppercase { font-size: 12px; font-weight: 600; text-transform: none; letter-spacing: normal; color: var(--f-kpi); }
+  [data-stat]:not([data-kpi]) > div:first-child { font-size: 13px; }
+  /* dashboard health pills */
+  .dash-pill { display: flex; align-items: center; gap: 8px; border-radius: 999px; padding: 8px 14px; font-size: 13px; background: rgb(var(--white)); box-shadow: 0 1px 2px rgba(15,23,42,.05); cursor: pointer; }
+  .dash-pill:hover { box-shadow: 0 0 0 1px rgb(var(--indigo-300)); }
+  .dash-pill:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
+  .dash-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+  html.dark .dash-pill { box-shadow: 0 1px 2px rgba(0,0,0,.4); }
+  html.dark .dash-pill:hover { box-shadow: 0 0 0 1px rgb(var(--indigo-300)); }
   .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
   main .text-slate-500:where(:not(:is(.nm, .nm-sm) *)) { color: var(--f-page-meta); }
   main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }

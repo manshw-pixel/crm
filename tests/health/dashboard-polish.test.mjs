@@ -13,11 +13,12 @@ test("dashboard money and retention stats render at hero size with tabular numer
   const stats = await page.$$eval("[data-stat-value]", els => els.map(e => ({
     label: e.closest("[data-stat]").getAttribute("data-stat"), size: e.getAttribute("data-size"), cls: e.className })));
   const hero = stats.filter(s => s.size === "hero").map(s => s.label);
-  for (const want of ["Total ARR", "ARR at risk", "GRR", "NRR", "Churned ARR"])
-    assert(hero.some(l => l.startsWith(want)), `${want} is not a hero stat: ${JSON.stringify(hero)}`);
-  assert(hero.length === 5, "expected exactly 5 hero stats, got " + JSON.stringify(hero));
-  const sm = stats.filter(s => s.size === "sm").map(s => s.label);
-  assert(sm.some(l => l.startsWith("QBRs due")) && sm.some(l => l.startsWith("Tasks due 7d")), "operational row not small: " + JSON.stringify(sm));
+  for (const want of ["ARR at risk (USD)", "Renewals · 90 days", "NRR (12m)", "Overdue tasks"])
+    assert(hero.includes(want), `${want} is not a hero stat: ${JSON.stringify(hero)}`);
+  assert(hero.length === 4, "expected exactly 4 hero stats, got " + JSON.stringify(hero));
+  const pill = stats.filter(s => s.size === "pill").map(s => s.label);
+  for (const want of ["Total ARR (USD)", "QBRs due (30d)", "Billing completed"])
+    assert(pill.includes(want), `${want} is not a health pill: ${JSON.stringify(pill)}`);
   for (const s of stats) assert(/\btabular-nums\b/.test(s.cls), `${s.label} value lacks tabular-nums`);
   await browser.close();
 });

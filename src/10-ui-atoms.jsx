@@ -11,14 +11,20 @@ const Card = ({ title, right, children, className = "", id }) => (
 // size: "hero" for the headline money/retention numbers, "sm" for the operational row,
 // omitted for everything else -- only the type weight changes, never the grid.
 const STAT_SIZE = { hero: "text-3xl", sm: "text-xl" };
-const Stat = ({ label, value, sub, tone, onClick, size }) => (
-  <Card className={onClick ? "cursor-pointer transition hover:border-indigo-300 hover:shadow-md" : ""}>
+// statKey keeps the legacy data-stat hook when the visible label is reworded; icon/iconTone/kpi
+// switch the label row to the icon-chip layout; trend is an optional node under the sub line.
+const Stat = ({ label, value, sub, tone, onClick, size, statKey, icon, iconTone, trend, kpi }) => (
+  <Card className={`${onClick ? "cursor-pointer transition hover:border-indigo-300 hover:shadow-md" : ""}${kpi ? " flex flex-col" : ""}`}>
     <div role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} onClick={onClick}
       onKeyDown={onClick ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className="outline-none" data-stat={label}>
-      <div className={`${size === "sm" ? "truncate " : ""}text-[11px] font-bold uppercase tracking-widest text-slate-500`}>{label}</div>
+      className="outline-none" data-stat={statKey || label} data-kpi={kpi}>
+      {icon
+        ? <div className="flex items-center gap-2"><span aria-hidden="true" data-kpi-icon className={`flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-[9px] text-sm font-extrabold ${iconTone}`}>{icon}</span>
+            <span className="min-w-0 truncate text-[13px] font-semibold text-slate-600" title={label}>{label}</span></div>
+        : <div className={`${size === "sm" ? "truncate " : ""}text-[11px] font-bold uppercase tracking-widest text-slate-500`}>{label}</div>}
       <div data-stat-value data-size={size || "md"} className={`mt-1 ${STAT_SIZE[size] || "text-2xl"} font-extrabold tabular-nums ${tone || "text-slate-700"}`}>{value}</div>
       {sub && <div className="text-xs text-slate-500">{sub}</div>}
+      {trend}
     </div>
   </Card>
 );
