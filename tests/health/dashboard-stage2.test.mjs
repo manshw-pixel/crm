@@ -42,3 +42,26 @@ test("Saved stays visible on Accounts (hidden only on Dashboard)", async () => {
     assert(await visible(page, '[data-sync-status="saved"]'), "Saved visible on Accounts");
   } finally { await browser.close(); }
 });
+
+const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+const rgb = s => s.match(/\d+(\.\d+)?/g).slice(0, 3).map(Number);
+
+for (const theme of ["light", "dark"]) test(`bell badge text contrast >= 4.5:1 (${theme})`, async () => {
+  const { page, browser } = await launch(`try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}` + rows);
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.reload(); await ready(page);
+    await page.waitForSelector("[data-dash-greeting]");
+    // the badge only renders with unread alerts: force one in the DOM if none is derived from the seed
+    const c = await page.evaluate(() => {
+      const b = document.querySelector("[data-bell]");
+      let s = b.querySelector(":scope > span");
+      if (!s) { s = document.createElement("span"); s.className = "absolute"; s.textContent = "1"; b.appendChild(s); }
+      const cs = getComputedStyle(s); return [cs.color, cs.backgroundColor, cs.fontSize];
+    });
+    const r = ratio(rgb(c[0]), rgb(c[1]));
+    assert(r >= 4.5, `badge contrast ${r.toFixed(2)} (${c})`);
+    assert(c[2] === "10.5px", "badge font: " + c[2]);
+  } finally { await browser.close(); }
+});

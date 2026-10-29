@@ -489,7 +489,7 @@ function App({ user, onBackToClients }) {
         {view === "Dashboard" && !acctId ? (
           <div className="min-w-0 flex-1 basis-[280px]">
             <p data-dash-date className="text-[13px] text-slate-500">{new Date().toLocaleDateString("en-GB", { weekday: "long" })}, {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long" })}</p>
-            <h1 data-dash-greeting className="mt-0.5 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">
+            <h1 data-dash-greeting title={`${greetingFor(new Date().getHours())}, ${(user.name || "").trim().split(/\s+/)[0] || "there"}`} className="mt-0.5 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">
               {greetingFor(new Date().getHours())}, {(user.name || "").trim().split(/\s+/)[0] || "there"}</h1>
           </div>
         ) : <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
