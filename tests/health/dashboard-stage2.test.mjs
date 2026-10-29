@@ -222,3 +222,232 @@ test("More detail divider shows, and monthly Trends sit inside Analytics (not ab
     assert(await page.$("[data-trends-note]") === null, "no-data note shown despite 2 snapshots");
   } finally { await browser.close(); }
 });
+
+// ---- Task 6: theme + accessibility pass. One focused check per owner-required item. ----
+const A11Y = [
+  seedAccount({ id: "x1", name: "Globex International Holdings Worldwide Limited", csm: "Priya Shah", renewalDate: day(12), licenses: 200, deployedLicenses: 40, inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 } }),
+  seedAccount({ id: "x2", name: "Watch Co", csm: "Priya Shah", renewalDate: day(50), inputs: { usage: 55, sentiment: 55, tickets: 3, nps: 0 } }),
+  seedAccount({ id: "x3", name: "Calm Co", csm: "Priya Shah", renewalDate: day(80) }),
+];
+const a11ySeed = (theme, accts = A11Y) => `try { localStorage.setItem("onevio.theme", "${theme}"); localStorage.setItem("dashAnalytics_Priya Shah", "1"); } catch (e) {}
+  window.__seedRows = { accounts: ${wrap(accts)}, contacts: [], activities: [], team: [],
+  tasks: ${wrap([{ id: "k1", accountId: "x1", title: "Call them about the renewal", due: day(-2), owner: "Priya Shah", priority: "High", status: "Open", createdAt: day(-9) }])},
+  opportunities: ${wrap([{ id: "o1", accountId: "x1", name: "Add-on", type: "Upsell", value: 40000, stage: "Proposal", probability: 50, closeDate: day(40) }])},
+  projects: ${wrap([{ ...proj("p1", "in_progress", day(30)), accountId: "x1" }])}, project_tasks: ${wrap([ptask("pt1", "p1", "done"), ptask("pt2", "p1", "open")])},
+  settings: [{ id: 1, data: { snapshots: [{ month: "${mo(3)}", totalARR: 100000, nrr: 1, grr: 1, Green: 1, Yellow: 1, Red: 1 }, { month: "${mo(2)}", totalARR: 120000, nrr: 1.05, grr: 0.95, Green: 2, Yellow: 1, Red: 0 }] } }] };
+  window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`;
+async function openDash(theme, w = 1440, accts) {
+  const r = await launch(a11ySeed(theme, accts));
+  await r.page.reload(); // the head theme script reads the stored theme on the next load
+  await r.page.setViewportSize({ width: w, height: 900 });
+  await r.page.waitForSelector("[data-dash] [data-row]");
+  await r.page.waitForTimeout(300);
+  return r;
+}
+// In-page helpers: effective background (first ancestor with an opaque fill) and contrast.
+const PAGE_FNS = `window.__c = (() => {
+  const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const parse = s => (s.match(/[\\d.]+/g) || [0, 0, 0]).map(Number);
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  const bgOf = e => { for (let x = e; x; x = x.parentElement) { const c = parse(getComputedStyle(x).backgroundColor); if (c.length < 4 || c[3] > 0.5) return c.slice(0, 3); } return [255, 255, 255]; };
+  const shown = e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
+  return { parse, ratio, bgOf, shown };
+})();`;
+const TARGETS = "[data-dash] :is(button:not(:disabled), [role=button], label.dash-check), [data-bell], [data-scope-toggle] button";
+
+for (const theme of ["light", "dark"]) test(`dashboard text >= 4.5:1 and KPI icon tiles >= 3:1 (${theme})`, async () => {
+  const { page, browser } = await openDash(theme);
+  try {
+    await page.addScriptTag({ content: PAGE_FNS });
+    const r = await page.evaluate(() => {
+      const { parse, ratio, bgOf, shown } = window.__c, low = [], tiles = [];
+      for (const e of document.querySelectorAll("[data-dash] *")) {
+        if (!shown(e) || e.closest("svg") || e.closest("[data-kpi-icon]")) continue;
+        if (!Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim())) continue;
+        const k = ratio(parse(getComputedStyle(e).color).slice(0, 3), bgOf(e));
+        if (k < 4.5) low.push(k.toFixed(2) + " " + e.textContent.trim().slice(0, 30));
+      }
+      for (const t of document.querySelectorAll("[data-kpi-icon]")) tiles.push(ratio(parse(getComputedStyle(t).color).slice(0, 3), bgOf(t)));
+      return { low, tiles, n: document.querySelectorAll("[data-dash] [data-row]").length };
+    });
+    assert(r.n > 3, "precondition: panels rendered " + r.n);
+    assert(r.low.length === 0, "low-contrast text: " + r.low.join(" | "));
+    assert(r.tiles.length === 4 && r.tiles.every(k => k >= 3), "icon tiles: " + r.tiles.map(k => k.toFixed(2)));
+  } finally { await browser.close(); }
+});
+
+for (const theme of ["light", "dark"]) test(`every dashboard click target shows a focus ring >= 3:1 (${theme})`, async () => {
+  const { page, browser } = await openDash(theme);
+  try {
+    await page.addScriptTag({ content: PAGE_FNS });
+    const ids = await page.evaluate(t => Array.from(document.querySelectorAll(t)).filter(e => window.__c.shown(e)).map((e, i) => { e.setAttribute("data-t6", i); return i; }), TARGETS);
+    assert(ids.length > 20, "targets " + ids.length);
+    await page.keyboard.press("Shift"); // keyboard modality, so programmatic focus is :focus-visible
+    const bad = [];
+    for (const i of ids) {
+      const r = await page.evaluate(i => {
+        const e = document.querySelector(`[data-t6="${i}"]`), f = e.matches("label") ? e.querySelector("input") : e;
+        f.focus({ preventScroll: true });
+        const cs = getComputedStyle(f), { parse, ratio, bgOf } = window.__c;
+        return { ok: cs.outlineStyle === "solid" && parseFloat(cs.outlineWidth) >= 2, k: ratio(parse(cs.outlineColor).slice(0, 3), bgOf(f.parentElement)), what: (e.textContent || e.getAttribute("aria-label") || "").trim().slice(0, 25) };
+      }, i);
+      if (!r.ok || r.k < 3) bad.push(`${r.what} ${r.ok} ${r.k.toFixed(2)}`);
+    }
+    assert(bad.length === 0, "focus rings: " + bad.join(" | "));
+  } finally { await browser.close(); }
+});
+
+test("reduced motion: cards, pills, rows, sparkline and progress bars neither move nor animate", async () => {
+  const { page, browser } = await openDash("light");
+  try {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await page.hover("[data-health-pill]");
+    const r = await page.evaluate(() => Array.from(document.querySelectorAll("[data-dash] :is(.nm, .dash-pill, [data-row], [data-kpi-trend], [role=progressbar])"))
+      .map(e => { const cs = getComputedStyle(e); return [cs.transform, cs.animationName, cs.transitionProperty]; }));
+    assert(r.length > 10, "elements " + r.length);
+    const moving = r.filter(([t, a, tp]) => t !== "none" || a !== "none" || tp !== "none");
+    assert(moving.length === 0, "still moving: " + JSON.stringify(moving.slice(0, 3)));
+  } finally { await browser.close(); }
+});
+
+test("accessible names: spark, progress bars, week checkbox, decorative icons, names match labels", async () => {
+  const { page, browser } = await openDash("light");
+  try {
+    const r = await page.evaluate(() => {
+      const sp = document.querySelector("[data-kpi-trend]");
+      const pb = document.querySelector('[data-impl-row="p1"] [role=progressbar]');
+      const cb = document.querySelector('[data-week-task="k1"] input');
+      const icons = Array.from(document.querySelectorAll("[data-kpi-icon], .dash-dot, .dash-av, [data-sev-bar]")).filter(e => e.getAttribute("aria-hidden") !== "true").length;
+      // a button's aria-label, when set, must contain its visible text
+      const mism = Array.from(document.querySelectorAll("[data-dash] :is(button, [role=button])")).filter(b => b.getAttribute("aria-label") && !b.getAttribute("aria-label").includes(b.innerText.trim())).length;
+      return { sp: sp && [sp.getAttribute("role"), sp.getAttribute("aria-label"), sp.getAttribute("aria-hidden")],
+        pb: pb && ["aria-valuenow", "aria-valuemin", "aria-valuemax", "aria-label"].map(a => pb.getAttribute(a)), cb: cb && cb.getAttribute("aria-label"), icons, mism };
+    });
+    // the app adds this month's snapshot on load, so the count is the stored series length
+    const n = await page.evaluate(() => window.__store.getState().settings.snapshots.length);
+    assert(JSON.stringify(r.sp) === JSON.stringify(["img", `NRR trend, last ${n} months`, null]) && n >= 2, "spark " + JSON.stringify(r.sp) + " n=" + n);
+    assert(JSON.stringify(r.pb) === JSON.stringify(["50", "0", "100", "Globex International Holdings Worldwide Limited progress"]), "progressbar " + JSON.stringify(r.pb));
+    assert(r.cb === "Complete Call them about the renewal", "checkbox " + r.cb);
+    assert(r.icons === 0 && r.mism === 0, `undecorated icons ${r.icons}, label mismatches ${r.mism}`);
+  } finally { await browser.close(); }
+});
+
+test("colour-blind safety: every status mark carries words", async () => {
+  const { page, browser } = await openDash("light");
+  try {
+    const r = await page.evaluate(() => ({
+      sev: Array.from(document.querySelectorAll("[data-attention-row]")).map(row => (row.querySelector("[data-sev]") || {}).textContent),
+      pills: Array.from(document.querySelectorAll("[data-health-pill]")).map(p => p.innerText.replace(/\s+/g, " ").trim()),
+      chips: Array.from(document.querySelectorAll("[data-dash] [data-days-chip]")).map(c => c.textContent.trim()),
+      overdue: (document.querySelector("#week-tasks h3") || {}).textContent }));
+    assert(r.sev.length >= 2 && r.sev.includes("At risk") && r.sev.includes("Watch") && r.sev.every(s => s === "At risk" || s === "Watch"), "severity words " + JSON.stringify(r.sev));
+    assert(r.pills.length === 6 && r.pills.every(p => /[A-Za-z]{3,}/.test(p)), "pills " + JSON.stringify(r.pills));
+    assert(r.chips.length > 0 && r.chips.every(c => /\d+d/.test(c)), "chips " + JSON.stringify(r.chips));
+    assert(/\d+ overdue/.test(r.overdue), "overdue pill " + r.overdue);
+  } finally { await browser.close(); }
+});
+
+test("forced colors: cards and pills keep a border, status marks and spark stay painted", async () => {
+  const { page, browser } = await openDash("light");
+  try {
+    await page.emulateMedia({ forcedColors: "active" });
+    const r = await page.evaluate(() => {
+      const cs = s => getComputedStyle(document.querySelector(s));
+      return { card: cs("[data-dash] .nm").borderTopStyle, pill: cs(".dash-pill").borderTopStyle, row: cs("[data-renewal-row]").borderTopStyle,
+        dot: cs(".dash-dot").forcedColorAdjust, bar: cs("[data-sev-bar]").forcedColorAdjust, fill: cs("[role=progressbar] > span").forcedColorAdjust, spark: cs("[data-kpi-trend]").forcedColorAdjust };
+    });
+    assert(r.card === "solid" && r.pill === "solid" && r.row === "solid", "borders " + JSON.stringify(r));
+    assert([r.dot, r.bar, r.fill, r.spark].every(v => v === "none"), "status marks " + JSON.stringify(r));
+  } finally { await browser.close(); }
+});
+
+const sizes = (page, sel) => page.evaluate(s => Array.from(document.querySelectorAll(s)).map(e => { const r = e.getBoundingClientRect(); return r.width > 1 ? [Math.round(r.width), Math.round(r.height), (e.innerText || e.getAttribute("aria-label") || "").trim().slice(0, 20)] : null; }).filter(Boolean), sel);
+test("touch targets: >= 24px everywhere at 1440; rows, pills, links, bell, toggle, checkbox >= 44px tall at 390", async () => {
+  const { page, browser } = await openDash("light");
+  try {
+    const desk = await sizes(page, TARGETS);
+    assert(desk.length > 20 && desk.every(([w, h]) => w >= 24 && h >= 24), "1440 small: " + JSON.stringify(desk.filter(([w, h]) => w < 24 || h < 24)));
+    await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(300);
+    const ph = await sizes(page, "[data-dash] :is([data-row], .dash-pill, [data-view-all], [data-impl-row], [data-stat][role=button], label.dash-check), [data-bell], [data-scope-toggle] button");
+    assert(ph.length > 15 && ph.every(([, h]) => h >= 44), "390 short: " + JSON.stringify(ph.filter(([, h]) => h < 44)));
+  } finally { await browser.close(); }
+});
+
+const hScroll = page => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+const untitled = page => page.evaluate(() => Array.from(document.querySelectorAll("[data-dash] *")).filter(e => getComputedStyle(e).textOverflow === "ellipsis" && e.scrollWidth > e.clientWidth + 1 && !e.closest("[title]")).map(e => e.textContent.slice(0, 30)));
+test("200% zoom (640px): no horizontal scroll; every truncated text keeps a title", async () => {
+  const { page, browser } = await openDash("light", 640);
+  try {
+    assert(await hScroll(page) <= 0, "h-scroll " + await hScroll(page));
+    const u = await untitled(page);
+    assert(u.length === 0, "truncated without title: " + JSON.stringify(u));
+  } finally { await browser.close(); }
+});
+
+test("RTL guard: dir=rtl at 640 and 1440 has no horizontal overflow; rows use logical alignment", async () => {
+  const { page, browser } = await openDash("light", 640);
+  try {
+    await page.evaluate(() => { document.documentElement.dir = "rtl"; });
+    for (const w of [640, 1440]) {
+      await page.setViewportSize({ width: w, height: 900 }); await page.waitForTimeout(200);
+      assert(await hScroll(page) <= 0, `rtl h-scroll at ${w}: ` + await hScroll(page));
+    }
+    const r = await page.evaluate(() => [document.querySelectorAll("[data-dash] :is([data-row], [data-impl-row]).text-left").length, getComputedStyle(document.querySelector("[data-renewal-row]")).textAlign]);
+    assert(r[0] === 0 && r[1] === "start", "physical alignment " + r);
+  } finally { await browser.close(); }
+});
+
+test("print: chrome hidden, light colours even from dark, panels unbroken and within A4", async () => {
+  const { page, browser } = await openDash("dark", 794);
+  try {
+    await page.emulateMedia({ media: "print" });
+    await page.waitForTimeout(200);
+    const r = await page.evaluate(() => ({
+      hidden: ["[data-bell]", "[data-scope-toggle]", "[data-view-all]"].map(s => getComputedStyle(document.querySelector(s)).display),
+      card: getComputedStyle(document.querySelector("[data-dash] .nm")).backgroundColor,
+      brk: getComputedStyle(document.querySelector("[data-dash] .nm")).breakInside,
+      wide: Array.from(document.querySelectorAll("[data-dash] .nm")).filter(e => e.getBoundingClientRect().right > 794).length,
+      cut: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1).length }));
+    assert(r.hidden.every(d => d === "none"), "print-visible chrome " + r.hidden);
+    assert(r.card === "rgb(255, 255, 255)", "card prints " + r.card);
+    assert(r.brk === "avoid" && r.wide === 0 && r.cut === 0, "print layout " + JSON.stringify(r));
+  } finally { await browser.close(); }
+});
+
+const BIG = [
+  seedAccount({ id: "x1", name: "Huge Co", csm: "Priya Shah", arr: 999999999999, renewalDate: day(12), licenses: 99999999, deployedLicenses: 12345678, inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 } }),
+  seedAccount({ id: "x2", name: "Tiny Co", csm: "Priya Shah", arr: 0.01, renewalDate: day(50) }),
+  seedAccount({ id: "x3", name: "Old Co", csm: "Priya Shah", arr: 50000, renewalDate: day(-200000) }),
+];
+for (const w of [1280, 390, 640]) test(`long numbers at ${w}: no overflow, no float tails, truncated values titled`, async () => {
+  const { page, browser } = await openDash("light", w, BIG);
+  try {
+    assert(await hScroll(page) <= 0, "h-scroll " + await hScroll(page));
+    const r = await page.evaluate(() => ({
+      text: document.querySelector("[data-dash]").innerText,
+      over: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1 && !e.title).length }));
+    assert(/\$1000000\.00M/.test(r.text), "precondition: huge ARR shown");
+    assert(!/\d\.\d{3,}|e\+\d/.test(r.text), "float tail: " + (r.text.match(/\S*(\d\.\d{3,}|e\+\d)\S*/) || [])[0]);
+    assert(r.over === 0, "overflowing untitled values " + r.over);
+    const u = await untitled(page);
+    assert(u.length === 0, "truncated without title " + JSON.stringify(u));
+  } finally { await browser.close(); }
+});
+
+test("empty org and loading: no NaN/undefined/Infinity/Invalid Date; empty lines and dashes", async () => {
+  const { page, browser } = await launch(`window.__loadDelay = 600; window.__seedRows = { accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [], projects: [], project_tasks: [] };
+    window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`);
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const bad = /NaN|undefined|Infinity|Invalid Date/;
+    await page.waitForSelector("main");
+    assert(!bad.test(await page.innerText("main")), "while loading");
+    await page.waitForSelector("[data-dash]");
+    await page.click("[data-analytics-toggle]");
+    const t = await page.innerText("main");
+    assert(!bad.test(t), "empty org: " + (t.match(new RegExp(".{0,20}(" + bad.source + ").{0,20}")) || [])[0]);
+    assert(/No accounts need attention\./.test(await page.textContent('[data-scroll-list="Needs attention"]')), "needs-attention empty line");
+    assert((await page.textContent('[data-scroll-list="Team tasks"]')).trim() === "No open tasks.", "team tasks empty line");
+    assert((await page.textContent('[data-stat="NRR (12m)"] [data-stat-value]')).trim() === "—", "NRR dash");
+  } finally { await browser.close(); }
+});
