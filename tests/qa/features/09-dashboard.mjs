@@ -8,7 +8,7 @@ import { SkipScenario } from "../core.mjs";
 const F = "09-dashboard";
 const stat = (page, label) => page.locator(`[data-stat="${label}"] [data-stat-value]`);
 
-// Dashboard on the "All" scope (the run's admin-owned row is outside the csm's book, and the
+// Dashboard on the "Whole team" scope (the run's admin-owned row is outside the csm's book, and the
 // admin's "My book" is one row), once the store holds this run's accounts.
 async function openDashboard(page, runId) {
   await nav(page, "Dashboard").waitFor({ timeout: 20000 });
@@ -180,11 +180,22 @@ export const scenarios = [
     run: async ({ page, runId }) => {
       const before = page.viewportSize();
       try {
-        await page.setViewportSize({ width: 390, height: 844 });
+        // Open at desktop width first: at 390px the sidebar sits behind the phone menu.
         await openDashboard(page, runId);
+        await page.setViewportSize({ width: 390, height: 844 });
         await page.locator("[data-kpi]").first().waitFor({ timeout: 10000 });
-        const over = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-        assert.ok(over <= 0, `horizontal overflow ${over}px at 390`);
+        // The layout re-flows for a moment after the resize; only overflow that persists counts.
+        await page.waitForFunction(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth, null, { timeout: 5000 }).catch(() => {});
+        const { over, wide } = await page.evaluate(() => {
+          const vw = document.documentElement.clientWidth;
+          // Name the outermost elements that stick out past the right edge, so a failure says where.
+          const wide = [...document.querySelectorAll("body *")].filter(el => el.getBoundingClientRect().right > vw + 0.5
+            && !el.parentElement?.closest("[class*='overflow-x-auto'],[class*='overflow-auto']")
+            && !(el.parentElement && el.parentElement.getBoundingClientRect().right > vw + 0.5))
+            .slice(0, 5).map(el => `${el.tagName.toLowerCase()}${el.dataset && Object.keys(el.dataset).length ? "[data-" + Object.keys(el.dataset)[0] + "]" : ""}.${String(el.className).slice(0, 60)} right=${Math.round(el.getBoundingClientRect().right)}`);
+          return { over: document.documentElement.scrollWidth - vw, wide };
+        });
+        assert.ok(over <= 0, `horizontal overflow ${over}px at 390: ${wide.join(" | ")}`);
       } finally { if (before) await page.setViewportSize(before); }
     } },
 ];

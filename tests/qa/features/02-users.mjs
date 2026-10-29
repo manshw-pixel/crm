@@ -69,7 +69,7 @@ export const scenarios = [
 
   // CSMs can read every account in their org by RLS; the app narrows them to "My book" by
   // default (src/26-app.jsx:343-344). Fixture: one run row (EXPECTED.adminOwned) is the admin's.
-  { id: `${F}/role-csm-sees-own`, feature: F, title: "CSM's default book hides the admin's account; All shows it", role: "csm",
+  { id: `${F}/role-csm-sees-own`, feature: F, title: "CSM's default book hides the admin's account; Whole team shows it", role: "csm",
     run: async ({ page, runId }) => {
       await page.locator(MAIN).waitFor({ timeout: 15000 });
       assert.equal(await nav(page, "Settings").count(), 0, "CSM sees the Settings nav");
@@ -77,8 +77,8 @@ export const scenarios = [
       const mine = await runRowNames(page, runId);
       assert.equal(mine.length, EXPECTED.countByOwner.csm, `CSM's book shows ${mine.length} run rows`);
       assert.ok(!mine.includes(adminRow), "CSM's default book shows the admin-owned account");
-      const all = await runRowNames(page, runId, "All");
-      assert.ok(all.includes(adminRow), "admin-owned account missing from the CSM's All view");
+      const all = await runRowNames(page, runId, "Whole team");
+      assert.ok(all.includes(adminRow), "admin-owned account missing from the CSM's Whole team view");
     } },
 
   { id: `${F}/admin-sees-admin-row`, feature: F, title: "Admin sees the admin-owned run account", role: "admin",
