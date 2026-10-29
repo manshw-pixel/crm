@@ -97,3 +97,78 @@ test("health and QBR pills open Accounts filtered to exactly the matching accoun
     }
   } finally { await browser.close(); }
 });
+
+// Top panels: Renewals 90d, Needs attention, week tasks, Implementation.
+const T = [
+  seedAccount({ id: "n1", name: "Near Renewal", csm: "Priya Shah", renewalDate: day(12), inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 } }),
+  seedAccount({ id: "n2", name: "Later Renewal", csm: "Priya Shah", renewalDate: day(70) }),
+  seedAccount({ id: "n3", name: "Far Renewal", csm: "Priya Shah", renewalDate: day(200) }),
+];
+const proj = (id, stage, goLive) => ({ id, accountId: "n1", type: "onboarding", stage, implementerId: null, createdBy: "x", checklistTemplate: [], checklist: {}, targetGoLive: goLive, startedAt: null, liveAt: null, holdReason: "", history: [] });
+const ptask = (id, projectId, status) => ({ id, projectId, title: id, status, order: 1 });
+const wrap = l => `${JSON.stringify(l)}.map(d => ({ id: d.id, data: d }))`;
+const panelSeed = projects => `window.__seedRows = { accounts: ${wrap(T)}, contacts: [], activities: [], opportunities: [], team: [], settings: [],
+  tasks: ${wrap([{ id: "k1", accountId: "n1", title: "Call them", due: day(-2), owner: "Priya Shah", priority: "High", status: "Open", createdAt: day(-9) }])},
+  projects: ${wrap(projects)}, project_tasks: ${wrap([ptask("pt1", "p1", "done"), ptask("pt2", "p1", "open"), ptask("pt3", "p1", "open"), ptask("pt4", "p1", "open")])} };
+  window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`;
+
+test("renewals panel lists only the next 90 days, soonest first, and its rows and View all navigate", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector("[data-renewal-row]");
+    const ids = await page.$$eval("[data-renewal-row]", r => r.map(x => x.getAttribute("data-renewal-row")));
+    assert(JSON.stringify(ids) === JSON.stringify(["n1", "n2"]), "rows " + JSON.stringify(ids));
+    await page.click('[data-view-all="renewals"]');
+    await page.waitForSelector('[data-stat="Due next 90d"]');
+  } finally { await browser.close(); }
+});
+
+test("a renewals row opens its account", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.click('[data-renewal-row="n2"]');
+    await page.waitForSelector("[data-transition-pill]");
+  } finally { await browser.close(); }
+});
+
+test("needs-attention rows open the account; week-task checkbox completes the task", async () => {
+  const { page, browser } = await launch(panelSeed([]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('[data-attention-row="n1"]');
+    await page.waitForSelector('[data-week-task="k1"]');
+    // the playbook auto-seeds more overdue tasks, so compare the pill with the rows marked Overdue
+    const rowsOverdue = await page.$$eval("[data-week-task]", r => r.filter(x => /Overdue$/.test(x.textContent)).length);
+    const pill = (await page.textContent("#week-tasks")).match(/(\d+) overdue/);
+    assert(pill && +pill[1] === rowsOverdue && rowsOverdue >= 1, `pill ${pill && pill[1]} vs ${rowsOverdue} overdue rows`);
+    await page.click('[data-week-task="k1"] input[type=checkbox]');
+    await page.waitForFunction(() => window.__store.getState().tasks.find(t => t.id === "k1").status === "Done");
+    await page.waitForFunction(() => !document.querySelector('[data-week-task="k1"]'));
+    await page.click('[data-attention-row="n1"]');
+    await page.waitForSelector("[data-transition-pill]");
+  } finally { await browser.close(); }
+});
+
+test("implementation panel shows open projects with task progress, hides live ones, and opens the project", async () => {
+  const { page, browser } = await launch(panelSeed([proj("p1", "in_progress", day(30)), proj("p2", "live", day(5))]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector('[data-impl-row="p1"]');
+    assert(await page.$('[data-impl-row="p2"]') === null, "live project shown");
+    const w = await page.$eval('[data-impl-row="p1"] > span:last-child > span', e => e.style.width);
+    assert(parseFloat(w) === 25, "progress width " + w);
+    await page.click('[data-impl-row="p1"]');
+    await page.waitForSelector("[data-project-stage]");
+  } finally { await browser.close(); }
+});
+
+test("implementation panel is absent when nothing is open", async () => {
+  const { page, browser } = await launch(panelSeed([proj("p2", "live", day(5))]));
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.waitForSelector("[data-renewal-row]");
+    assert(await page.$("[data-impl-row]") === null, "impl row present");
+  } finally { await browser.close(); }
+});

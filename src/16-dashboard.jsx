@@ -67,6 +67,16 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
     if (!byOwner[o].next || t.due < byOwner[o].next) byOwner[o].next = t.due;
   });
   const owners = Object.entries(byOwner).sort((x, y) => y[1].overdue - x[1].overdue || y[1].open - x[1].open);
+  // open implementation projects for the panel: progress = share of the project's tasks done (as the board card shows)
+  const implOpen = (st.projects || []).filter(p => p.stage !== "live" && p.stage !== "cancelled")
+    .map(p => {
+      const name = ((st.accounts || []).find(a => a.id === p.accountId) || {}).name || "Unknown account";
+      const tasks = (st.projectTasks || []).filter(t => t.projectId === p.id);
+      const pct = tasks.length ? 100 * tasks.filter(t => t.status === "done").length / tasks.length : Math.min(100, 100 * Math.max(0, STAGES.indexOf(p.stage)) / 5);
+      return { p, name, pct };
+    })
+    .sort((x, y) => String(x.p.targetGoLive || "9999").localeCompare(String(y.p.targetGoLive || "9999")) || x.name.localeCompare(y.name))
+    .slice(0, 5);
   const qbrAccts = scored.map(a => ({ a, s: qbrStatus(a) })).filter(x => x.s && (x.s.kind === "due" || x.s.kind === "overdue"));
   const qbrOverdue = qbrAccts.filter(x => x.s.kind === "overdue").length;
   return (
@@ -106,55 +116,67 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           </button>
         ))}
       </section>
-      <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">
-        <Card title="Renewals due" className="!p-3">
-          <ScrollList label="Renewals due">
-          {[["0–30 days", buckets[0]], ["31–60 days", buckets[1]], ["61–90 days", buckets[2]]].map(([label, list]) => (
-            <div key={label} className="mb-2">
-              <div className="text-xs font-semibold tabular-nums text-slate-500">{label} · {fmtMoney(list.reduce((s, a) => s + a.arrUSD, 0))} USD</div>
-              {list.length === 0 && <div className="text-xs text-slate-500 italic">none</div>}
-              {list.map(a => (
-                <button key={a.id} data-row onClick={() => openAccount(a.id)} className="flex w-full items-center justify-between gap-2 rounded px-2 py-1 text-left text-sm hover:bg-slate-50">
-                  <span className="min-w-0 truncate" title={a.name}>{a.name}</span>
-                  <span className="flex shrink-0 items-center gap-2 whitespace-nowrap text-xs tabular-nums text-slate-700">{fmtMoney(a.arrUSD)} <HealthChip score={a.score} /> <DaysChip days={daysUntil(a.renewalDate)} /></span>
-                </button>
-              ))}
-            </div>
-          ))}
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        <Card title="Renewals in the next 90 days" className="!p-3 lg:col-span-2"
+          right={<span className="flex items-center gap-3"><span className="text-[13px] text-slate-500">{ren90.length} accounts · {fmtMoney(ren90ARR)} ARR</span>
+            <button data-view-all="renewals" onClick={() => goRenewals()} className="text-[13px] font-semibold text-indigo-600 hover:underline">View all</button></span>}>
+          <ScrollList label="Renewals in the next 90 days" className="max-h-80">
+            {ren90.length === 0 && <div className="text-sm text-slate-500">No renewals in the next 90 days.</div>}
+            {[...ren90].sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate)).map(a => (
+              <button key={a.id} data-row data-renewal-row={a.id} onClick={() => openAccount(a.id)}
+                className="flex w-full items-center gap-3.5 border-t border-slate-100 px-1 py-2.5 text-left first:border-0 hover:bg-slate-50">
+                <span aria-hidden="true" className="dash-av"><span>{initialsOf(a.name)}</span></span>
+                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
+                  <span className="block truncate text-[12.5px] text-slate-500" title={`${a.tier || "—"} · CSM ${a.csm || "—"}`}>{a.tier || "—"} · CSM {a.csm || "—"}</span></span>
+                <span className="w-[70px] shrink-0 whitespace-nowrap text-right text-sm font-semibold tabular-nums text-slate-900">{fmtMoney(a.arrUSD)}</span>
+                <span className="shrink-0"><HealthChip score={a.score} /></span>
+                <span className="hidden w-[110px] shrink-0 whitespace-nowrap text-right text-[13px] text-slate-600 sm:inline">{fmtDate(a.renewalDate)}</span>
+                <span className="shrink-0"><DaysChip days={daysUntil(a.renewalDate)} /></span>
+              </button>
+            ))}
           </ScrollList>
         </Card>
-        <Card title="Alerts & flags" className="!p-3">
-          <ScrollList label="Alerts & flags">
-          {flagged.length === 0 && <div className="text-sm text-slate-500">No flags. 🎉</div>}
-          {flagged.map(a => (
-            <button key={a.id} data-row onClick={() => openAccount(a.id)} className="block w-full rounded px-2 py-1.5 text-left hover:bg-slate-50">
-              <span className="flex min-w-0 items-center gap-2 text-sm"><span className="min-w-0 truncate" title={a.name}>{a.name}</span> <span className="shrink-0"><HealthChip score={a.score} /></span></span>
-              <span className="mt-1 flex flex-wrap gap-1">{a.flags.map(f => <span key={f} className="whitespace-nowrap rounded bg-rose-50 px-1.5 py-0.5 text-xs text-rose-600 border border-rose-200">{f}</span>)}</span>
+        <Card title="Needs attention" className="!p-3"
+          right={<button data-view-all="attention" onClick={() => openAccounts()} className="text-[13px] font-semibold text-indigo-600 hover:underline">View all {flagged.length}</button>}>
+          <ScrollList label="Needs attention" className="max-h-80">
+            {flagged.length === 0 && <div className="text-sm text-slate-500">No flags.</div>}
+            {[...flagged].sort((x, y) => (y.risk === "Red") - (x.risk === "Red") || x.score - y.score).map(a => (
+              <button key={a.id} data-row data-attention-row={a.id} onClick={() => openAccount(a.id)} className="flex w-full gap-3 border-t border-slate-100 py-3 text-left first:border-0 hover:bg-slate-50">
+                <span aria-hidden="true" className={`w-1 shrink-0 rounded ${a.risk === "Red" ? "bg-rose-600" : "bg-amber-500"}`} />
+                <span className="min-w-0"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
+                  <span className="block truncate text-[12.5px] text-slate-500" title={a.flags.join(" · ")}>{a.flags.join(" · ")}</span></span>
+              </button>
+            ))}
+          </ScrollList>
+        </Card>
+        <Card title={<>{scope === "mine" ? "My tasks this week" : "Tasks this week"}{overdueTasks.length > 0 && <span className="ml-2.5 rounded-full bg-rose-100 px-2 py-0.5 text-xs font-bold text-rose-700">{overdueTasks.length} overdue</span>}</>}
+          className={`!p-3 ${implOpen.length ? "lg:col-span-2" : "lg:col-span-3"}`} id="week-tasks"
+          right={<button data-view-all="tasks" onClick={() => goTasks(scope === "mine" ? { owner: user.name } : {})} className="text-[13px] font-semibold text-indigo-600 hover:underline">Open Tasks</button>}>
+          <ScrollList label="Tasks this week" className="max-h-72">
+            {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
+            <div className="grid gap-x-6 md:grid-cols-2">
+            {[...weekTasks].sort((x, y) => x.due.localeCompare(y.due)).map(t => {
+              const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
+              return (
+                <div key={t.id} data-row data-week-task={t.id} className="flex items-center gap-3 border-t border-slate-100 px-1 py-2.5 text-sm">
+                  <input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+                  <span className="min-w-0 flex-1 truncate font-medium text-slate-900" title={t.title}>{t.title}</span>
+                  <button className="min-w-0 max-w-[40%] truncate text-[12.5px] font-semibold text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
+                  <span className={`w-[88px] shrink-0 whitespace-nowrap text-right text-[12.5px] tabular-nums ${d < 0 ? "font-semibold text-rose-700" : d === 0 ? "text-orange-700" : "text-slate-600"}`}>{d < 0 ? "Overdue" : d === 0 ? "Today" : fmtDate(t.due)}</span>
+                </div>
+              );
+            })}
+            </div>
+          </ScrollList>
+        </Card>
+        {implOpen.length > 0 && <Card title="Implementation" className="!p-3">
+          {implOpen.map(({ p, name, pct }) => (
+            <button key={p.id} data-impl-row={p.id} onClick={() => openProject(p.id)} className="block w-full rounded px-1 py-1.5 text-left hover:bg-slate-50">
+              <span className="flex text-[13.5px]"><b className="min-w-0 truncate font-semibold text-slate-900" title={name}>{name}</b><span className="ml-auto shrink-0 whitespace-nowrap pl-2 text-slate-500">{STAGE_LABEL[p.stage] || p.stage}</span></span>
+              <span className="mt-1.5 block h-2 rounded-full bg-indigo-50"><span className="block h-2 rounded-full bg-indigo-500" style={{ width: pct + "%" }} /></span>
             </button>
           ))}
-          </ScrollList>
-        </Card>
-      <Card title={scope === "mine" ? "My tasks due this week" : "Tasks due this week"} className="!p-3" id="week-tasks">
-        <ScrollList label="Tasks due this week" className="max-h-40">
-        {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
-        {weekTasks.sort((a, b) => a.due.localeCompare(b.due)).map(t => {
-          const a = scored.find(x => x.id === t.accountId);
-          return (
-            <div key={t.id} data-row className="flex items-start gap-x-3 border-b border-slate-100 py-1.5 last:border-0 text-sm">
-              <input type="checkbox" className="mt-1 shrink-0" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate" title={t.title}>{t.title}</div>
-                <div className="flex min-w-0 items-center gap-x-3 text-xs">
-                  <button className="min-w-0 truncate text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
-                  <span className={`shrink-0 whitespace-nowrap tabular-nums ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
-                  <span className="ml-auto shrink-0 whitespace-nowrap text-slate-500">{t.priority}</span>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-        </ScrollList>
-      </Card>
+        </Card>}
       </div>
       {/* Team and growth. */}
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2 lg:grid-cols-3">

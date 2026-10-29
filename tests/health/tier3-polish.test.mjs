@@ -41,8 +41,8 @@ test("renewal days render as chips banded by urgency", async () => {
     seedAccount({ id: "c", name: "Later Co", renewalDate: day(75) })];
   const { page, browser } = await launch(seedOf(accts));
   try {
-    await page.waitForSelector('[data-scroll-list="Renewals due"] [data-days-chip]', { timeout: 8000 });
-    const chips = await page.$$eval('[data-scroll-list="Renewals due"] [data-days-chip]', els => els.map(e => [e.textContent, e.getAttribute("data-days-chip")]));
+    await page.waitForSelector('[data-scroll-list="Renewals in the next 90 days"] [data-days-chip]', { timeout: 8000 });
+    const chips = await page.$$eval('[data-scroll-list="Renewals in the next 90 days"] [data-days-chip]', els => els.map(e => [e.textContent, e.getAttribute("data-days-chip")]));
     assert(JSON.stringify(chips) === JSON.stringify([["10d", "urgent"], ["45d", "soon"], ["75d", "later"]]), "chips: " + JSON.stringify(chips));
   } finally { await browser.close(); }
 });
