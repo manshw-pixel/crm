@@ -209,8 +209,10 @@
   main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }
   /* ---- stage 2 dashboard: theme, focus, motion, high contrast, touch, print ---- */
   /* dark tints from the approved mockup where the remapped palette differs */
-  html.dark main [data-dash] .bg-rose-100 { background-color: #4c0519; }
-  html.dark main [data-dash] [data-kpi-icon].bg-orange-100 { background-color: #3b1d07; color: #fdba74; }
+  @media screen {
+    html.dark main [data-dash] .bg-rose-100 { background-color: #4c0519; }
+    html.dark main [data-dash] [data-kpi-icon].bg-orange-100 { background-color: #3b1d07; color: #fdba74; }
+  }
   main [data-dash] :is(button, [role=button]):focus-visible, main [data-bell]:focus-visible, main [data-scope-toggle] button:focus-visible { outline: 2px solid rgb(var(--indigo-500)) !important; outline-offset: 2px; border-radius: 10px; }
   .dash-check { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; min-width: 24px; min-height: 24px; margin: -3px; cursor: pointer; }
   /* small text buttons get a 24px hit area without moving anything */

@@ -229,15 +229,15 @@ const A11Y = [
   seedAccount({ id: "x2", name: "Watch Co", csm: "Priya Shah", renewalDate: day(50), inputs: { usage: 55, sentiment: 55, tickets: 3, nps: 0 } }),
   seedAccount({ id: "x3", name: "Calm Co", csm: "Priya Shah", renewalDate: day(80) }),
 ];
-const a11ySeed = (theme, accts = A11Y) => `try { localStorage.setItem("onevio.theme", "${theme}"); localStorage.setItem("dashAnalytics_Priya Shah", "1"); } catch (e) {}
+const a11ySeed = (theme, accts = A11Y, more = []) => `try { localStorage.setItem("onevio.theme", "${theme}"); localStorage.setItem("dashAnalytics_Priya Shah", "1"); } catch (e) {}
   window.__seedRows = { accounts: ${wrap(accts)}, contacts: [], activities: [], team: [],
-  tasks: ${wrap([{ id: "k1", accountId: "x1", title: "Call them about the renewal", due: day(-2), owner: "Priya Shah", priority: "High", status: "Open", createdAt: day(-9) }])},
+  tasks: ${wrap([{ id: "k1", accountId: "x1", title: "Call them about the renewal", due: day(-2), owner: "Priya Shah", priority: "High", status: "Open", createdAt: day(-9) }, ...more])},
   opportunities: ${wrap([{ id: "o1", accountId: "x1", name: "Add-on", type: "Upsell", value: 40000, stage: "Proposal", probability: 50, closeDate: day(40) }])},
   projects: ${wrap([{ ...proj("p1", "in_progress", day(30)), accountId: "x1" }])}, project_tasks: ${wrap([ptask("pt1", "p1", "done"), ptask("pt2", "p1", "open")])},
   settings: [{ id: 1, data: { snapshots: [{ month: "${mo(3)}", totalARR: 100000, nrr: 1, grr: 1, Green: 1, Yellow: 1, Red: 1 }, { month: "${mo(2)}", totalARR: 120000, nrr: 1.05, grr: 0.95, Green: 2, Yellow: 1, Red: 0 }] } }] };
   window.__seedProfile = { id: "u1", name: "Priya Shah", role: "admin", org_id: "org-a", platform_admin: false };`;
-async function openDash(theme, w = 1440, accts) {
-  const r = await launch(a11ySeed(theme, accts));
+async function openDash(theme, w = 1440, accts, more) {
+  const r = await launch(a11ySeed(theme, accts, more));
   await r.page.reload(); // the head theme script reads the stored theme on the next load
   await r.page.setViewportSize({ width: w, height: 900 });
   await r.page.waitForSelector("[data-dash] [data-row]");
@@ -249,9 +249,24 @@ const PAGE_FNS = `window.__c = (() => {
   const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
   const parse = s => (s.match(/[\\d.]+/g) || [0, 0, 0]).map(Number);
   const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
-  const bgOf = e => { for (let x = e; x; x = x.parentElement) { const c = parse(getComputedStyle(x).backgroundColor); if (c.length < 4 || c[3] > 0.5) return c.slice(0, 3); } return [255, 255, 255]; };
+  const rgba = s => { const c = parse(s); return c.length < 4 ? [...c.slice(0, 3), 1] : c.slice(0, 4); };
+  const over = (top, a, base) => top.map((v, i) => v * a + base[i] * (1 - a));
+  const opOf = e => { let o = 1; for (let x = e; x; x = x.parentElement) o *= +getComputedStyle(x).opacity; return o; };
+  // Background as painted: stack every translucent layer (alpha x opacity) down to the first
+  // opaque one. null when nothing opaque sits behind -- a test failure, never a guess.
+  const bgOf = e => {
+    const layers = [];
+    for (let x = e; x; x = x.parentElement) {
+      const c = rgba(getComputedStyle(x).backgroundColor), a = c[3] * opOf(x);
+      if (a >= 1) return layers.reduceRight((b, [col, al]) => over(col, al, b), c.slice(0, 3));
+      if (a > 0) layers.push([c.slice(0, 3), a]);
+    }
+    return null;
+  };
+  // text colour composited (its own alpha x every ancestor's opacity) over the painted background
+  const textOn = e => { const bg = bgOf(e); if (!bg) return null; const c = rgba(getComputedStyle(e).color); return ratio(over(c.slice(0, 3), c[3] * opOf(e), bg), bg); };
   const shown = e => { const r = e.getBoundingClientRect(); return r.width > 1 && r.height > 1; };
-  return { parse, ratio, bgOf, shown };
+  return { parse, ratio, bgOf, shown, textOn };
 })();`;
 const TARGETS = "[data-dash] :is(button:not(:disabled), [role=button], label.dash-check), [data-bell], [data-scope-toggle] button";
 
@@ -260,14 +275,14 @@ for (const theme of ["light", "dark"]) test(`dashboard text >= 4.5:1 and KPI ico
   try {
     await page.addScriptTag({ content: PAGE_FNS });
     const r = await page.evaluate(() => {
-      const { parse, ratio, bgOf, shown } = window.__c, low = [], tiles = [];
+      const { shown, textOn } = window.__c, low = [], tiles = [];
       for (const e of document.querySelectorAll("[data-dash] *")) {
         if (!shown(e) || e.closest("svg") || e.closest("[data-kpi-icon]")) continue;
         if (!Array.from(e.childNodes).some(n => n.nodeType === 3 && n.textContent.trim())) continue;
-        const k = ratio(parse(getComputedStyle(e).color).slice(0, 3), bgOf(e));
-        if (k < 4.5) low.push(k.toFixed(2) + " " + e.textContent.trim().slice(0, 30));
+        const k = textOn(e);
+        if (k === null || k < 4.5) low.push((k === null ? "no opaque background" : k.toFixed(2)) + " " + e.textContent.trim().slice(0, 30));
       }
-      for (const t of document.querySelectorAll("[data-kpi-icon]")) tiles.push(ratio(parse(getComputedStyle(t).color).slice(0, 3), bgOf(t)));
+      for (const t of document.querySelectorAll("[data-kpi-icon]")) tiles.push(textOn(t) ?? 0);
       return { low, tiles, n: document.querySelectorAll("[data-dash] [data-row]").length };
     });
     assert(r.n > 3, "precondition: panels rendered " + r.n);
@@ -282,6 +297,11 @@ for (const theme of ["light", "dark"]) test(`every dashboard click target shows 
     await page.addScriptTag({ content: PAGE_FNS });
     const ids = await page.evaluate(t => Array.from(document.querySelectorAll(t)).filter(e => window.__c.shown(e)).map((e, i) => { e.setAttribute("data-t6", i); return i; }), TARGETS);
     assert(ids.length > 20, "targets " + ids.length);
+    // AM book rows (Analytics) are keyboard targets too: precondition one is in the list
+    await page.click("[data-am-book-toggle]");
+    const am = await page.evaluate(() => { const e = document.querySelector("[data-am-row]"); if (!e) return null; e.setAttribute("data-t6", "am"); return e.tabIndex; });
+    assert(am === 0, "AM book row tabIndex " + am);
+    ids.push("am");
     await page.keyboard.press("Shift"); // keyboard modality, so programmatic focus is :focus-visible
     const bad = [];
     for (const i of ids) {
@@ -289,7 +309,7 @@ for (const theme of ["light", "dark"]) test(`every dashboard click target shows 
         const e = document.querySelector(`[data-t6="${i}"]`), f = e.matches("label") ? e.querySelector("input") : e;
         f.focus({ preventScroll: true });
         const cs = getComputedStyle(f), { parse, ratio, bgOf } = window.__c;
-        return { ok: cs.outlineStyle === "solid" && parseFloat(cs.outlineWidth) >= 2, k: ratio(parse(cs.outlineColor).slice(0, 3), bgOf(f.parentElement)), what: (e.textContent || e.getAttribute("aria-label") || "").trim().slice(0, 25) };
+        return { ok: cs.outlineStyle === "solid" && parseFloat(cs.outlineWidth) >= 2, k: ratio(parse(cs.outlineColor).slice(0, 3), bgOf(f.parentElement) || [0, 0, 0]), what: (e.textContent || e.getAttribute("aria-label") || "").trim().slice(0, 25) };
       }, i);
       if (!r.ok || r.k < 3) bad.push(`${r.what} ${r.ok} ${r.k.toFixed(2)}`);
     }
@@ -339,7 +359,9 @@ test("colour-blind safety: every status mark carries words", async () => {
       sev: Array.from(document.querySelectorAll("[data-attention-row]")).map(row => (row.querySelector("[data-sev]") || {}).textContent),
       pills: Array.from(document.querySelectorAll("[data-health-pill]")).map(p => p.innerText.replace(/\s+/g, " ").trim()),
       chips: Array.from(document.querySelectorAll("[data-dash] [data-days-chip]")).map(c => c.textContent.trim()),
-      overdue: (document.querySelector("#week-tasks h3") || {}).textContent }));
+      overdue: (document.querySelector("#week-tasks h3") || {}).textContent,
+      words: Array.from(document.querySelectorAll("[data-renewal-row]")).map(r => { const w = r.querySelector("[data-health-word]"); return w && w.getBoundingClientRect().width > 1 ? w.textContent : null; }) }));
+    assert(r.words.length >= 3 && r.words.every(w => /^\d+ · (Healthy|Watch|At risk)$/.test(w)) && new Set(r.words.map(w => w && w.split(" · ")[1])).size >= 2, "row health words " + JSON.stringify(r.words));
     assert(r.sev.length >= 2 && r.sev.includes("At risk") && r.sev.includes("Watch") && r.sev.every(s => s === "At risk" || s === "Watch"), "severity words " + JSON.stringify(r.sev));
     assert(r.pills.length === 6 && r.pills.every(p => /[A-Za-z]{3,}/.test(p)), "pills " + JSON.stringify(r.pills));
     assert(r.chips.length > 0 && r.chips.every(c => /\d+d/.test(c)), "chips " + JSON.stringify(r.chips));
@@ -351,13 +373,20 @@ test("forced colors: cards and pills keep a border, status marks and spark stay 
   const { page, browser } = await openDash("light");
   try {
     await page.emulateMedia({ forcedColors: "active" });
+    await page.keyboard.press("Shift");
     const r = await page.evaluate(() => {
       const cs = s => getComputedStyle(document.querySelector(s));
-      return { card: cs("[data-dash] .nm").borderTopStyle, pill: cs(".dash-pill").borderTopStyle, row: cs("[data-renewal-row]").borderTopStyle,
+      const vis = s => { const c = cs(s); return c.borderTopStyle === "solid" && parseFloat(c.borderTopWidth) >= 1 && !/rgba\(\d+, \d+, \d+, 0\)|transparent/.test(c.borderTopColor) ? "solid" : `${c.borderTopStyle} ${c.borderTopWidth} ${c.borderTopColor}`; };
+      const probe = document.createElement("i"); probe.style.cssText = "forced-color-adjust:none;color:Highlight"; document.body.appendChild(probe);
+      const hl = getComputedStyle(probe).color; probe.remove();
+      const btn = document.querySelector("[data-view-all]"); btn.focus();
+      return { card: vis("[data-dash] .nm"), pill: vis(".dash-pill"), row: vis("[data-renewal-row]:not(:first-child)"), hl,
+        ring: [getComputedStyle(btn).outlineStyle, getComputedStyle(btn).outlineColor], sparkColor: cs("[data-kpi-trend]").color,
         dot: cs(".dash-dot").forcedColorAdjust, bar: cs("[data-sev-bar]").forcedColorAdjust, fill: cs("[role=progressbar] > span").forcedColorAdjust, spark: cs("[data-kpi-trend]").forcedColorAdjust };
     });
     assert(r.card === "solid" && r.pill === "solid" && r.row === "solid", "borders " + JSON.stringify(r));
     assert([r.dot, r.bar, r.fill, r.spark].every(v => v === "none"), "status marks " + JSON.stringify(r));
+    assert(r.ring[0] === "solid" && r.ring[1] === r.hl && r.sparkColor === r.hl, `focus ring ${r.ring} / spark ${r.sparkColor} vs Highlight ${r.hl}`);
   } finally { await browser.close(); }
 });
 
@@ -373,6 +402,28 @@ test("touch targets: >= 24px everywhere at 1440; rows, pills, links, bell, toggl
   } finally { await browser.close(); }
 });
 
+// Text stays inside its card and never overlaps text: every text node's painted box (clipped to its scroll/truncate
+// container), per dashboard card, compared pairwise.
+const overlaps = page => page.evaluate(() => {
+  const out = [], hit = (a, b) => a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1;
+  for (const card of document.querySelectorAll("[data-dash] .nm")) {
+    const boxes = [], w = document.createTreeWalker(card, NodeFilter.SHOW_TEXT);
+    for (let n; (n = w.nextNode());) {
+      if (!n.textContent.trim() || n.parentElement.closest("svg")) continue;
+      const r = document.createRange(); r.selectNodeContents(n);
+      let b = r.getBoundingClientRect(); if (b.width < 1 || b.height < 1) continue;
+      for (let x = n.parentElement; x && x !== card; x = x.parentElement)
+        if (getComputedStyle(x).overflowX !== "visible") { const c = x.getBoundingClientRect(); b = { left: Math.max(b.left, c.left), right: Math.min(b.right, c.right), top: Math.max(b.top, c.top), bottom: Math.min(b.bottom, c.bottom) }; }
+      if (b.right - b.left < 1 || b.bottom - b.top < 1) continue;
+      const cb = card.getBoundingClientRect();
+      if (b.left < cb.left - 1 || b.right > cb.right + 1) out.push(`"${n.textContent.trim().slice(0, 20)}" spills out of its card`);
+      boxes.push([b, n.textContent.trim().slice(0, 20), n.parentElement]);
+    }
+    for (let i = 0; i < boxes.length; i++) for (let j = i + 1; j < boxes.length; j++)
+      if (boxes[i][2] !== boxes[j][2] && hit(boxes[i][0], boxes[j][0])) out.push(`"${boxes[i][1]}" overlaps "${boxes[j][1]}"`);
+  }
+  return out;
+});
 const hScroll = page => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 const untitled = page => page.evaluate(() => Array.from(document.querySelectorAll("[data-dash] *")).filter(e => getComputedStyle(e).textOverflow === "ellipsis" && e.scrollWidth > e.clientWidth + 1 && !e.closest("[title]")).map(e => e.textContent.slice(0, 30)));
 test("200% zoom (640px): no horizontal scroll; every truncated text keeps a title", async () => {
@@ -391,6 +442,8 @@ test("RTL guard: dir=rtl at 640 and 1440 has no horizontal overflow; rows use lo
     for (const w of [640, 1440]) {
       await page.setViewportSize({ width: w, height: 900 }); await page.waitForTimeout(200);
       assert(await hScroll(page) <= 0, `rtl h-scroll at ${w}: ` + await hScroll(page));
+      const o = await overlaps(page);
+      assert(o.length === 0, `rtl overlap at ${w}: ` + o.slice(0, 5).join(" | "));
     }
     const r = await page.evaluate(() => [document.querySelectorAll("[data-dash] :is([data-row], [data-impl-row]).text-left").length, getComputedStyle(document.querySelector("[data-renewal-row]")).textAlign]);
     assert(r[0] === 0 && r[1] === "start", "physical alignment " + r);
@@ -402,12 +455,16 @@ test("print: chrome hidden, light colours even from dark, panels unbroken and wi
   try {
     await page.emulateMedia({ media: "print" });
     await page.waitForTimeout(200);
+    await page.addScriptTag({ content: PAGE_FNS });
     const r = await page.evaluate(() => ({
       hidden: ["[data-bell]", "[data-scope-toggle]", "[data-view-all]"].map(s => getComputedStyle(document.querySelector(s)).display),
       card: getComputedStyle(document.querySelector("[data-dash] .nm")).backgroundColor,
       brk: getComputedStyle(document.querySelector("[data-dash] .nm")).breakInside,
       wide: Array.from(document.querySelectorAll("[data-dash] .nm")).filter(e => e.getBoundingClientRect().right > 794).length,
-      cut: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1).length }));
+      cut: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1).length,
+      // dark-only fills must not reach paper: the overdue pill and the orange KPI tile print light
+      fills: ["#week-tasks h3 .bg-rose-100", "[data-kpi-icon].bg-orange-100"].map(s => { const e = document.querySelector(s); return e && [window.__c.parse(getComputedStyle(e).backgroundColor).slice(0, 3), window.__c.textOn(e)]; }) }));
+    assert(r.fills.every((f, i) => f && f[0].every(v => v >= 200) && f[1] >= [4.5, 3][i]) /* pill text 4.5; tile glyph is a graphic, 3:1 */, "print fills " + JSON.stringify(r.fills));
     assert(r.hidden.every(d => d === "none"), "print-visible chrome " + r.hidden);
     assert(r.card === "rgb(255, 255, 255)", "card prints " + r.card);
     assert(r.brk === "avoid" && r.wide === 0 && r.cut === 0, "print layout " + JSON.stringify(r));
@@ -415,18 +472,27 @@ test("print: chrome hidden, light colours even from dark, panels unbroken and wi
 });
 
 const BIG = [
-  seedAccount({ id: "x1", name: "Huge Co", csm: "Priya Shah", arr: 999999999999, renewalDate: day(12), licenses: 99999999, deployedLicenses: 12345678, inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 } }),
-  seedAccount({ id: "x2", name: "Tiny Co", csm: "Priya Shah", arr: 0.01, renewalDate: day(50) }),
-  seedAccount({ id: "x3", name: "Old Co", csm: "Priya Shah", arr: 50000, renewalDate: day(-200000) }),
+  seedAccount({ id: "x1", name: "Huge Co", csm: "Priya Shah", arr: 999999999999, startDate: day(-100), renewalDate: day(12), licenses: 99999999, deployedLicenses: 12345678, inputs: { usage: 5, sentiment: 5, tickets: 20, nps: -80 } }),
+  seedAccount({ id: "x2", name: "Tiny Co", csm: "Priya Shah", arr: 0.01, startDate: day(-100), renewalDate: day(50) }),
+  seedAccount({ id: "x3", name: "Old Co", csm: "Priya Shah", arr: 50000, startDate: day(-100), renewalDate: day(-200000) }),
+  // x1-x3 are new logos (outside NRR). NRR 1234% on a 300,000 base: +3,602,000 expansion, -100,000 contraction, a 100,000 churn
+  seedAccount({ id: "x4", name: "Grow Co", csm: "Priya Shah", arr: 3702000, arrEvents: [{ date: day(-30), delta: 3602000 }] }),
+  seedAccount({ id: "x5", name: "Shrink Co", csm: "Priya Shah", arr: 0, arrEvents: [{ date: day(-30), delta: -100000 }] }),
+  seedAccount({ id: "x6", name: "Gone Co", csm: "Priya Shah", arr: 100000, churn: { date: day(-20), arr: 100000, reason: "Price" } }),
 ];
+const MANY_TASKS = Array.from({ length: 10050 }, (_, i) => ({ id: "m" + i, accountId: "x3", title: "Bulk " + i, due: day(30), owner: "Priya Shah", priority: "Low", status: "Open", createdAt: day(-9) }));
 for (const w of [1280, 390, 640]) test(`long numbers at ${w}: no overflow, no float tails, truncated values titled`, async () => {
-  const { page, browser } = await openDash("light", w, BIG);
+  const { page, browser } = await openDash("light", w, BIG, MANY_TASKS);
   try {
     assert(await hScroll(page) <= 0, "h-scroll " + await hScroll(page));
     const r = await page.evaluate(() => ({
       text: document.querySelector("[data-dash]").innerText,
       over: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1 && !e.title).length }));
     assert(/\$1000000\.00M/.test(r.text), "precondition: huge ARR shown");
+    const pre = [/1234%/.test(r.text), /-\$100K/.test(r.text), /100\d\d open/.test(r.text)];
+    assert(pre.every(Boolean), "precondition: NRR 1000%+, negative bridge rows, 10,000+ tasks: " + pre + " " + (r.text.match(/\d+%/g) || []).slice(0, 4));
+    const o = await overlaps(page);
+    assert(o.length === 0, "overlap: " + o.slice(0, 5).join(" | "));
     assert(!/\d\.\d{3,}|e\+\d/.test(r.text), "float tail: " + (r.text.match(/\S*(\d\.\d{3,}|e\+\d)\S*/) || [])[0]);
     assert(r.over === 0, "overflowing untitled values " + r.over);
     const u = await untitled(page);

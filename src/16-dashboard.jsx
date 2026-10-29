@@ -135,7 +135,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
                 <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
                   <span className="block truncate text-[12.5px] text-slate-500" title={`${a.tier || "—"} · CSM ${a.csm || "—"}`}>{a.tier || "—"} · CSM {a.csm || "—"}</span></span>
                 <span className="w-[70px] shrink-0 truncate whitespace-nowrap text-end text-sm font-semibold tabular-nums text-slate-900" title={fmtMoney(a.arrUSD)}>{fmtMoney(a.arrUSD)}</span>
-                <span className="shrink-0" title={`Health ${a.score} · ${RISK_WORD[a.risk]}`}><HealthChip score={a.score} /></span>
+                <span className="min-w-0 shrink-0" title={`Health ${a.score} · ${RISK_WORD[riskOf(a.score)]}`}><Chip risk={riskOf(a.score)}><span data-health-word className="max-w-[110px] truncate whitespace-nowrap">{a.score} · {RISK_WORD[riskOf(a.score)]}</span></Chip></span>
                 <span className="hidden w-[110px] shrink-0 whitespace-nowrap text-end text-[13px] text-slate-600 sm:inline">{fmtDate(a.renewalDate)}</span>
                 <span className="shrink-0"><DaysChip days={daysUntil(a.renewalDate)} /></span>
               </button>
