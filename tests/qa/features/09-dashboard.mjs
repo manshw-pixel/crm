@@ -114,7 +114,7 @@ export const scenarios = [
       await openDashboard(page, runId);
       // the card's own count ("N accounts in red health") is the Red set the list must show
       const sub = (await page.locator('[data-kpi][data-stat="ARR at risk (USD)"] [data-stat-value] + div').textContent()).trim();
-      const m = /^(\d+) accounts in red health$/.exec(sub);
+      const m = /^(\d+) accounts? in red health$/.exec(sub);
       assert.ok(m, `ARR at risk sub "${sub}"`);
       await page.locator('[data-kpi][data-stat="ARR at risk (USD)"]').click();
       await page.locator("main h1", { hasText: /^Accounts$/ }).waitFor({ timeout: 10000 });
@@ -151,7 +151,7 @@ export const scenarios = [
       await page.locator('[data-kpi][data-stat="Overdue tasks"]').click();
       await page.locator("main h1", { hasText: /^Tasks$/ }).waitFor({ timeout: 10000 });
       const head = page.locator("main button", { hasText: /^Overdue/ });
-      if (!(await head.count())) return; // no overdue tasks in the org: nothing to expand
+      if (!(await head.count())) throw new SkipScenario("no overdue tasks in the org, so no Overdue section");
       assert.match(await head.first().innerText(), /▾/, "Overdue section collapsed");
     } },
 

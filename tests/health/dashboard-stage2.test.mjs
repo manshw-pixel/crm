@@ -88,6 +88,8 @@ test("health and QBR pills open Accounts filtered to exactly the matching accoun
       await page.waitForSelector(`[data-health-pill="${pill}"]`);
       await page.click(`[data-health-pill="${pill}"]`);
       await page.waitForSelector("[data-account-row]");
+      await page.waitForFunction(w => document.querySelector('select[aria-label="Filter by health risk"]')?.value === w, riskSel, { timeout: 5000 }).catch(() => {});
+      await page.waitForFunction(n => document.querySelectorAll("[data-account-row]").length === n, want.length, { timeout: 5000 }).catch(() => {});
       const got = await names();
       assert(JSON.stringify(got) === JSON.stringify([...want].sort()), `${pill}: rows ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
       const sel = await page.$eval('select[aria-label="Filter by health risk"]', e => e.value);
@@ -451,8 +453,11 @@ test("RTL guard: dir=rtl at 640 and 1440 has no horizontal overflow; rows use lo
 test("print: chrome hidden, light colours even from dark, panels unbroken and within A4", async () => {
   const { page, browser } = await openDash("dark", 794);
   try {
+    // precondition: this run really starts dark (set by openDash's own seed, not left over from another test)
+    assert(await page.evaluate(() => localStorage.getItem("onevio.theme")) === "dark", "theme not dark before print");
     await page.emulateMedia({ media: "print" });
-    await page.waitForTimeout(200);
+    // wait for the print rules to repaint the card rather than a fixed 200ms (it was read mid-switch once)
+    await page.waitForFunction(() => getComputedStyle(document.querySelector("[data-dash] .nm")).backgroundColor === "rgb(255, 255, 255)", null, { timeout: 5000 }).catch(() => {});
     await page.addScriptTag({ content: PAGE_FNS });
     const r = await page.evaluate(() => ({
       hidden: ["[data-bell]", "[data-scope-toggle]", "[data-view-all]"].map(s => getComputedStyle(document.querySelector(s)).display),
@@ -571,6 +576,9 @@ const waitH1 = (page, want) => page.waitForFunction(w => { const e = document.qu
 // Account list rows -> seed ids (each row's text matched to the seeded names, row by row).
 const acctRows = page => page.$$eval("[data-account-row]", (rs, n) => rs.map(r => Object.keys(n).find(k => r.textContent.includes(n[k])) || "?").sort(), N);
 const riskSel = page => page.$eval('select[aria-label="Filter by health risk"]', e => e.value);
+// After a dashboard -> Accounts hand-off, wait for the filter and rows to settle rather than reading the first frame.
+const waitRisk = (page, want) => page.waitForFunction(w => document.querySelector('select[aria-label="Filter by health risk"]')?.value === w, want, { timeout: 5000 }).catch(() => {});
+const waitRows = (page, want) => page.waitForFunction(([w, n]) => Array.from(document.querySelectorAll("[data-account-row]")).map(r => Object.keys(n).find(k => r.textContent.includes(n[k])) || "?").sort().join() === w, [want, N], { timeout: 5000 }).catch(() => {});
 const home = async page => { await page.keyboard.press("1"); await page.waitForSelector("[data-kpi]"); await page.waitForTimeout(150); };
 const crumbIs = async (page, id) => { await page.waitForSelector("[data-crumb-accounts]", { timeout: 5000 }); const t = await h1(page); assert(t.includes(N[id]), `crumb "${t}" wanted ${N[id]}`); };
 
@@ -582,8 +590,7 @@ test("T7 click 1: ARR at risk card (click and Enter) opens Accounts filtered to 
       else { await page.focus('[data-kpi][data-stat="ARR at risk (USD)"]'); await page.keyboard.press("Enter"); }
       await waitH1(page, "Accounts");
       await page.waitForSelector("[data-account-row]");
-      // the list applies the hand-off filter in an effect: wait for it rather than reading the first render
-      await page.waitForFunction(() => document.querySelector('select[aria-label="Filter by health risk"]')?.value === "Red", null, { timeout: 5000 }).catch(() => {});
+      await waitRisk(page, "Red"); await waitRows(page, "r1");
       assert(await riskSel(page) === "Red", `${how}: risk ${await riskSel(page)}`);
       const rows = await acctRows(page);
       assert(rows.join() === "r1", `${how}: rows ${rows}`);
@@ -601,6 +608,7 @@ test("T7 click 2-4: Renewals card opens Renewals; NRR opens Accounts unfiltered;
     await page.click('[data-kpi][data-stat="NRR (12m)"]');
     await waitH1(page, "Accounts");
     await page.waitForSelector("[data-account-row]");
+    await waitRisk(page, "All"); await waitRows(page, "g1,r1,y1");
     const rows = await acctRows(page);
     assert(await riskSel(page) === "All" && rows.join() === "g1,r1,y1", `NRR: risk ${await riskSel(page)} rows ${rows}`);
     await home(page);
@@ -622,6 +630,7 @@ test("T7 click 5: pills -- Total ARR all, Healthy/Watch/At risk one each, QBRs d
     for (const [pill, want, risk] of [["Total ARR (USD)", "g1,r1,y1", "All"], ["Healthy", "g1", "Green"], ["Watch", "y1", "Yellow"], ["At risk", "r1", "Red"]]) {
       await page.click(`[data-health-pill="${pill}"]`);
       await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+      await waitRisk(page, risk); await waitRows(page, want);
       const rows = (await acctRows(page)).join();
       assert(rows === want && await riskSel(page) === risk, `${pill}: rows ${rows} risk ${await riskSel(page)}`);
       await home(page);
@@ -629,10 +638,13 @@ test("T7 click 5: pills -- Total ARR all, Healthy/Watch/At risk one each, QBRs d
     await page.click('[data-health-pill="QBRs due (30d)"]');
     await waitH1(page, "Accounts");
     await page.waitForSelector('button[title="Remove QBR-due filter"]', { timeout: 5000 });
+    await waitRows(page, "g1");
     assert((await acctRows(page)).join() === "g1", "QBR rows " + await acctRows(page));
     await home(page);
     await page.click('[data-health-pill="Billing completed"]');
     await waitH1(page, "Accounts");
+    await page.waitForFunction(() => document.querySelector('select[aria-label="Filter by billing status"]')?.value === "Completed", null, { timeout: 5000 }).catch(() => {});
+    await waitRows(page, "g1");
     const bill = await page.$eval('select[aria-label="Filter by billing status"]', e => e.value);
     assert(bill === "Completed" && (await acctRows(page)).join() === "g1", `billing ${bill} rows ${await acctRows(page)}`);
   } finally { await browser.close(); }
@@ -701,10 +713,12 @@ test("T7 click 11: ARR bridge GRR opens Accounts; Churned ARR opens churned-only
   try {
     await page.click('[data-bridge-head] [data-stat="GRR (12m)"]');
     await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+    await waitRows(page, "g1,r1,y1");
     assert((await acctRows(page)).join() === "g1,r1,y1", "GRR rows " + await acctRows(page));
     await home(page);
     await page.click('[data-bridge-head] [data-stat="Churned ARR (12m)"]');
     await waitH1(page, "Accounts"); await page.waitForSelector("[data-account-row]");
+    await waitRows(page, "c1");
     assert((await acctRows(page)).join() === "c1", "churned rows " + await acctRows(page));
     await browser.close();
     ({ page, browser } = await t7Launch({ churned: false }));
@@ -725,7 +739,7 @@ test("T7 click 12: every new target has a pointer cursor and is keyboard focusab
     assert(r.every(([, n]) => n > 0), "missing targets " + JSON.stringify(r.filter(([, n]) => !n).map(x => x[0])));
     const bad = r.filter(([, , b]) => b.length);
     assert(bad.length === 0, "not pointer/focusable: " + JSON.stringify(bad));
-    for (const [sel, check] of [['[data-health-pill="Watch"]', async () => { await waitH1(page, "Accounts"); assert(await riskSel(page) === "Yellow", "Watch via Enter"); }],
+    for (const [sel, check] of [['[data-health-pill="Watch"]', async () => { await waitH1(page, "Accounts"); await waitRisk(page, "Yellow"); assert(await riskSel(page) === "Yellow", "Watch via Enter"); }],
       ['[data-team-row="Rahul"]', () => page.waitForSelector("[data-task-owner-filter]", { timeout: 5000 })],
       ['[data-view-all="renewals"]', () => waitH1(page, "Renewals")]]) {
       await page.focus(sel); await page.keyboard.press("Enter"); await check(); await home(page);
@@ -831,16 +845,16 @@ test("T7 keyboard: Tab reaches every new target (and passes bell, Analytics, Mon
 });
 
 const ENTER_TABLE = [
-  ['[data-kpi][data-stat="ARR at risk (USD)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Red", "risk"); }],
+  ['[data-kpi][data-stat="ARR at risk (USD)"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "Red"); assert(await riskSel(p) === "Red", "risk"); }],
   ['[data-kpi][data-stat="Renewals · 90 days"]', p => waitH1(p, "Renewals")],
-  ['[data-kpi][data-stat="NRR (12m)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "All", "risk"); }],
+  ['[data-kpi][data-stat="NRR (12m)"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "All"); assert(await riskSel(p) === "All", "risk"); }],
   ['[data-kpi][data-stat="Overdue tasks"]', p => waitH1(p, "Tasks")],
-  ['[data-health-pill="Total ARR (USD)"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "All", "risk"); }],
-  ['[data-health-pill="Healthy"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Green", "risk"); }],
-  ['[data-health-pill="Watch"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Yellow", "risk"); }],
-  ['[data-health-pill="At risk"]', async p => { await waitH1(p, "Accounts"); assert(await riskSel(p) === "Red", "risk"); }],
+  ['[data-health-pill="Total ARR (USD)"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "All"); assert(await riskSel(p) === "All", "risk"); }],
+  ['[data-health-pill="Healthy"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "Green"); assert(await riskSel(p) === "Green", "risk"); }],
+  ['[data-health-pill="Watch"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "Yellow"); assert(await riskSel(p) === "Yellow", "risk"); }],
+  ['[data-health-pill="At risk"]', async p => { await waitH1(p, "Accounts"); await waitRisk(p, "Red"); assert(await riskSel(p) === "Red", "risk"); }],
   ['[data-health-pill="QBRs due (30d)"]', p => p.waitForSelector('button[title="Remove QBR-due filter"]', { timeout: 5000 })],
-  ['[data-health-pill="Billing completed"]', async p => { await waitH1(p, "Accounts"); assert(await p.$eval('select[aria-label="Filter by billing status"]', e => e.value) === "Completed", "billing"); }],
+  ['[data-health-pill="Billing completed"]', async p => { await waitH1(p, "Accounts"); await p.waitForFunction(() => document.querySelector('select[aria-label="Filter by billing status"]')?.value === "Completed", null, { timeout: 5000 }).catch(() => {}); assert(await p.$eval('select[aria-label="Filter by billing status"]', e => e.value) === "Completed", "billing"); }],
   ['[data-renewal-row="r1"]', p => crumbIs(p, "r1")],
   ['[data-attention-row="r1"]', p => crumbIs(p, "r1")],
   ['[data-impl-row="p1"]', p => p.waitForSelector("[data-project-stage]", { timeout: 5000 })],

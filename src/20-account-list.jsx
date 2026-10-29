@@ -107,7 +107,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     if (has("qbrDue")) setQbrDue(!!f.qbrDue);
     if (has("sort")) setSort(f.sort);
   }, []);
-  useEffect(() => { if (initialFilter) applyFilter(initialFilter); }, [initialFilter, applyFilter]);
+  // layout effect: a dashboard hand-off filters before the first paint, so the list never flashes unfiltered
+  React.useLayoutEffect(() => { if (initialFilter) applyFilter(initialFilter); }, [initialFilter, applyFilter]);
   useEffect(() => { if (pendingSeg) applyFilter(pendingSeg); }, [pendingSeg, applyFilter]);
   const fileRef = useRef(null);
   const [importMsg, setImportMsg] = useState(null);

@@ -29,7 +29,6 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const atRisk = scored.filter(a => a.risk === "Red");
   const arrAtRisk = atRisk.reduce((s, a) => s + a.arrUSD, 0);
   const weekTasks = st.tasks.filter(t => t.status !== "Done" && daysUntil(t.due) <= 7 && (scope !== "mine" || t.owner === user.name));
-  const buckets = [30, 60, 90].map(n => scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= n && (n === 30 || d > n - 30); }));
   const counts = { Green: 0, Yellow: 0, Red: 0 };
   scored.forEach(a => counts[a.risk]++);
   const ren90 = scored.filter(a => { const d = daysUntil(a.renewalDate); return d >= 0 && d <= 90; });
@@ -161,7 +160,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
           <ScrollList label="Tasks this week" className="max-h-72">
             {weekTasks.length === 0 && <div className="text-sm text-slate-500">Nothing due.</div>}
             <div className="grid grid-cols-1 gap-x-6 md:grid-cols-2">
-            {[...weekTasks].sort((x, y) => x.due.localeCompare(y.due)).map(t => {
+            {[...weekTasks].sort((x, y) => (x.due || "").localeCompare(y.due || "")).map(t => {
               const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
               return (
                 <div key={t.id} data-row data-week-task={t.id} className="flex items-center gap-3 border-t border-slate-100 px-1 py-2.5 text-sm">
