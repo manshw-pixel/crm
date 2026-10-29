@@ -109,10 +109,11 @@ function CommandPalette({ open, onClose, accounts, user, go }) {
     </div>
   );
 }
-function SyncStatus() {
+const greetingFor = h => h < 12 ? "Good morning" : h < 17 ? "Good afternoon" : "Good evening";
+function SyncStatus({ quietSaved }) {
   const [s, setS] = useState(() => writeQueue.queueState());
   useEffect(() => { window.__onQueueChange = setS; return () => { window.__onQueueChange = null; }; }, []);
-  if (s.status === "saved") return <span data-sync-status="saved" className="text-xs text-slate-500">Saved</span>;
+  if (s.status === "saved") return <span data-sync-status="saved" className={quietSaved ? "sr-only" : "text-xs text-slate-500"}>Saved</span>;
   if (s.status === "saving") return <span data-sync-status="saving" className="text-xs text-slate-500">Saving…</span>;
   // Deliberately persistent. A toast scrolls away; an unsaved change must not. This is also
   // the first honest answer to the observability gap -- an error state that STAYS on screen.
@@ -484,16 +485,22 @@ function App({ user, onBackToClients }) {
           className="nm-btn flex h-9 w-9 items-center justify-center text-slate-600 lg:hidden">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="6" x2="20" y2="6" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="18" x2="20" y2="18" /></svg>
         </button>
-        <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
+        {view === "Dashboard" && !acctId ? (
+          <div className="min-w-0 flex-1 basis-[280px]">
+            <p data-dash-date className="text-[13px] text-slate-500">{new Date().toLocaleDateString("en-GB", { weekday: "long" })}, {new Date().toLocaleDateString("en-GB", { day: "numeric", month: "long" })}</p>
+            <h1 data-dash-greeting className="mt-0.5 truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">
+              {greetingFor(new Date().getHours())}, {(user.name || "").trim().split(/\s+/)[0] || "there"}</h1>
+          </div>
+        ) : <h1 className="text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
-          : view}</h1>
-        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className="nm-inset flex items-center lg:ml-3">
-          {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "All"]].map(([k, label]) => (
+          : view}</h1>}
+        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className={`nm-inset flex items-center ${view === "Dashboard" && !acctId ? "lg:ml-auto" : "lg:ml-3"}`}>
+          {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "Whole team"]].map(([k, label]) => (
             <button key={k} aria-pressed={scope === k} onClick={() => setScopeSel(k)}
               className={scope === k ? "" : "hover:text-slate-900"}>{label}</button>
           ))}
         </div>}
-        <div className="ml-1"><SyncStatus /></div>
+        <div className="ml-1"><SyncStatus quietSaved={view === "Dashboard"} /></div>
         <div className="relative ml-1">
           <button data-bell ref={bellRef} onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
             aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notifOpen}

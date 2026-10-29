@@ -13,7 +13,7 @@ async function openDashboard(page, runId) {
   await nav(page, "Dashboard").waitFor({ timeout: 20000 });
   await waitForRunAccounts(page, runId);
   await nav(page, "Dashboard").click();
-  await page.locator("[data-scope-toggle] button", { hasText: /^All$/ }).click();
+  await page.locator("[data-scope-toggle] button", { hasText: /^Whole team$/ }).click();
   await stat(page, "Total ARR (USD)").waitFor({ timeout: 15000 });
   await page.waitForTimeout(300);
 }

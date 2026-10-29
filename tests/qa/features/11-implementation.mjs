@@ -173,7 +173,7 @@ export const scenarios = [
       }
       // The csm defaults to "My book"; the fixture account is admin-owned, so widen the scope first.
       await nav(page, "Accounts").click();
-      await page.locator("[data-scope-toggle] button").filter({ hasText: /^All$/ }).click();
+      await page.locator("[data-scope-toggle] button").filter({ hasText: /^Whole team$/ }).click();
       await openAccount(page, fixtureName(runId));
       const rows = page.locator("[data-project-row]");
       await page.getByText(/^Projects \(\d+\)$/).first().waitFor({ timeout: 15000 });

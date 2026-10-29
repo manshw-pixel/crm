@@ -25,7 +25,7 @@ const exactTotalUSD = page => page.evaluate(() => {
 });
 const dashTotal = async page => {
   await nav(page, "Dashboard").click();
-  await page.locator("[data-scope-toggle] button").filter({ hasText: /^All$/ }).click();
+  await page.locator("[data-scope-toggle] button").filter({ hasText: /^Whole team$/ }).click();
   return (await page.locator('[data-stat="Total ARR (USD)"] [data-stat-value]').textContent()).trim();
 };
 
