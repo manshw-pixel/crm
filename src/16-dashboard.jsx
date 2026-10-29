@@ -46,6 +46,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
   const retAccounts = scope === "all" ? allAccounts : all;
   const { churnedARR, grr, nrr, lost } = retentionStats(retAccounts, rates);
   const bridge = arrBridge(retAccounts, rates);
+  const nrrSub = `existing customers: +${fmtMoney(bridge.expansion)} exp · −${fmtMoney(bridge.contraction)} contr`;
   const pct = x => (100 * x).toFixed(0) + "%";
   // expansion pipeline: open opportunities on non-churned in-scope accounts
   const openOpps = st.opportunities
@@ -94,7 +95,8 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
         <Stat kpi size="hero" icon="R" iconTone="bg-orange-100 text-orange-600" label="Renewals · 90 days" value={ren90.length}
           sub={`${fmtMoney(ren90ARR)} ARR · ${ren30} within 30 days`} onClick={() => goRenewals()} />
         <Stat kpi size="hero" icon="%" iconTone="bg-emerald-100 text-emerald-600" label="Net revenue retention" statKey="NRR (12m)" value={nrr === null ? "—" : pct(nrr)}
-          tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={`Gross retention ${grr === null ? "—" : pct(grr)}`} onClick={() => openAccounts()}
+          tone={nrr !== null && nrr < 1 ? "text-amber-600" : "text-emerald-600"} sub={<><div>{`Gross retention ${grr === null ? "—" : pct(grr)}`}</div>
+            <div data-nrr-sub className="truncate" title={nrrSub}>{nrrSub}</div></>} onClick={() => openAccounts()}
           trend={snaps.length >= 2 ? <KpiSpark points={snaps.map(s => s.nrr)} /> : null} />
         <Stat kpi size="hero" icon="✓" iconTone="bg-indigo-100 text-indigo-600" label="Overdue tasks" value={overdueTasks.length}
           sub={`${due7.length} due in the next 7 days`} onClick={() => goTasks({ overdue: true, ...(scope === "mine" ? { owner: user.name } : {}) })} />

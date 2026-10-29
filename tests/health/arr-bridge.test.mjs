@@ -23,6 +23,8 @@ test("ARR bridge shows new customers as new business and adds up to today's ARR"
     assert(JSON.stringify(v) === JSON.stringify(want), "bridge: " + JSON.stringify(v));
     const nrr = (await page.textContent('[data-stat="NRR (12m)"] [data-stat-value]')).trim();
     assert(nrr === "84%", "NRR card should be 84% (new logo excluded), got " + nrr);
+    const sub = (await page.textContent('[data-stat="NRR (12m)"] [data-nrr-sub]')).trim();
+    assert(sub === "existing customers: +$20K exp · −$10K contr", "NRR sub-line: " + sub);
     const grr = (await page.textContent('[data-bridge-head] [data-stat="GRR (12m)"] [data-stat-value]')).trim();
     assert(grr === "76%", "GRR in the bridge header should be 76% = (250-10-50)/250, got " + grr);
     const ch = (await page.textContent('[data-bridge-head] [data-stat="Churned ARR (12m)"] [data-stat-value]')).trim();
