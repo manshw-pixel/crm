@@ -355,7 +355,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                         ? <span className="acct-sigma block text-[11.5px] font-semibold" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>
                         : a.currency !== "USD" && <span className="block text-[11.5px] acct-meta">≈{fmtMoney(a.arrUSD)}</span>}</td>
                     <td className="max-w-[92px] truncate px-2 acct-label" title={a.industry}>{a.industry}</td>
-                    <td className="px-2">{a.csm && <span className="relative inline-flex items-center gap-1.5" title={a.csm}><span aria-hidden="true" className="acct-csm-av">{initialsOf(a.csm)}</span><span aria-hidden="true" className="acct-label">{a.csm.split(" ")[0]}</span><span className="sr-only">{a.csm}</span></span>}</td>
+                    <td className="px-2">{a.csm && <span className="relative inline-flex items-center gap-1.5" title={a.csm}><span aria-hidden="true" className="acct-csm-av">{initialsOf(a.csm)}</span><span aria-hidden="true" className="acct-label">{a.csm.split("@")[0].split(" ")[0]}</span><span className="sr-only">{a.csm}</span></span>}</td>
                     <td className="px-2">{(() => { const rk = riskOf(a.score); return <span className="inline-flex items-center gap-1.5" data-risk={rk} title={`Health ${a.score} · ${RISK_WORD[rk]}`}>
                       <span aria-hidden="true" className="acct-track"><span className="acct-bar" style={{ width: `${Math.max(0, Math.min(100, a.score))}%` }} /></span>
                       <b className="acct-h text-[13px] tabular-nums">{a.score}</b><span data-health-word className="acct-h text-xs">{RISK_WORD[rk]}</span></span>; })()}</td>

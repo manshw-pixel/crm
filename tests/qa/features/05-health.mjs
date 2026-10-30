@@ -17,7 +17,9 @@ const listScores = page => page.evaluate(() => {
   const nameCol = ths.findIndex(th => th.getAttribute("data-sort-key") === "name");
   if (col < 0 || nameCol < 0) return null;
   return [...document.querySelectorAll("tr[data-account-row]")].map(tr => ({
-    name: tr.children[nameCol].textContent.trim(), score: tr.children[col].textContent.trim() }));
+    // Stage 3: the name cell also holds avatar initials + industry, and the health cell reads "43 Watch".
+    name: (tr.children[nameCol].querySelector("[data-account-name]") || tr.children[nameCol]).textContent.trim(),
+    score: (t => (t.match(/^\d+/) || [t])[0])(tr.children[col].textContent.trim()) }));
 });
 
 // The detail page's HealthChip sits right after the h2 (src/21-account-detail.jsx:64-66).
