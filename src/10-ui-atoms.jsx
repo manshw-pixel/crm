@@ -1,6 +1,7 @@
 /* ------------------------------ UI atoms ------------------------------ */
 const Copyright = () => <div className="mt-6 pb-2 text-center text-[11px] text-slate-500">© 2026 OneVio Pvt Ltd. All Rights Reserved.</div>;
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
+const FlagPill = ({ flag }) => { const sev = flagSeverity(flag); return <span data-flag data-sev={sev} className="flag-pill inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold"><span className="flag-dot" aria-hidden="true" />{flag}</span>; };
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
   <div id={id} className={`nm p-4 ${className}`}>

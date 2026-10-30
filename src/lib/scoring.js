@@ -119,3 +119,13 @@ export function flagsFor(acct, activities, score) {
   if (iu >= 45) f.push(`Inputs stale ${iu}d`);
   return f;
 }
+
+// Flag colour rule: red = health drop or renewal < 30d; amber = no activity or renewal 30-59d; grey = rest.
+export function flagSeverity(flag) {
+  const f = String(flag);
+  if (f.startsWith("Health ↓")) return "red";
+  const m = /^Renewal in (\d+)d/.exec(f);
+  if (m) return Number(m[1]) < 30 ? "red" : "amber";
+  if (f === "No activity 30d+") return "amber";
+  return "grey";
+}

@@ -181,7 +181,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
             className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
           {/* "Renewal in Nd" is already the Renewal stat above. */}
-          {a.flags.filter(f => !f.startsWith("Renewal in")).map(f => <span key={f} data-flag className="rounded-full bg-rose-50 px-2.5 py-0.5 text-xs font-semibold text-rose-600">{f}</span>)}
+          {a.flags.filter(f => !f.startsWith("Renewal in")).map(f => <FlagPill key={f} flag={f} />)}
         </div>
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">

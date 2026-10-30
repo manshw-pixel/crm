@@ -207,6 +207,17 @@
   .nm > div.mb-3 > h3, .nm > h3, .nm h3.uppercase { font-size: 16px; line-height: 22px; font-weight: 700; text-transform: none; letter-spacing: normal; color: var(--f-title); }
   main .text-slate-500:where(:not(:is(.nm, .nm-sm) *)) { color: var(--f-page-meta); }
   main :where(.nm, .nm-sm) .text-slate-500 { color: var(--f-meta); }
+  /* ---- stage 3 flag pills (red / amber / grey; text always present, dot is decoration) ---- */
+  .flag-pill { background: #f1f5f9; color: #475569; border-color: #e2e8f0; white-space: nowrap; }
+  .flag-pill[data-sev=red] { background: #fee2e2; color: #b91c1c; border-color: #fecaca; }
+  .flag-pill[data-sev=amber] { background: #fef3c7; color: #92400e; border-color: #fde68a; }
+  .flag-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+  @media screen {
+    html.dark .flag-pill { background: #1e293b; color: #cbd5e1; border-color: #334155; }
+    html.dark .flag-pill[data-sev=red] { background: #4c0519; color: #fda4af; border-color: #7f1d1d; }
+    html.dark .flag-pill[data-sev=amber] { background: #3b2a07; color: #fcd34d; border-color: #78350f; }
+  }
+  @media (forced-colors: active) { .flag-pill { border: 1px solid CanvasText; } .flag-dot { forced-color-adjust: none; background: CanvasText; } }
   /* ---- stage 2 dashboard: theme, focus, motion, high contrast, touch, print ---- */
   /* dark tints from the approved mockup where the remapped palette differs */
   @media screen {
