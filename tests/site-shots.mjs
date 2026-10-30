@@ -183,7 +183,7 @@ const url = buildMockedHtml(seedJs);
 const browser = await chromium.launch({ channel: CHANNEL || undefined, headless: true });
 const results = [];
 try {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, reducedMotion: "reduce", colorScheme: "light" });
+  const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 2, reducedMotion: "reduce", colorScheme: "light", bypassCSP: true }); // the injected mock is an inline script the dist CSP would refuse
   const page = await ctx.newPage();
   const errors = [];
   page.on("pageerror", e => errors.push(String(e)));
@@ -206,29 +206,19 @@ try {
   };
   const view = async title => { await page.click(`button[title="${title}"]`, { timeout: 10000 }); await settle(); };
   const shot = async (name, opts = {}) => { await page.screenshot({ path: OUT + name + ".png", ...opts }); results.push(name + ".png"); };
-  const card = async (name, locator) => {
-    const el = page.locator(locator).first();
-    await el.scrollIntoViewIfNeeded(); await el.waitFor({ state: "visible" });
-    await el.screenshot({ path: OUT + name + ".png" }); results.push(name + ".png");
-  };
   const top = () => page.evaluate(() => window.scrollTo(0, 0));
-  const cardOf = title => `.nm:has(> div > h3:text-is("${title}"))`;
 
   await load("light");
   // Dashboard (top of page)
   await top(); await shot("dashboard");
-  await card("health-card", cardOf("Health distribution"));
-  await card("tasks-card", cardOf("Team tasks by owner"));
-  await card("arr-bridge-card", cardOf("ARR bridge (12m, USD)"));
   // Analytics-expanded ARR bridge: scroll the bridge into the middle of the viewport
-  await page.locator("[data-arr-bridge]").scrollIntoViewIfNeeded();
+  
   await page.evaluate(() => { const e = document.querySelector("[data-arr-bridge]"); const r = e.getBoundingClientRect(); window.scrollBy(0, r.top - 120); });
   await shot("arr-bridge");
   // Licenses
-  await page.locator("[data-license-card]").scrollIntoViewIfNeeded();
+  
   await page.evaluate(() => { const e = document.querySelector("[data-license-card]"); const r = e.getBoundingClientRect(); window.scrollBy(0, r.top - 260); });
   await shot("licenses");
-  await card("licenses-card", "[data-license-card]");
 
   // Health: accounts list sorted by score (riskiest first)
   await view("Accounts"); await page.waitForSelector("[data-account-row]");
@@ -251,14 +241,15 @@ try {
   await page.waitForSelector("[data-header-card]");
   await page.waitForFunction(() => /Activity timeline \(6\)/.test(document.getElementById("root").textContent));
   await top(); await shot("account");
-  await card("account-header-card", "[data-header-card]");
 
   // Settings weights
   await view("Settings"); await page.waitForSelector("#set-scoring");
   await page.evaluate(() => document.getElementById("set-scoring").scrollIntoView());
   await page.evaluate(() => window.scrollBy(0, -20));
   await shot("settings-weights");
-  await card("settings-weights-card", "#set-scoring");
+  // Renewal playbook card
+  await page.evaluate(() => { document.getElementById("set-renewal-pb").scrollIntoView(); window.scrollBy(0, -20); });
+  await shot("settings-playbook");
 
   // Dark dashboard
   await page.context().clearCookies();
