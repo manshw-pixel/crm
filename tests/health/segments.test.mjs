@@ -118,7 +118,7 @@ test("saving a view stores the current filters as a segment", async () => {
   assert(segs.length === 1, `expected one saved segment, got ${JSON.stringify(segs)}`);
   assert(segs[0].name === "Dana book", `wrong name: ${segs[0].name}`);
   assert(segs[0].filter.q === "Beta", `segment should capture the typed search, got ${JSON.stringify(segs[0].filter)}`);
-  assert(Object.keys(segs[0].filter).length === 10, `expected 10 filter fields, got ${Object.keys(segs[0].filter).length}`);
+  assert(Object.keys(segs[0].filter).length === 11 && segs[0].filter.noActivity === false, `expected 11 filter fields incl. noActivity, got ${JSON.stringify(segs[0].filter)}`);
   await browser.close();
 });
 

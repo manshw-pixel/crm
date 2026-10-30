@@ -219,7 +219,7 @@
   }
   @media (forced-colors: active) { .flag-pill { border: 1px solid CanvasText; } .flag-dot { forced-color-adjust: none; background: CanvasText; } }
   /* ---- stage 3 accounts table (approved preview Stage3.dc.html, light then dark) ---- */
-  .acct-table { --a-fg: #0f172a; --a-label: #475569; --a-meta: #5f6f86; --a-accent: #4338ca; --a-soft: #eef2ff; --a-track: #eef2f7; --a-csm-bg: #e0e7ff; --a-csm-tx: #3730a3;
+  .acct-page, .acct-table { --a-fg: #0f172a; --a-label: #475569; --a-meta: #5f6f86; --a-accent: #4338ca; --a-soft: #eef2ff; --a-track: #eef2f7; --a-csm-bg: #e0e7ff; --a-csm-tx: #3730a3;
     --a-g-bar: #10b981; --a-g-tx: #047857; --a-y-bar: #f59e0b; --a-y-tx: #92400e; --a-r-bar: #ef4444; --a-r-tx: #b91c1c; --a-red-bg: #fee2e2; --a-head: #f8fafc; --a-hover: #f8fafc; }
   .acct-fg { color: var(--a-fg); } .acct-label { color: var(--a-label); } .acct-meta { color: var(--a-meta); } .acct-sigma { color: var(--a-accent); }
   .acct-table > thead th[aria-sort=ascending], .acct-table > thead th[aria-sort=descending] { color: var(--a-accent); }
@@ -245,9 +245,26 @@
   [data-risk=Green] .acct-bar { background: var(--a-g-bar); } [data-risk=Green] .acct-h { color: var(--a-g-tx); }
   [data-risk=Yellow] .acct-bar { background: var(--a-y-bar); } [data-risk=Yellow] .acct-h { color: var(--a-y-tx); }
   [data-risk=Red] .acct-bar { background: var(--a-r-bar); } [data-risk=Red] .acct-h { color: var(--a-r-tx); }
-  @media screen { html.dark .acct-table { --a-fg: #e2e8f0; --a-label: #cbd5e1; --a-meta: #94a3b8; --a-accent: #a5b4fc; --a-soft: #1e2046; --a-track: #1e293b; --a-csm-bg: #1e2046; --a-csm-tx: #c7d2fe;
+  @media screen { html.dark :is(.acct-page, .acct-table) { --a-fg: #e2e8f0; --a-label: #cbd5e1; --a-meta: #94a3b8; --a-accent: #a5b4fc; --a-soft: #1e2046; --a-track: #1e293b; --a-csm-bg: #1e2046; --a-csm-tx: #c7d2fe;
     --a-g-bar: #34d399; --a-g-tx: #6ee7b7; --a-y-bar: #fbbf24; --a-y-tx: #fcd34d; --a-r-bar: #fb7185; --a-r-tx: #fda4af; --a-red-bg: #4c0519; --a-head: #162036; --a-hover: #182134; }
     html.dark .acct-av[data-av] { background: #1e2046; color: #c7d2fe; } }
+  /* ---- stage 3 accounts toolbar + quick pills ---- */
+  .acct-page { --a-card: #ffffff; --a-line: #e2e8f0; --a-row: #f1f5f9; --a-pill-on: #c7d2fe; }
+  .acct-quick { min-height: 36px; border: 1px solid var(--a-line); border-radius: 999px; background: var(--a-card); color: var(--a-label); font-size: 13px; font-weight: 600; padding: 0 14px; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  .acct-quick-n { font-size: 12px; font-weight: 700; color: var(--a-meta); }
+  .acct-quick[aria-pressed=true] { background: var(--a-soft); border-color: var(--a-pill-on); color: var(--a-accent); }
+  .acct-quick[aria-pressed=true] .acct-quick-n { color: var(--a-accent); }
+  .acct-quick:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
+  .acct-card { padding: 0; overflow: hidden; }
+  .acct-card > :is(.nm-sm, .nm-inset) { margin: 14px 16px 0; }
+  .acct-toolbar { padding: 14px 16px; border-bottom: 1px solid var(--a-row); }
+  .acct-toolbar select { min-height: 38px; font-size: 13px; }
+  main .acct-toolbar input.acct-search { flex: 1 1 180px; width: auto; min-width: 0; height: 38px; font-size: 13px; border-radius: 10px; }
+  .acct-bulk { padding: 10px 16px; background: var(--a-soft); border-bottom: 1px solid var(--a-row); }
+  .acct-bulk-n { color: var(--a-accent); }
+  @media screen { html.dark .acct-page { --a-card: rgb(19,27,44); --a-line: #2d3a4f; --a-row: #1e293b; --a-pill-on: #3730a3; } }
+  @media (max-width: 639px) { .acct-quick { min-height: 44px; } .acct-toolbar :is(select, input, [data-btn]) { min-height: 44px; } main .acct-toolbar input.acct-search { height: 44px; } }
+  @media (forced-colors: active) { .acct-quick[aria-pressed=true] { border-width: 2px; border-color: Highlight; } }
   @media (forced-colors: active) { .acct-track { border: 1px solid CanvasText; } .acct-bar { forced-color-adjust: none; background: CanvasText !important; } }
   /* ---- stage 2 dashboard: theme, focus, motion, high contrast, touch, print ---- */
   /* dark tints from the approved mockup where the remapped palette differs */

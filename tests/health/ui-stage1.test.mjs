@@ -33,7 +33,7 @@ for (const [theme, page_, card] of [["light", "rgb(244, 245, 251)", "rgb(255, 25
       assert(b.backgroundColor === "rgb(79, 70, 229)", "primary bg: " + b.backgroundColor);
       const th = await cs(page, "main thead th", ["textTransform", "backgroundColor"]);
       assert(th.textTransform === "uppercase", "th case: " + th.textTransform);
-      const band = theme === "light" ? "rgb(248, 250, 252)" : "rgb(24, 33, 52)";
+      const band = theme === "light" ? "rgb(248, 250, 252)" : "rgb(22, 32, 54)";
       assert(th.backgroundColor === band, "th bg: " + th.backgroundColor);
       // keyboard focus shows the 2px ring
       await page.keyboard.press("Tab");
@@ -185,13 +185,13 @@ test("frame controls match the approved preview: buttons, search, filters, scope
     await page.click('button[title="Accounts"]');
     await page.waitForSelector("[data-account-row]");
     const nb = await page.locator("[data-btn]", { hasText: "+ New account" }).evaluate(e => { const s = getComputedStyle(e); return [Math.round(e.getBoundingClientRect().height), s.borderTopLeftRadius, s.fontSize, s.fontWeight]; });
-    assert(nb.join() === "34,10px,13px,600", "in-card button: " + nb);
+    assert(nb.join() === "40,12px,13.5px,600", "frame button (Stage 3 header): " + nb);
     const q = await page.$eval('input[placeholder^="Search"]', e => { const s = getComputedStyle(e); return [Math.round(e.getBoundingClientRect().height), s.paddingLeft, s.fontSize, s.borderTopLeftRadius]; });
-    assert(q.join() === "42,14px,14px,12px", "search: " + q);
+    assert(q.join() === "38,14px,13px,10px", "in-card search (Stage 3 toolbar): " + q);
     const sel = await page.$eval('select[aria-label="Filter by tier"]', e => { const s = getComputedStyle(e); return [s.borderTopLeftRadius, s.fontSize]; });
-    assert(sel.join() === "10px,14px", "filter select: " + sel);
+    assert(sel.join() === "10px,13px", "filter select (Stage 3 toolbar, 13px): " + sel);
     const td = await page.$eval("[data-account-row] > td:nth-child(3)", e => { const s = getComputedStyle(e); return [s.paddingTop, s.paddingLeft]; });
-    assert(td.join() === "14px,10px", "account cell: " + td);
+    assert(td.join() === "8px,10px", "account cell (Stage 3 60px row): " + td);
     const first = await page.$eval("[data-account-row] > td:first-child", e => getComputedStyle(e).paddingLeft);
     assert(first === "18px", "first cell: " + first);
   } finally { await browser.close(); }

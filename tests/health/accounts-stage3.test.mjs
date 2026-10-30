@@ -17,13 +17,13 @@ const A = [
   seedAccount({ id: "c1", name: "Gone Co", industry: "Media", csm: "Anita Rao", arr: 50000, accountNo: "1004",
     churn: { date: day(-60), arr: 50000, reason: "Price" } }),
 ];
-const seed = (role = "admin", theme = "light") => `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}
+const seed = (role = "admin", theme = "light", x = {}) => `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}
   window.__seedRows = { accounts: ${JSON.stringify(A.map(d => ({ id: d.id, data: role === "lead" ? { ...d, leadId: "u1" } : d })))},
-  contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };
-  window.__seedProfile = { id: "u1", name: "Priya Shah", role: "${role}", org_id: "org-a", platform_admin: false };`;
+  contacts: [], activities: ${JSON.stringify(x.activities || [])}, tasks: [], opportunities: [], team: [], settings: ${JSON.stringify(x.settings || [])} };
+  window.__seedProfile = { id: "u1", name: ${JSON.stringify(x.name || "Priya Shah")}, role: "${role}", org_id: "org-a", platform_admin: false };`;
 
-async function openList(role, theme = "light", w = 1440) {
-  const r = await launch(seed(role, theme));
+async function openList(role, theme = "light", w = 1440, x = {}) {
+  const r = await launch(seed(role, theme, x));
   if (theme !== "light") await r.page.reload();
   await r.page.setViewportSize({ width: 1440, height: 900 });
   await r.page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 5);
@@ -180,5 +180,91 @@ for (const theme of ["light", "dark"]) test(`${theme}: hovering an unselected ro
     const th = await page.$eval('th[data-sort-key="tier"]', e => { const c = getComputedStyle(e); return [c.fontSize, c.textTransform, c.backgroundColor]; });
     assert(th[0] === "11px" && th[1] === "uppercase", "th " + th);
     assert(th[2] === (theme === "dark" ? "rgb(22, 32, 54)" : "rgb(248, 250, 252)"), "head band " + th[2]);
+  } finally { await browser.close(); }
+});
+
+// ---- Task 3: quick-filter pills + toolbar ----
+const names = page => page.$$eval("[data-account-row] [data-account-name]", e => e.map(x => x.firstChild.textContent.trim()));
+const pressed = (page, k) => page.getAttribute(`[data-quick="${k}"]`, "aria-pressed");
+
+test("quick pills set existing filters", async () => {
+  const { page, browser } = await openList("admin");
+  try {
+    assert(await pressed(page, "all") === "true", "All not pressed initially");
+    await page.click('[data-quick="risk"]');
+    assert(await page.inputValue('[aria-label="Filter by health risk"]') === "Red", "risk select not Red");
+    assert(await pressed(page, "risk") === "true", "risk pill not pressed");
+    assert(await pressed(page, "all") === "false", "All still pressed");
+    const risks = await page.$$eval("[data-account-row] [data-risk]", e => e.map(x => x.getAttribute("data-risk")));
+    assert(risks.length > 0 && risks.every(r => r === "Red"), "rows " + risks);
+    await page.click('[data-quick="renew"]');
+    assert(await page.inputValue('[aria-label="Filter by renewal window in days"]') === "90", "renew select not 90");
+    await page.click('[data-quick="all"]');
+    assert(await page.inputValue('[aria-label="Filter by health risk"]') === "All" && await page.inputValue('[aria-label="Filter by renewal window in days"]') === "All", "All did not reset");
+  } finally { await browser.close(); }
+});
+
+test("dropdown change un-presses pill", async () => {
+  const { page, browser } = await openList("admin");
+  try {
+    await page.click('[data-quick="risk"]');
+    assert(await pressed(page, "risk") === "true", "precondition: risk pressed");
+    await page.selectOption('[aria-label="Filter by health risk"]', "All");
+    assert(await pressed(page, "risk") === "false", "risk pill still pressed");
+    assert(await pressed(page, "all") === "true", "All not pressed");
+  } finally { await browser.close(); }
+});
+
+test("no-activity pill filters", async () => {
+  // r1 has a fresh activity, so the pill must drop it
+  const { page, browser } = await openList("admin", "light", 1440, { activities: [{ id: "act1", data: { id: "act1", accountId: "r1", type: "Call", date: day(-2), note: "x" } }] });
+  try {
+    const before = await page.locator("[data-account-row]").count();
+    await page.click('[data-quick="noActivity"]');
+    assert(await pressed(page, "noActivity") === "true", "pill not pressed");
+    const rows = await page.$$eval("[data-account-row]", rs => rs.map(r => [...r.querySelectorAll("[data-flag]")].map(f => f.textContent.trim())));
+    assert(rows.length > 0 && rows.length < before, `rows ${rows.length} of ${before}`);
+    assert(rows.every(f => f.includes("No activity 30d+")), "row without flag " + JSON.stringify(rows));
+    const count = +(await page.textContent('[data-quick="noActivity"] [data-quick-count]'));
+    assert(count === rows.length, `count ${count} vs rows ${rows.length}`);
+  } finally { await browser.close(); }
+});
+
+test("old segment without noActivity applies", async () => {
+  const settings = [{ id: 1, data: { segments: [{ id: "seg-old", name: "Old red", filter: { risk: "Red" } }] } }];
+  const { page, browser } = await openList("admin", "light", 1440, { settings });
+  const errs = [];
+  page.on("pageerror", e => errs.push(e.message));
+  page.on("console", m => { if (m.type() === "error") errs.push(m.text()); });
+  try {
+    await page.click('[data-quick="noActivity"]');
+    await page.selectOption("[data-segment-select]", "seg-old");
+    await page.waitForTimeout(200);
+    assert(errs.length === 0, "errors " + errs.join(" | "));
+    assert(await pressed(page, "noActivity") === "false", "noActivity not reset by old segment");
+    const risks = await page.$$eval("[data-account-row] [data-risk]", e => e.map(x => x.getAttribute("data-risk")));
+    assert(risks.length > 0 && risks.every(r => r === "Red"), "rows " + risks);
+  } finally { await browser.close(); }
+});
+
+test("my book hidden for user with no accounts", async () => {
+  const a = await openList("admin");
+  try { assert(await a.page.locator('[data-quick="mine"]').count() === 1, "precondition: My book shown for Priya"); }
+  finally { await a.browser.close(); }
+  const { page, browser } = await openList("admin", "light", 1440, { name: "Nobody Here" });
+  try {
+    assert(await page.locator('[data-quick="all"]').count() === 1, "pills missing");
+    assert(await page.locator('[data-quick="mine"]').count() === 0, "My book shown");
+  } finally { await browser.close(); }
+});
+
+test("phone pill targets >= 44px tall", async () => {
+  const { page, browser } = await openList("admin", "light", 390);
+  try {
+    await page.waitForTimeout(300);
+    const hs = await page.$$eval("[data-quick]", e => e.map(x => x.getBoundingClientRect().height));
+    assert(hs.length >= 4 && hs.every(h => h >= 44), "heights " + hs);
+    const over = await page.evaluate(() => document.scrollingElement.scrollWidth - document.scrollingElement.clientWidth);
+    assert(over <= 0, "page overflows " + over);
   } finally { await browser.close(); }
 });

@@ -83,6 +83,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
   const [billing, setBilling] = useState("All");
   const [onlyChurned, setOnlyChurned] = useState(false);
   const [qbrDue, setQbrDue] = useState(false);
+  // in-memory only, like every other filter; saved into segments with the rest
+  const [noActivity, setNoActivity] = useState(false);
   const [selected, setSelected] = useState(() => new Set());
   const toggleOne = id => setSelected(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const [bulkAction, setBulkAction] = useState(null); // "csm" | "tier" | "task" | "churn" | "delete"
@@ -105,6 +107,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
     if (has("showChurned")) setShowChurned(!!f.showChurned);
     if (has("onlyChurned")) setOnlyChurned(!!f.onlyChurned);
     if (has("qbrDue")) setQbrDue(!!f.qbrDue);
+    if (has("noActivity")) setNoActivity(!!f.noActivity);
     if (has("sort")) setSort(f.sort);
   }, []);
   // layout effect: a dashboard hand-off filters before the first paint, so the list never flashes unfiltered
@@ -128,6 +131,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (!q || (a.name + a.industry).toLowerCase().includes(q.toLowerCase())) &&
       (tier === "All" || a.tier === tier) && (risk === "All" || a.risk === risk) && (csm === "All" || a.csm === csm) &&
       (billing === "All" || (billing === "Completed") === !!a.billingCompleted) &&
+      (!noActivity || a.flags.includes("No activity 30d+")) &&
       (!qbrDue || ["due", "overdue"].includes(qbrStatus(a)?.kind || "")) &&
       (renew === "All" || (daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= +renew)));
     r = r.map(a => ({ ...a, _ret: retById.get(a.id) }));
@@ -150,9 +154,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       (byParent.get(a.id) || []).forEach(s => out.push({ ...s, _sub: true }));
     });
     return out;
-  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, retById]);
+  }, [scored, q, tier, risk, csm, renew, billing, sort, showChurned, onlyChurned, qbrDue, noActivity, retById]);
   // a selection must never outlive the rows that produced it
-  useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue]);
+  useEffect(() => { setSelected(new Set()); }, [q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue, noActivity]);
   // teammates' edits arrive via a ~800ms realtime refetch and can change the visible
   // row set underneath a selection -- prune ids that no longer exist, but never wipe
   // the rest of an in-progress selection just because something elsewhere changed.
@@ -190,14 +194,40 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
       {children}{sort.k === k ? (sort.dir === 1 ? " ▲" : " ▼") : ""}
     </th>
   );
+  // Quick pills only SET existing filter state; their pressed state is derived from that
+  // state on every render (never stored), so a dropdown change un-presses a pill.
+  const live = scored.filter(a => showChurned || !a.churn);
+  const hasMine = !!user.name && scored.some(a => a.csm === user.name);
+  const allOn = tier === "All" && risk === "All" && csm === "All" && renew === "All" && billing === "All" && !noActivity;
+  const quick = [
+    { k: "all", label: "All", on: allOn, n: live.length,
+      go: () => { setTier("All"); setRisk("All"); setCsm("All"); setRenew("All"); setBilling("All"); setNoActivity(false); } },
+    { k: "risk", label: "At risk", on: risk === "Red", n: live.filter(a => a.risk === "Red").length, go: () => setRisk(risk === "Red" ? "All" : "Red") },
+    { k: "renew", label: "Renewing ≤ 90d", on: renew === "90", n: live.filter(a => daysUntil(a.renewalDate) >= 0 && daysUntil(a.renewalDate) <= 90).length,
+      go: () => setRenew(renew === "90" ? "All" : "90") },
+    { k: "noActivity", label: "No activity 30d+", on: noActivity, n: live.filter(a => a.flags.includes("No activity 30d+")).length, go: () => setNoActivity(v => !v) },
+    ...(hasMine ? [{ k: "mine", label: "My book", on: csm === user.name, n: live.filter(a => a.csm === user.name).length,
+      go: () => setCsm(csm === user.name ? "All" : user.name) }] : []),
+  ];
+  const book = scored.filter(a => !a.churn);
+  const canEdit = user.role !== "lead" && !isImplRole(user);
   return (
-    <Card title={`Accounts (${rows.length})`} right={<div className="flex gap-2">
-      {user.role !== "lead" && !isImplRole(user) && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
-      {user.role !== "lead" && !isImplRole(user) && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
-      <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
-      <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
-        onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />
-    </div>}>
+    <div className="acct-page flex min-w-0 flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <p data-accounts-summary className="acct-meta min-w-0 flex-1 basis-[240px] text-[13.5px]">
+          {book.length} accounts · {fmtMoney(book.reduce((t, a) => t + (a.arrUSD || 0), 0))} ARR · {book.filter(a => a.risk === "Red").length} at risk
+          {churnedCount > 0 && !showChurned ? ` · ${churnedCount} churned hidden` : ""}</p>
+        {canEdit && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
+        <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
+        {canEdit && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
+        <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
+          onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />
+      </div>
+      <div role="group" aria-label="Quick filters" className="flex flex-wrap gap-2">
+        {quick.map(p => <button key={p.k} type="button" data-quick={p.k} aria-pressed={p.on ? "true" : "false"} className="acct-quick" onClick={p.go}>
+          {p.label}<span data-quick-count className="acct-quick-n">{p.n}</span></button>)}
+      </div>
+    <section aria-label="Accounts" className="nm acct-card min-w-0">
       {/* The filtered count lives in the Card's title prop, so there is no element there to
           annotate. A visually-hidden live region announces it instead. */}
       <span data-live="results" aria-live="polite" className="sr-only">{rows.length} accounts</span>
@@ -225,14 +255,15 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         <button className="ml-auto text-xs font-semibold text-slate-500 hover:text-slate-800" onClick={() => setImportMsg(null)} aria-label="Dismiss import message">✕</button>
       </div>}
       {adding && <div className="nm-inset mb-4 p-4"><AccountForm dispatch={dispatch} onDone={() => setAdding(false)} team={team} accounts={allAccounts} user={user} customFields={settings && settings.customFields} /></div>}
-      <div className="mb-3 flex flex-wrap items-center gap-2">
+      <div data-acct-toolbar className="acct-toolbar flex flex-wrap items-center gap-2">
         <Select data-segment-select value={activeSeg} className="w-40" aria-label="Saved segment"
           onChange={e => {
             const id = e.target.value; setActiveSeg(id);
             const s = segments.find(x => x.id === id);
             // stamp with `t` so re-picking the same segment is still a new object and
             // the effect re-applies it after the user has hand-edited the filters
-            if (s) setPendingSeg({ ...s.filter, t: Date.now() });
+            // a segment saved before noActivity existed lacks the key: treat it as off
+            if (s) setPendingSeg({ ...s.filter, noActivity: !!s.filter.noActivity, t: Date.now() });
           }}
           options={["", ...segments.map(s => s.id)]}
           labels={{ "": "— segment —", ...Object.fromEntries(segments.map(s => [s.id, s.name])) }} />
@@ -244,14 +275,14 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         {user.role === "admin" && <Btn data-save-segment onClick={() => {
           const name = window.prompt("Name this segment");
           if (!name) return;
-          const seg = { id: uid(), name, filter: { q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue, sort } };
+          const seg = { id: uid(), name, filter: { q, tier, risk, csm, renew, billing, showChurned, onlyChurned, qbrDue, noActivity, sort } };
           dispatch({ type: "SET_SEGMENTS", segments: [...segments, seg] });
         }}>Save view</Btn>}
         {user.role === "admin" && activeSeg && <Btn data-delete-segment onClick={() => {
           dispatch({ type: "SET_SEGMENTS", segments: segments.filter(s => s.id !== activeSeg) });
           setActiveSeg("");
         }}>Delete segment</Btn>}
-        <Input placeholder="Search  ( / )" value={q} onChange={e => setQ(e.target.value)} className="w-48" ref={searchRef} />
+        <Input placeholder="Search  ( / )" aria-label="Search accounts" value={q} onChange={e => setQ(e.target.value)} className="acct-search" ref={searchRef} />
         <Select aria-label="Filter by tier" value={tier} onChange={e => setTier(e.target.value)} options={["All", "Enterprise", "Mid", "SMB"]} labels={{ All: "Tier: All" }} />
         <Select aria-label="Filter by health risk" value={risk} onChange={e => setRisk(e.target.value)} options={["All", "Green", "Yellow", "Red"]} labels={{ All: "Health: All" }} />
         <Select aria-label="Filter by CSM" value={csm} onChange={e => setCsm(e.target.value)} options={csms} labels={{ All: "CSM: All" }} />
@@ -263,8 +294,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         {qbrDue && <button className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-700" onClick={() => setQbrDue(false)} title="Remove QBR-due filter">QBR due ✕</button>}
       </div>
       {selected.size > 0 && !isImplRole(user) && (
-        <div data-bulkbar className="nm-sm mb-3 flex flex-wrap items-center gap-2 p-3">
-          <span data-live="selection" aria-live="polite" className="text-sm font-bold text-slate-800">{selected.size} selected</span>
+        <div data-bulkbar className="acct-bulk flex flex-wrap items-center gap-2">
+          <span data-live="selection" aria-live="polite" className="acct-bulk-n text-sm font-bold">{selected.size} selected</span>
           {isAdminUser(user) && <Btn onClick={() => setBulkAction("csm")}>Reassign CSM</Btn>}
           <Btn onClick={() => setBulkAction("tier")}>Change tier</Btn>
           <Btn onClick={() => setBulkAction("task")}>Add task</Btn>
@@ -355,7 +386,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           </tbody>
         </table>
       </div>
-    </Card>
+    </section>
+    </div>
   );
 }
 
