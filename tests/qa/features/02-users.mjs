@@ -14,7 +14,7 @@ async function runRowNames(page, runId, scope) {
   const rows = page.locator("tr[data-account-row]");
   await rows.first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(400);
-  return rows.evaluateAll(trs => trs.map(tr => tr.children[2]?.textContent.trim()));
+  return rows.evaluateAll(trs => trs.map(tr => (tr.querySelector("[data-account-name]") || tr.children[2])?.textContent.trim()));
 }
 
 const addUserForm = page => {
