@@ -491,7 +491,7 @@ for (const w of [1280, 390, 640]) test(`long numbers at ${w}: no overflow, no fl
     const r = await page.evaluate(() => ({
       text: document.querySelector("[data-dash]").innerText,
       over: Array.from(document.querySelectorAll("[data-dash] [data-stat-value]")).filter(e => e.scrollWidth > e.clientWidth + 1 && !e.title).length }));
-    assert(/\$1000000\.00M/.test(r.text), "precondition: huge ARR shown");
+    assert(/\$1000\.00B/.test(r.text), "precondition: huge ARR shown");
     const pre = [/1234%/.test(r.text), /-\$100K/.test(r.text), /100\d\d open/.test(r.text)];
     assert(pre.every(Boolean), "precondition: NRR 1000%+, negative bridge rows, 10,000+ tasks: " + pre + " " + (r.text.match(/\d+%/g) || []).slice(0, 4));
     const o = await overlaps(page);
