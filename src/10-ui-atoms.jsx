@@ -1,6 +1,11 @@
 /* ------------------------------ UI atoms ------------------------------ */
 const Copyright = () => <div className="mt-6 pb-2 text-center text-[11px] text-slate-500">© 2026 OneVio Pvt Ltd. All Rights Reserved.</div>;
 const Chip = ({ risk, children }) => <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-semibold ${RISK_STYLE[risk]}`}>{children}</span>;
+const FlagPill = ({ flag }) => { const sev = flagSeverity(flag); return <span data-flag data-sev={sev} className="flag-pill inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-semibold"><span className="flag-dot" aria-hidden="true" />{flag}</span>; };
+// Status in words, so no row or bar relies on colour alone (dashboard pills + accounts list).
+const RISK_WORD = { Green: "Healthy", Yellow: "Watch", Red: "At risk" };
+// Account avatar colour: one of 8 fixed pairs (crm.html .acct-av[data-av]), stable per account id.
+const avatarSlot = id => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 8; };
 const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
   <div id={id} className={`nm p-4 ${className}`}>
