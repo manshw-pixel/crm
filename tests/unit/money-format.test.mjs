@@ -18,3 +18,10 @@ test("amounts that round to 1000K are shown as millions", () => {
 test("rounding to zero never shows a negative zero", () => {
   assert.equal(fmtMoney(-0.4), "$0");
 });
+
+test("amounts that round to 1000M are shown as billions", () => {
+  assert.equal(fmtMoney(1234567890), "$1.23B");
+  assert.equal(fmtMoney(999999999), "$1.00B");
+  assert.equal(fmtMoney(999994999), "$999.99M");
+  assert.equal(fmtMoney(-2500000000, "INR"), "-₹2.50B");
+});
