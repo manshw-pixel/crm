@@ -18,7 +18,7 @@ const A = [
     churn: { date: day(-60), arr: 50000, reason: "Price" } }),
 ];
 const seed = (role = "admin", theme = "light", x = {}) => `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}
-  window.__seedRows = { accounts: ${JSON.stringify(A.map(d => ({ id: d.id, data: role === "lead" ? { ...d, leadId: "u1" } : d })))},
+  window.__seedRows = { accounts: ${JSON.stringify(A.concat(x.extra || []).map(d => ({ id: d.id, data: role === "lead" ? { ...d, leadId: "u1" } : d })))},
   contacts: [], activities: ${JSON.stringify(x.activities || [])}, tasks: [], opportunities: [], team: [], settings: ${JSON.stringify(x.settings || [])} };
   window.__seedProfile = { id: "u1", name: ${JSON.stringify(x.name || "Priya Shah")}, role: "${role}", org_id: "org-a", platform_admin: false };`;
 
@@ -26,13 +26,13 @@ async function openList(role, theme = "light", w = 1440, x = {}) {
   const r = await launch(seed(role, theme, x));
   if (theme !== "light") await r.page.reload();
   await r.page.setViewportSize({ width: 1440, height: 900 });
-  await r.page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 5);
+  await r.page.waitForFunction(() => window.__store && window.__store.getState().accounts.length >= 5);
   await r.page.click('button[title="Accounts"]');
   await r.page.waitForSelector("[data-account-row]");
   if (w !== 1440) await r.page.setViewportSize({ width: w, height: 900 });
   return r;
 }
-const showChurned = async page => { await page.getByText(/show churned/).first().click(); await page.waitForFunction(() => document.querySelectorAll("[data-account-row]").length === 5); };
+const showChurned = async page => { await page.getByText(/show churned/).first().click(); await page.waitForFunction(() => document.querySelectorAll("[data-account-row]").length >= 5); };
 const rowOf = (page, name) => page.locator("[data-account-row]", { hasText: name }).first();
 
 test("account cell shows avatar, name and industry; Industry column still sorts", async () => {
@@ -255,6 +255,15 @@ test("my book hidden for user with no accounts", async () => {
   try {
     assert(await page.locator('[data-quick="all"]').count() === 1, "pills missing");
     assert(await page.locator('[data-quick="mine"]').count() === 0, "My book shown");
+  } finally { await browser.close(); }
+});
+
+test("my book hidden when user only owns churned accounts", async () => {
+  const extra = [seedAccount({ id: "g1", name: "Ghost Only", csm: "Ghost Owner", accountNo: "1099", churn: { date: day(-60), arr: 1000, reason: "Price" } })];
+  const { page, browser } = await openList("admin", "light", 1440, { name: "Ghost Owner", extra });
+  try {
+    assert(await page.locator('[data-quick="all"]').count() === 1, "pills missing");
+    assert(await page.locator('[data-quick="mine"]').count() === 0, "My book shown for churned-only owner");
   } finally { await browser.close(); }
 });
 
