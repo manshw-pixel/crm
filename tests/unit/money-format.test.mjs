@@ -2,7 +2,7 @@
 // and put the sign after the symbol ("$-12000"), and 999,999 rounded up to "$1000K".
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fmtMoney } from "../../src/lib/money.js";
+import { fmtMoney, fmtFinance } from "../../src/lib/money.js";
 
 test("negative amounts take a leading sign and the same abbreviation as positives", () => {
   assert.equal(fmtMoney(-12000), "-$12K");
@@ -24,4 +24,12 @@ test("amounts that round to 1000M are shown as billions", () => {
   assert.equal(fmtMoney(999999999), "$1.00B");
   assert.equal(fmtMoney(999994999), "$999.99M");
   assert.equal(fmtMoney(-2500000000, "INR"), "-₹2.50B");
+});
+
+test("finance amounts stay exact below a million and shorten from a million up", () => {
+  assert.equal(fmtFinance(999999.99), "999,999.99");
+  assert.equal(fmtFinance(1234567.5), "1.23M");
+  assert.equal(fmtFinance(999999999), "1.00B");
+  assert.equal(fmtFinance(-2500000000), "-2.50B");
+  assert.equal(fmtFinance(0), "0.00");
 });

@@ -41,7 +41,7 @@ function FinanceSummary({ invoices }) {
   if (!curs.length) return <div className="nm p-6 text-center text-sm text-slate-500" data-fin-summary data-fin-summary-empty>No invoices in this range yet.</div>;
   const fmt = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   const fig = (cur, k, label, cls, sub) => <div className="min-w-0"><div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-    <div {...{ [`data-fin-summary-${cur}-${k}`]: "" }} className={`truncate text-base font-semibold tabular-nums ${cls}`} title={`${cur} ${fmt(s[cur][k])}`}>{fmt(s[cur][k])}</div>
+    <div {...{ [`data-fin-summary-${cur}-${k}`]: "" }} className={`truncate text-base font-semibold tabular-nums ${cls}`} title={`${cur} ${fmt(s[cur][k])}`}>{fmtFinance(s[cur][k])}</div>
     {sub && <div className="text-[11px] text-slate-500">{sub}</div>}</div>;
   return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-fin-summary>{curs.map(cur => {
     const c = s[cur], base = c.paid + c.pending, paidPct = base > 0 ? (c.paid / base) * 100 : 0;
@@ -145,7 +145,7 @@ function FinanceCard({ goFinance }) {
           {[["Paid", "paid", "bg-emerald-500"], ["Pending (incl. overdue)", "pending", "bg-amber-500"], ["Waived", "waived", "bg-slate-400"]].map(([label, k, dot]) => (
             <div key={k} className="flex items-center gap-2.5"><span aria-hidden="true" className={`dash-dot ${dot}`} />
               <span className="min-w-0 flex-1 truncate text-slate-500">{label}</span>
-              <b className="shrink-0 whitespace-nowrap tabular-nums text-slate-900">{cur} {amt(cur, k)}</b></div>))}
+              <b className="shrink-0 whitespace-nowrap tabular-nums text-slate-900" title={`${cur} ${amt(cur, k)}`}>{cur} {fmtFinance(s[cur][k])}</b></div>))}
           {s[cur].overdueCount > 0 && <div className="text-rose-700">{s[cur].overdueCount} overdue</div>}</div>)}
         {awaiting > 0 && <div data-fin-card-pos className="border-t border-slate-100 pt-2 text-[12.5px] text-slate-500">{plural(awaiting, "PO")} awaiting approval</div>}
         {due > 0 && <div data-fin-card-due className="border-t border-slate-100 pt-2 text-[12.5px] text-slate-500">{plural(due, "invoice")} due to raise</div>}

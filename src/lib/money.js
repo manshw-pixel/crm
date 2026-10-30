@@ -11,3 +11,8 @@ export const fmtMoney = (n, cur = "USD") => {
     : Math.round(a / 1e3) >= 1000 ? (a / 1e6).toFixed(2) + "M" : a >= 1e3 ? Math.round(a / 1e3) + "K" : Math.round(a);
   return (n < 0 && body !== 0 ? "-" : "") + sym + body;
 };
+// Finance cards show the currency code beside the number, so no symbol here. Exact to 2 decimals
+// below a million; from a million up, M/B like fmtMoney so the card doesn't cut the number off.
+export const fmtFinance = n => Math.abs(n) < 1e6
+  ? n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  : fmtMoney(n).replace("$", "");
