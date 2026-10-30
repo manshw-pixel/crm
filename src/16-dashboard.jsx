@@ -1,8 +1,7 @@
 // Whole class strings so the Tailwind scanner sees them; themed for dark mode. 700 shades: the 600s were
 // under 4.5:1 on a white card (emerald 3.77, amber 3.19).
 const RISK_TEXT = { Green: "text-emerald-700", Yellow: "text-amber-700", Red: "text-rose-700" };
-// Status in words, so no row or bar relies on colour alone (same words as the health pills).
-const RISK_WORD = { Green: "Healthy", Yellow: "Watch", Red: "At risk" };
+// RISK_WORD (status in words) lives in 10-ui-atoms.jsx, shared with the accounts list.
 
 // Tiny NRR trend: stored snapshot values only, null points skipped, scaled to their own min/max.
 function KpiSpark({ points, label }) {

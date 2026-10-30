@@ -24,7 +24,7 @@ const bigSeed = seedOf(makeAccounts(BIG));
 
 // The spacers are <tr> too, so count the real rows by their marker attribute.
 const dataRows = page => page.$$eval("tr[data-account-row]", els => els.length);
-const rowNames = page => page.$$eval("tr[data-account-row] td:nth-child(3)", els => els.map(e => e.textContent.trim()));
+const rowNames = page => page.$$eval("tr[data-account-row] td:nth-child(3) [data-account-name]", els => els.map(e => e.textContent.trim()));
 const seq = names => names.map(n => +n.match(/(\d{4})/)[1]);
 
 async function openList(page) {

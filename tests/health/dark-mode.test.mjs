@@ -63,12 +63,12 @@ test("dark: card, body text and a Red badge use dark colours; the dialog overlay
   try {
     await ready(page);
     assert(await bg(page, ".nm") === DARK_CARD, "card: " + await bg(page, ".nm"));
-    // Risky Co is Red: its health Chip in the accounts list is the rose-100 / rose-700 badge
+    // Risky Co is Red. Stage 3 replaced the list's health Chip with bar + score + word; the
+    // Red word must take the dark rose ink (#fda4af) on the dark card.
     await page.click('button[title="Accounts"]');
-    await page.waitForSelector("span.rounded-full.bg-rose-100.border-rose-300");
-    const badge = await page.$eval("span.rounded-full.bg-rose-100.border-rose-300", e => [getComputedStyle(e).backgroundColor, getComputedStyle(e).color]);
-    assert(badge, "a Red badge must render");
-    assert(badge[0] === "rgb(70, 22, 38)" && badge[1] === "rgb(253, 164, 175)", "Red badge fill/text: " + badge);
+    await page.waitForSelector('[data-risk="Red"] [data-health-word]');
+    const badge = await page.$eval('[data-risk="Red"] [data-health-word]', e => [getComputedStyle(e).color, e.textContent]);
+    assert(badge[0] === "rgb(253, 164, 175)" && badge[1] === "At risk", "Red health word: " + badge);
     const text = await page.$eval("body", e => getComputedStyle(e).color);
     assert(text === "rgb(203, 213, 225)", "body text: " + text);
     await page.keyboard.press("Control+k");

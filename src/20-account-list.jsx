@@ -278,7 +278,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
         team={team} user={user} dispatch={dispatch}
         onClose={() => { setBulkAction(null); setSelected(new Set()); }} />}
       <div ref={win.scrollRef} data-account-scroll className="max-h-[65vh] overflow-auto">
-        <table className="w-full text-sm">
+        <table className="acct-table w-full text-[13.5px]">
           <thead className="sticky top-0 z-10 bg-white"><tr className="border-b border-slate-200">
             <th className="w-8 px-2 py-1.5">
               {!isImplRole(user) && <input type="checkbox" data-select-all aria-label="Select all filtered accounts"
@@ -299,24 +299,37 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
             {visibleRows.map((a, i) => {
               const d = daysUntil(a.renewalDate);
               return (
-                <tr key={a.id} data-account-row ref={i === 0 ? win.rowRef : null} className={`cursor-pointer border-b border-slate-100 hover:bg-slate-50 ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
+                <tr key={a.id} data-account-row ref={i === 0 ? win.rowRef : null} data-selected={selected.has(a.id) ? "" : undefined} className={`acct-row cursor-pointer ${a.churn ? "opacity-50" : ""}`} onClick={() => openAccount(a.id)}>
                   <td className="px-2 py-1.5" onClick={e => e.stopPropagation()}>
                     {!isImplRole(user) && <input type="checkbox" data-select={a.id} aria-label={`Select ${a.name}`}
                       checked={selected.has(a.id)} onChange={() => toggleOne(a.id)} />}
                   </td>
-                  <td className="px-2 py-1.5 text-xs text-slate-500">{subNo.get(a.id) || a.accountNo || "—"}</td>
-                  {/* nowrap on the NAME cell only: it is the one cell long enough to wrap
-                      at a narrow viewport, and a wrapped row is a taller row, which would
-                      break the single measured row height windowing depends on. */}
-                  <td className="max-w-[20rem] truncate px-2 py-1.5 font-medium">{a._sub && <span className="mr-1 text-slate-400">↳</span>}{a.name}{a.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</td>
-                  <td className="px-2">{a.tier}</td>
-                  <td className="px-2">{fmtMoney(a.arr, a.currency)}{a.currency !== "USD" && <span className="ml-1 text-xs text-slate-500">≈{fmtMoney(a.arrUSD)}</span>}
-                    {subArr.has(a.id) && <span className="ml-1 text-xs font-semibold text-indigo-600" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>}</td>
-                  <td className="px-2 text-slate-700">{a.industry}</td>
-                  <td className="px-2">{a.csm}</td>
-                  <td className="px-2"><HealthChip score={a.score} /></td>
-                  <td className="px-2 text-xs" data-nrr>{a._ret.nrr === null ? "—" : `${Math.round(a._ret.nrr * 100)}%`}</td>
-                  <td className="px-2 text-xs" data-grr>{a._ret.grr === null ? "—" : `${Math.round(a._ret.grr * 100)}%`}</td>
+                  <td className="px-2 py-1.5 text-xs tabular-nums text-slate-500">{subNo.get(a.id) || a.accountNo || "—"}</td>
+                  {/* Account cell: avatar + name + industry line. Name and industry both truncate:
+                      a wrapped row is a taller row, which would break the single measured row
+                      height windowing depends on. */}
+                  <td className="acct-name-cell max-w-[20rem] px-2 py-1.5" title={a.name}>
+                    <span className="flex min-w-0 items-center gap-2.5">
+                      {a._sub && <span className="acct-meta shrink-0" aria-label="sub-account">↳</span>}
+                      <span aria-hidden="true" data-avatar className="acct-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
+                      <span className="min-w-0">
+                        <span data-account-name className="block truncate font-semibold acct-fg">{a.name}{a.churn && <span className="acct-churned ml-2">churned</span>}</span>
+                        <span data-industry-sub className="block truncate text-xs acct-meta">{a.industry || " "}</span>
+                      </span>
+                    </span>
+                  </td>
+                  <td className="px-2 acct-label">{a.tier}</td>
+                  <td className="px-2 text-right tabular-nums"><b className="font-bold">{fmtMoney(a.arr, a.currency)}</b>
+                    {subArr.has(a.id)
+                      ? <span className="acct-sigma block text-[11.5px] font-semibold" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>
+                      : a.currency !== "USD" && <span className="block text-[11.5px] acct-meta">≈{fmtMoney(a.arrUSD)}</span>}</td>
+                  <td className="max-w-[10rem] truncate px-2 acct-label" title={a.industry}>{a.industry}</td>
+                  <td className="px-2">{a.csm && <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="acct-csm-av">{initialsOf(a.csm)}</span><span className="acct-label">{a.csm}</span></span>}</td>
+                  <td className="px-2">{(() => { const rk = riskOf(a.score); return <span className="inline-flex items-center gap-2" data-risk={rk} title={`Health ${a.score} · ${RISK_WORD[rk]}`}>
+                    <span aria-hidden="true" className="acct-track"><span className="acct-bar" style={{ width: `${Math.max(0, Math.min(100, a.score))}%` }} /></span>
+                    <b className="acct-h text-[13px] tabular-nums">{a.score}</b><span data-health-word className="acct-h text-xs">{RISK_WORD[rk]}</span></span>; })()}</td>
+                  <td className="px-2 text-right text-[12.5px] tabular-nums acct-label" data-nrr>{a._ret.nrr === null ? "—" : `${Math.round(a._ret.nrr * 100)}%`}</td>
+                  <td className="px-2 text-right text-[12.5px] tabular-nums acct-label" data-grr>{a._ret.grr === null ? "—" : `${Math.round(a._ret.grr * 100)}%`}</td>
                   <td className="px-2 text-xs" data-movement>
                     {a._ret.isNew
                       ? <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-bold text-sky-700">new</span>
@@ -326,14 +339,14 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                             {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
                           </span>}
                   </td>
-                  <td className="px-2"><span className="flex items-center gap-1.5 text-slate-700">{fmtDate(a.renewalDate)} <DaysChip days={d} /></span></td>
+                  <td className="px-2"><span className="block acct-label">{fmtDate(a.renewalDate)}</span><span className="mt-0.5 inline-block"><DaysChip days={d} /></span></td>
                   {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                     return qd === null ? <span className="text-xs text-slate-500">—</span>
                       : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}
                   <td className="px-2 text-xs">{a.billingCompleted
                     ? <span data-billing-pill="done" className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">✓ {fmtDate(a.billingCompletedDate)}</span>
                     : <span data-billing-pill="pending" className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">Pending</span>}</td>
-                  <td className="px-2">{a.flags.map(f => <span key={f} className="mr-1 rounded bg-rose-50 border border-rose-200 px-1 py-0.5 text-[11px] text-rose-600">{f}</span>)}</td>
+                  <td className="px-2"><span className="flex gap-1.5">{a.flags.map(f => <FlagPill key={f} flag={f} />)}</span></td>
                 </tr>
               );
             })}
