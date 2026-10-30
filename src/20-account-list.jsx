@@ -310,7 +310,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                       height windowing depends on. */}
                   <td className="acct-name-cell max-w-[20rem] px-2 py-1.5" title={a.name}>
                     <span className="flex min-w-0 items-center gap-2.5">
-                      {a._sub && <span className="acct-meta shrink-0" aria-label="sub-account">↳</span>}
+                      {a._sub && <span className="acct-meta shrink-0"><span aria-hidden="true">↳</span><span className="sr-only">Sub-account: </span></span>}
                       <span aria-hidden="true" data-avatar className="acct-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
                       <span className="min-w-0">
                         <span data-account-name className="block truncate font-semibold acct-fg">{a.name}{a.churn && <span className="acct-churned ml-2">churned</span>}</span>

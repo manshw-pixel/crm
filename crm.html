@@ -220,14 +220,18 @@
   @media (forced-colors: active) { .flag-pill { border: 1px solid CanvasText; } .flag-dot { forced-color-adjust: none; background: CanvasText; } }
   /* ---- stage 3 accounts table (approved preview Stage3.dc.html, light then dark) ---- */
   .acct-table { --a-fg: #0f172a; --a-label: #475569; --a-meta: #5f6f86; --a-accent: #4338ca; --a-soft: #eef2ff; --a-track: #eef2f7; --a-csm-bg: #e0e7ff; --a-csm-tx: #3730a3;
-    --a-g-bar: #10b981; --a-g-tx: #047857; --a-y-bar: #f59e0b; --a-y-tx: #92400e; --a-r-bar: #ef4444; --a-r-tx: #b91c1c; --a-red-bg: #fee2e2; }
+    --a-g-bar: #10b981; --a-g-tx: #047857; --a-y-bar: #f59e0b; --a-y-tx: #92400e; --a-r-bar: #ef4444; --a-r-tx: #b91c1c; --a-red-bg: #fee2e2; --a-head: #f8fafc; --a-hover: #f8fafc; }
   .acct-fg { color: var(--a-fg); } .acct-label { color: var(--a-label); } .acct-meta { color: var(--a-meta); } .acct-sigma { color: var(--a-accent); }
   .acct-table > thead th[aria-sort=ascending], .acct-table > thead th[aria-sort=descending] { color: var(--a-accent); }
   /* middle, not baseline: an empty Flags cell (churned) must not shift the row by a pixel */
   .acct-row > td { vertical-align: middle; }
-  /* explicit height: the renewal stack is 42.5px tall, and sub-pixel rounding otherwise let a
-     row with an empty Flags cell come out 1px shorter (windowing measures one row) */
-  .acct-row { height: 72px; }
+  /* explicit height: the renewal stack is 42.5px tall + 8px padding each side; sub-pixel rounding
+     otherwise let a row with an empty Flags cell come out 1px shorter (windowing measures one row) */
+  .acct-row { height: 60px; }
+  .acct-row > td { padding-top: 8px; padding-bottom: 8px; } /* (0,1,1), after stage 1: keep low so overrides still win */
+  .acct-row:not([data-selected]):hover { background: var(--a-hover); }
+  main table.acct-table > thead :is(tr, th) { background: var(--a-head); }
+  main table.acct-table > thead th { font-size: 11px; letter-spacing: .06em; }
   .acct-row[data-selected], .acct-row[data-selected]:hover { background: var(--a-soft); }
   .acct-av { flex: none; width: 32px; height: 32px; border-radius: 9px; font-weight: 800; font-size: 11.5px; display: flex; align-items: center; justify-content: center; }
   .acct-av[data-av="0"] { background: #e0e7ff; color: #3730a3; } .acct-av[data-av="1"] { background: #dcfce7; color: #166534; }
@@ -242,7 +246,7 @@
   [data-risk=Yellow] .acct-bar { background: var(--a-y-bar); } [data-risk=Yellow] .acct-h { color: var(--a-y-tx); }
   [data-risk=Red] .acct-bar { background: var(--a-r-bar); } [data-risk=Red] .acct-h { color: var(--a-r-tx); }
   @media screen { html.dark .acct-table { --a-fg: #e2e8f0; --a-label: #cbd5e1; --a-meta: #94a3b8; --a-accent: #a5b4fc; --a-soft: #1e2046; --a-track: #1e293b; --a-csm-bg: #1e2046; --a-csm-tx: #c7d2fe;
-    --a-g-bar: #34d399; --a-g-tx: #6ee7b7; --a-y-bar: #fbbf24; --a-y-tx: #fcd34d; --a-r-bar: #fb7185; --a-r-tx: #fda4af; --a-red-bg: #4c0519; }
+    --a-g-bar: #34d399; --a-g-tx: #6ee7b7; --a-y-bar: #fbbf24; --a-y-tx: #fcd34d; --a-r-bar: #fb7185; --a-r-tx: #fda4af; --a-red-bg: #4c0519; --a-head: #162036; --a-hover: #182134; }
     html.dark .acct-av[data-av] { background: #1e2046; color: #c7d2fe; } }
   @media (forced-colors: active) { .acct-track { border: 1px solid CanvasText; } .acct-bar { forced-color-adjust: none; background: CanvasText !important; } }
   /* ---- stage 2 dashboard: theme, focus, motion, high contrast, touch, print ---- */

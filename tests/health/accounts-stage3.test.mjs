@@ -68,7 +68,7 @@ test("health shows bar, score and word matching the score", async () => {
   const { page, browser } = await openList("admin");
   try {
     const st = await page.evaluate(() => Object.fromEntries(window.__store.getState().accounts.map(a => [a.name, a])));
-    const cells = await page.$$eval("[data-account-row]", rs => rs.map(r => [r.querySelector("[data-industry-sub]").previousElementSibling.textContent.trim(), r.querySelector("[data-health-word]").textContent.trim()]));
+    const cells = await page.$$eval("[data-account-row]", rs => rs.map(r => [r.querySelector("[data-account-name]").textContent.trim(), r.querySelector("[data-health-word]").textContent.trim()]));
     assert(cells.length === 4, "rows " + cells.length);
     const words = new Set();
     for (const [name, word] of cells) {
@@ -90,6 +90,7 @@ test("rows stay one height (sub, INR ≈USD, Σ, churned)", async () => {
     assert(/Σ/.test(await rowOf(page, "Parent Alpha Holdings").textContent()), "Σ line");
     const hs = await page.$$eval("[data-account-row]", r => r.map(x => x.offsetHeight + ":" + [...x.cells].map(c => { const r = document.createRange(); r.selectNodeContents(c); return Math.round(r.getBoundingClientRect().height * 10) / 10 + "/" + getComputedStyle(c).verticalAlign; }).join(",")));
     assert(new Set(hs.map(h => h.split(":")[0])).size === 1, "row heights " + hs.join(" | "));
+    assert(hs[0].split(":")[0] === "60", "row height " + hs[0]);
   } finally { await browser.close(); }
 });
 
@@ -101,7 +102,7 @@ test("churned row faded without flags; sub-account shows ↳", async () => {
     assert(+(await c.evaluate(e => getComputedStyle(e).opacity)) < 1, "churned not faded");
     assert(await c.locator("[data-flag]").count() === 0, "churned row has flags");
     assert(/churned/.test(await c.textContent()), "churned badge");
-    assert(/↳/.test(await rowOf(page, "Parent Alpha APAC").textContent()), "sub ↳ missing");
+    assert(/↳\s*Sub-account:/.test(await rowOf(page, "Parent Alpha APAC").textContent()), "sub ↳ / sr-only text missing");
     assert(!/↳/.test(await rowOf(page, "Parent Alpha Holdings").textContent()), "parent has ↳");
   } finally { await browser.close(); }
 });
@@ -145,10 +146,11 @@ for (const theme of ["light", "dark"]) test(`${theme}: text contrast >= 4.5 on n
     await page.mouse.move(0, 0);
     await page.addScriptTag({ content: PAGE_FNS });
     const r = await page.evaluate(() => {
-      const els = [...document.querySelectorAll("[data-account-row] :is([data-industry-sub], [data-flag], [data-health-word], .acct-fg, .acct-sigma)")];
-      return { n: els.length, low: els.map(e => [window.__c.textOn(e), e.textContent.trim().slice(0, 24)]).filter(([k]) => k === null || k < 4.5).map(([k, t]) => (k === null ? "none" : k.toFixed(2)) + " " + t) };
+      const els = [...document.querySelectorAll("[data-account-row] :is([data-industry-sub], [data-flag], [data-health-word], [data-account-name], .acct-sigma, .acct-label)")];
+      return { labels: document.querySelectorAll("[data-account-row] .acct-label").length, n: els.length, low: els.map(e => [window.__c.textOn(e), e.textContent.trim().slice(0, 24)]).filter(([k]) => k === null || k < 4.5).map(([k, t]) => (k === null ? "none" : k.toFixed(2)) + " " + t) };
     });
-    assert(r.n > 12, "precondition: elements " + r.n);
+    assert(r.labels >= 12, "precondition: .acct-label cells " + r.labels);
+    assert(r.n > 24, "precondition: elements " + r.n);
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
   } finally { await browser.close(); }
 });
@@ -163,5 +165,20 @@ test("390px: no page horizontal scroll; table scrolls inside [data-account-scrol
     });
     assert(m.page <= 0, "page overflows by " + m.page);
     assert(m.inner > 0, "table does not scroll inside its box " + m.inner);
+  } finally { await browser.close(); }
+});
+
+for (const theme of ["light", "dark"]) test(`${theme}: hovering an unselected row tints it; header band is 11px uppercase`, async () => {
+  const { page, browser } = await openList("admin", theme);
+  try {
+    const row = rowOf(page, "Zed Risky");
+    await page.mouse.move(0, 0);
+    const before = await row.evaluate(e => getComputedStyle(e).backgroundColor);
+    await row.hover();
+    const after = await row.evaluate(e => getComputedStyle(e).backgroundColor);
+    assert(before !== after && after !== "rgba(0, 0, 0, 0)", `hover ${before} -> ${after}`);
+    const th = await page.$eval('th[data-sort-key="tier"]', e => { const c = getComputedStyle(e); return [c.fontSize, c.textTransform, c.backgroundColor]; });
+    assert(th[0] === "11px" && th[1] === "uppercase", "th " + th);
+    assert(th[2] === (theme === "dark" ? "rgb(22, 32, 54)" : "rgb(248, 250, 252)"), "head band " + th[2]);
   } finally { await browser.close(); }
 });
