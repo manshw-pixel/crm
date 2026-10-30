@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { waitForSaved } from "../reset.mjs";
 import { SkipScenario } from "../core.mjs";
-import { searchCount, openAccount, stat, fmtMoneyIn, field } from "./_accounts.mjs";
+import { searchCount, openAccount, stat, fmtMoneyIn, field, isoPlus } from "./_accounts.mjs";
 import { nav } from "./_users-card.mjs";
 
 const F = "04-accounts";
@@ -127,4 +127,58 @@ export const scenarios = [
   { id: `${F}/account-limit`, feature: F, title: "Set max accounts = current count; create is blocked", role: "admin",
     skip: "not exercised: limits are set from the client console (platform admin only), which the QA agent never changes",
     run: async () => {} },
+
+  // ---- UI Stage 3 (restyled accounts list): quick pills, flag severity, Industry sort ----
+  { id: `${F}/quick-pill-at-risk`, feature: F, title: "quick pill At risk filters list", role: "admin",
+    run: async ({ page }) => {
+      await nav(page, "Accounts").click();
+      const pill = page.locator('[data-quick="risk"]');
+      await pill.waitFor({ timeout: 15000 });
+      const n = +(await pill.locator("[data-quick-count]").textContent());
+      if (n === 0) throw new SkipScenario("no at-risk (Red) accounts in this org — pill filter not exercised");
+      await pill.click();
+      await page.waitForFunction(() => document.querySelector('[data-quick="risk"]').getAttribute("aria-pressed") === "true", null, { timeout: 5000 });
+      await page.waitForFunction(() => { const r = [...document.querySelectorAll("[data-account-row] [data-risk]")]; return r.length > 0 && r.every(e => e.getAttribute("data-risk") === "Red"); }, null, { timeout: 10000 });
+      assert.equal(await page.getByLabel("Filter by health risk").inputValue(), "Red", "health dropdown not set to Red");
+      assert.equal(await page.locator('[data-quick="all"]').getAttribute("aria-pressed"), "false", "All still pressed");
+      await page.locator('[data-quick="all"]').click();
+      await page.waitForFunction(() => document.querySelector('[data-quick="risk"]').getAttribute("aria-pressed") === "false", null, { timeout: 5000 });
+    } },
+
+  { id: `${F}/flag-pills-severity`, feature: F, title: "flag pills show severity", role: "admin",
+    run: async ({ page, thisRunId: runId }) => {
+      const name = `QA ${runId}-f Flag`; // like manual(): reset-deletable, not counted among the seeded run accounts
+      if (await searchCount(page, name) === 0) {
+        await page.getByRole("button", { name: "+ New account" }).click();
+        await field(page, "Name *").fill(name);
+        await field(page, "ARR").fill("4000");
+        await field(page, "Renewal date").fill(isoPlus(10)); // < 30d: a red "Renewal in Nd" flag
+        await page.getByRole("button", { name: "Create account" }).click();
+        await waitForSaved(page);
+      }
+      assert.equal(await searchCount(page, name), 1, "flag account not listed");
+      const row = page.locator("tr[data-account-row]").filter({ has: page.getByText(name, { exact: true }) }).first();
+      const flag = row.locator("[data-flag][data-sev]").filter({ hasText: /^Renewal in \d+d/ }).first();
+      await flag.waitFor({ timeout: 10000 });
+      assert.equal(await flag.getAttribute("data-sev"), "red", "renewal <30d flag is not red");
+    } },
+
+  { id: `${F}/industry-sort`, feature: F, title: "industry column still sorts", role: "admin",
+    run: async ({ page }) => {
+      await nav(page, "Accounts").click();
+      const th = page.locator('th[data-sort-key="industry"]');
+      await th.waitFor({ timeout: 15000 });
+      // top-level rows only: a sub-account follows its parent whatever its own industry is
+      const read = () => page.$$eval("tr[data-account-row]", rs => rs.filter(r => !r.textContent.includes("Sub-account:"))
+        .map(r => r.querySelector("[data-industry-sub]").textContent.trim()));
+      if (new Set(await read()).size < 2) throw new SkipScenario("fewer than 2 distinct industries — sort not exercised");
+      await th.click();
+      await page.waitForFunction(() => document.querySelector('th[data-sort-key="industry"]').getAttribute("aria-sort") === "ascending", null, { timeout: 5000 });
+      const asc = await read();
+      assert.deepEqual(asc, [...asc].sort(), "industry column not ascending");
+      await th.click();
+      await page.waitForFunction(() => document.querySelector('th[data-sort-key="industry"]').getAttribute("aria-sort") === "descending", null, { timeout: 5000 });
+      const desc = await read();
+      assert.deepEqual(desc, [...desc].sort().reverse(), "industry column not descending");
+    } },
 ];
