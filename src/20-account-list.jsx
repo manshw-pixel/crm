@@ -339,7 +339,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                     {/* Account cell: avatar + name + industry line. Name and industry both truncate:
                         a wrapped row is a taller row, which would break the single measured row
                         height windowing depends on. */}
-                    <td className="acct-name-cell max-w-[20rem] px-2 py-1.5" title={a.name}>
+                    <td className="acct-name-cell max-w-[160px] px-2 py-1.5" title={a.name}>
                       <span className="flex min-w-0 items-center gap-2.5">
                         {a._sub && <span className="acct-meta shrink-0"><span aria-hidden="true">↳</span><span className="sr-only">Sub-account: </span></span>}
                         <span aria-hidden="true" data-avatar className="acct-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
@@ -354,9 +354,9 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                       {subArr.has(a.id)
                         ? <span className="acct-sigma block text-[11.5px] font-semibold" title="Own + sub-accounts (USD)">Σ {fmtMoney(a.arrUSD + subArr.get(a.id))}</span>
                         : a.currency !== "USD" && <span className="block text-[11.5px] acct-meta">≈{fmtMoney(a.arrUSD)}</span>}</td>
-                    <td className="max-w-[10rem] truncate px-2 acct-label" title={a.industry}>{a.industry}</td>
-                    <td className="px-2">{a.csm && <span className="inline-flex items-center gap-2"><span aria-hidden="true" className="acct-csm-av">{initialsOf(a.csm)}</span><span className="acct-label">{a.csm}</span></span>}</td>
-                    <td className="px-2">{(() => { const rk = riskOf(a.score); return <span className="inline-flex items-center gap-2" data-risk={rk} title={`Health ${a.score} · ${RISK_WORD[rk]}`}>
+                    <td className="max-w-[92px] truncate px-2 acct-label" title={a.industry}>{a.industry}</td>
+                    <td className="px-2">{a.csm && <span className="relative inline-flex items-center gap-1.5" title={a.csm}><span aria-hidden="true" className="acct-csm-av">{initialsOf(a.csm)}</span><span aria-hidden="true" className="acct-label">{a.csm.split(" ")[0]}</span><span className="sr-only">{a.csm}</span></span>}</td>
+                    <td className="px-2">{(() => { const rk = riskOf(a.score); return <span className="inline-flex items-center gap-1.5" data-risk={rk} title={`Health ${a.score} · ${RISK_WORD[rk]}`}>
                       <span aria-hidden="true" className="acct-track"><span className="acct-bar" style={{ width: `${Math.max(0, Math.min(100, a.score))}%` }} /></span>
                       <b className="acct-h text-[13px] tabular-nums">{a.score}</b><span data-health-word className="acct-h text-xs">{RISK_WORD[rk]}</span></span>; })()}</td>
                     <td className="px-2 text-right text-[12.5px] tabular-nums acct-label" data-nrr>{a._ret.nrr === null ? "—" : `${Math.round(a._ret.nrr * 100)}%`}</td>
@@ -377,7 +377,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                     <td className="px-2 text-xs">{a.billingCompleted
                       ? <span data-billing-pill="done" className="whitespace-nowrap rounded-full bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">✓ {fmtDate(a.billingCompletedDate)}</span>
                       : <span data-billing-pill="pending" className="rounded-full bg-amber-50 px-2 py-0.5 font-semibold text-amber-700">Pending</span>}</td>
-                    <td className="px-2"><span className="flex gap-1.5">{a.flags.map(f => <FlagPill key={f} flag={f} />)}</span></td>
+                    <td className="acct-flags-cell px-2" title={a.flags.join(" · ") || undefined}><span className="flex max-h-[43px] flex-wrap gap-[3px] overflow-hidden">{a.flags.map(f => <FlagPill key={f} flag={f} />)}</span></td>
                   </tr>
                 );
               })}

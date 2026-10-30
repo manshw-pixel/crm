@@ -191,7 +191,7 @@ test("frame controls match the approved preview: buttons, search, filters, scope
     const sel = await page.$eval('select[aria-label="Filter by tier"]', e => { const s = getComputedStyle(e); return [s.borderTopLeftRadius, s.fontSize]; });
     assert(sel.join() === "10px,13px", "filter select (Stage 3 toolbar, 13px): " + sel);
     const td = await page.$eval("[data-account-row] > td:nth-child(3)", e => { const s = getComputedStyle(e); return [s.paddingTop, s.paddingLeft]; });
-    assert(td.join() === "8px,10px", "account cell (Stage 3 60px row): " + td);
+    assert(td.join() === "8px,4px", "account cell (Stage 3 60px row): " + td);
     const first = await page.$eval("[data-account-row] > td:first-child", e => getComputedStyle(e).paddingLeft);
     assert(first === "18px", "first cell: " + first);
   } finally { await browser.close(); }

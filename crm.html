@@ -240,7 +240,10 @@
   .acct-av[data-av="6"] { background: #ffe4e6; color: #9f1239; } .acct-av[data-av="7"] { background: #ccfbf1; color: #115e59; }
   .acct-csm-av { flex: none; width: 26px; height: 26px; border-radius: 50%; background: var(--a-csm-bg); color: var(--a-csm-tx); font-size: 10.5px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
   .acct-churned { font-size: 11px; font-weight: 700; color: var(--a-r-tx); background: var(--a-red-bg); border-radius: 99px; padding: 1px 7px; }
-  .acct-track { display: inline-block; width: 48px; height: 6px; border-radius: 99px; background: var(--a-track); overflow: hidden; }
+  .acct-table :is(td, th) { padding-left: 4px; padding-right: 4px; }
+  .acct-table .flag-pill { padding: 1px 6px; font-size: 11px; white-space: nowrap; }
+  .acct-table .acct-flags-cell { width: 190px; max-width: 190px; }
+  .acct-track { display: inline-block; width: 36px; height: 6px; border-radius: 99px; background: var(--a-track); overflow: hidden; }
   .acct-bar { display: block; height: 6px; border-radius: 99px; }
   [data-risk=Green] .acct-bar { background: var(--a-g-bar); } [data-risk=Green] .acct-h { color: var(--a-g-tx); }
   [data-risk=Yellow] .acct-bar { background: var(--a-y-bar); } [data-risk=Yellow] .acct-h { color: var(--a-y-tx); }

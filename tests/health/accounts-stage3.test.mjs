@@ -277,3 +277,17 @@ test("phone pill targets >= 44px tall", async () => {
     assert(over <= 0, "page overflows " + over);
   } finally { await browser.close(); }
 });
+
+test("1440 light: table fits without horizontal scroll and Flags header is visible", async () => {
+  const { page, browser } = await openList("admin");
+  try {
+    const m = await page.evaluate(() => {
+      const sc = document.querySelector("[data-account-scroll]");
+      const th = [...sc.querySelectorAll("thead th")].find(t => t.textContent.trim() === "Flags");
+      const a = th.getBoundingClientRect(), b = sc.getBoundingClientRect();
+      return { over: sc.scrollWidth - sc.clientWidth, right: a.right, scRight: b.right, left: a.left };
+    });
+    assert(m.over <= 0, "table scrolls horizontally by " + m.over);
+    assert(m.left >= 0 && m.right <= m.scRight + 1, "Flags header outside the card " + JSON.stringify(m));
+  } finally { await browser.close(); }
+});
