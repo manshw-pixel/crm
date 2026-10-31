@@ -24,10 +24,17 @@ function ChangeHistoryCard({ a }) {
   );
 }
 const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
-  <span className="inline-flex items-baseline gap-1.5 whitespace-nowrap">
-    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</span>
-    <span className="text-sm font-semibold text-slate-700">{value}</span>
-  </span>
+  <span className="whitespace-nowrap"><span className="ad-meta">{label} </span><b className="ad-val">{value}</b></span>
+);
+// Status pill colour, one place (approved Stage 4 severity tables). The text always names the state.
+const statusSev = {
+  billing: done => done ? "green" : "amber",
+  handover: () => "grey", // Sales -> AM, Impl -> CSM, "Transition date not set"
+  qbr: kind => kind === "overdue" ? "red" : kind === "due" ? "amber" : "grey",
+  playbook: (done, total, behind) => done === total ? "green" : behind ? "amber" : "red",
+};
+const StatusPill = ({ sev, children, ...rest }) => (
+  <span data-status-pill data-sev={sev} className="ad-pill" {...rest}><span className="ad-dot" aria-hidden="true" />{children}</span>
 );
 function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject }) {
   const toast = useToast();
@@ -58,131 +65,161 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
   const comps = scoreComponents(a, st.activities, st.settings);
   return (
-    <div className="space-y-4">
-      {/* Title row: back, identity, health, main actions. Everything else lives in the header card. */}
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <button onClick={back} className="text-sm font-semibold text-slate-500 hover:text-slate-800">← Back</button>
-        <h2 className="text-xl font-bold text-slate-900">{a.name}</h2>
-        <span className="text-xs font-semibold text-slate-400">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
-        <HealthChip score={a.score} /><Chip risk={a.risk}>{a.risk}</Chip>
-        {!ro && <div className="flex flex-wrap items-center gap-2 sm:ml-auto">
-          <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
-          <Btn onClick={() => setForm("task")}>+ Add task</Btn>
-          <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
-          {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
-          <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
-          {a.churn && <button className="nm-btn px-3 py-1.5 text-xs font-bold text-emerald-600"
-            onClick={() => {
-              // Reversible in one dispatch, so no dialog: act, then offer Undo.
-              const prev = a.churn;
-              dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
-              dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
-              toast({ text: `Reactivated ${a.name}.`, tone: "success",
-                undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
-            }}>↻ Reactivate</button>}
-          <MoreMenu items={[
-            { label: "+ Contact", onClick: () => setForm("contact") },
-            { label: "+ Opportunity", onClick: () => setForm("opp") },
-            !a.churn && { label: "⇄ Adjust ARR", onClick: () => setForm("adjust") },
-            !a.churn && !a.billingCompleted && { label: "$ Mark billing completed", onClick: () => setForm("billing") },
-            !a.churn && { label: "✖ Mark churned", onClick: () => setForm("churn"), danger: true },
-            user.role === "admin" && { label: "Delete account", danger: true, separate: true, onClick: () => {
-              // No dialog: the Undo toast below is the guard, and it is a better one --
-              // a confirm people click through protects nothing.
-              // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
-              // already handles a single id, including sub-account parentIds
-              const snapshot = snapshotFor(st, [a.id]);
-              dispatch({ type: "DELETE_ACCOUNT", id: a.id });
-              toast({ text: `Deleted ${a.name}.`, tone: "success",
-                undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
-              back();
-            } },
-          ]} />
-        </div>}
-      </div>
-      {/* Header card, in reading order: the numbers that matter, quiet profile facts,
-          retention since the prior-year close, then small status pills. */}
-      <div data-header-card className="nm-sm p-4">
-        {(() => { const f = licenseFigures(a); const r = accountRetention(a, (st.settings && st.settings.rates) || {});
-          const Stat = ({ label, value, sub, tone = "text-slate-900" }) => (
+    <div className="ad-page space-y-4">
+      <button onClick={back} className="ad-back">← Accounts</button>
+      {/* data-header-card wraps all three header cards (identity, stats, profile & status) so the
+          long-standing hook still finds every part it always held. */}
+      <div data-header-card className="space-y-4">
+      {(() => { const f = licenseFigures(a); const r = accountRetention(a, (st.settings && st.settings.rates) || {});
+        const ld = a.leadId && (team || []).find(u => u.id === a.leadId);
+        const iu = daysSince(a.inputsUpdatedAt || a.startDate);
+        const rk = riskOf(a.score);
+        const rollup = subs.length > 0 ? toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0) : null;
+        // Sub line: empty parts drop out entirely, so there is never a stray "·".
+        const subParts = [a.tier, a.industry, ld && `Lead ${ld.name}`,
+          parent && <>Parent <button className="ad-link" onClick={() => openAccount(parent.id)}>{parent.name}</button></>].filter(Boolean);
+        const renewSev = d < 0 ? "red" : d < 60 ? flagSeverity(`Renewal in ${d}d`) : undefined;
+        const arrSub = [a.currency !== "USD" ? `≈ ${fmtMoney(a.arrUSD)} USD` : (rollup !== null ? "USD" : null),
+          rollup !== null ? `Σ ${fmtMoney(rollup)} with subs` : null].filter(Boolean).join(" · ");
+        const Stat = ({ k, glyph, label, value, sub, sev }) => (
+          <div data-stat={k} data-sev={sev} className="ad-card ad-stat">
+            <span aria-hidden="true" className="ad-stat-tile">{glyph}</span>
             <div className="min-w-0">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-slate-500">{label}</div>
-              <div className={`truncate text-lg font-bold tabular-nums ${tone}`}>{value}</div>
-              {sub && <div className="truncate text-xs text-slate-500">{sub}</div>}
-            </div>);
-          return <>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <Stat label="ARR" value={fmtMoney(a.arr, a.currency)} sub={a.currency !== "USD" ? `≈ ${fmtMoney(a.arrUSD)} USD` : null} />
-              <Stat label="Renewal" value={fmtDate(a.renewalDate)} tone={d < 60 ? "text-amber-600" : "text-slate-900"} sub={`${d < 0 ? `${-d}d ago` : `in ${d}d`} · ${a.contractStatus}`} />
-              {f.total > 0
-                ? <Stat label="Licenses" value={f.deployed == null ? f.total : `${f.pct}%`} sub={f.deployed == null ? "total" : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
-                : null}
-              <Stat label="CSM" value={a.csm || "—"} sub={a.csm && a.csmSince ? <span data-csm-since-label>since {fmtDate(a.csmSince)}</span> : null} />
+              <div className="ad-stat-label">{label}</div>
+              <div className="ad-stat-value truncate tabular-nums">{value}</div>
+              {sub && <div className="ad-stat-sub truncate">{sub}</div>}
             </div>
-            <div className="mt-4 flex flex-wrap gap-x-5 gap-y-1 border-t border-slate-100 pt-3">
+          </div>);
+        return <>
+          <section aria-label="Account header" className="ad-card ad-head">
+            <span aria-hidden="true" data-avatar className="acct-av ad-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
+            <div className="ad-ident">
+              <div className="flex flex-wrap items-baseline gap-x-2.5">
+                <h1 className="ad-h1" title={a.name}>{a.name}</h1>
+                <span className="ad-no">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
+              </div>
+              {subParts.length > 0 && <p data-sub-line className="ad-sub">
+                {subParts.map((p, i) => <React.Fragment key={i}>{i > 0 && " · "}{p}</React.Fragment>)}</p>}
+            </div>
+            <div className="ad-health" data-risk={rk}>
+              <HealthRing score={a.score} size={72} />
+              <div>
+                <div data-health-word className="ad-health-word">{RISK_WORD[rk]}</div>
+                <div className="ad-meta-sm">Inputs updated {iu === 0 ? "today" : iu + "d ago"}</div>
+              </div>
+            </div>
+            {!ro && <div className="ad-actions">
+              <Btn kind="primary" onClick={() => setForm("activity")}>+ Log activity</Btn>
+              <Btn onClick={() => setForm("task")}>+ Add task</Btn>
+              <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
+              {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
+              <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
+              {a.churn && <Btn className="ad-reactivate"
+                onClick={() => {
+                  // Reversible in one dispatch, so no dialog: act, then offer Undo.
+                  const prev = a.churn;
+                  dispatch({ type: "REACTIVATE_ACCOUNT", id: a.id, by: user.name });
+                  dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()), summary: `Account reactivated by ${user.name}` } });
+                  toast({ text: `Reactivated ${a.name}.`, tone: "success",
+                    undo: () => dispatch({ type: "CHURN_ACCOUNT", id: a.id, entry: prev }) });
+                }}>↻ Reactivate</Btn>}
+              <MoreMenu items={[
+                { label: "+ Contact", onClick: () => setForm("contact") },
+                { label: "+ Opportunity", onClick: () => setForm("opp") },
+                !a.churn && { label: "⇄ Adjust ARR", onClick: () => setForm("adjust") },
+                !a.churn && !a.billingCompleted && { label: "$ Mark billing completed", onClick: () => setForm("billing") },
+                !a.churn && { label: "✖ Mark churned", onClick: () => setForm("churn"), danger: true },
+                user.role === "admin" && { label: "Delete account", danger: true, separate: true, onClick: () => {
+                  // No dialog: the Undo toast below is the guard, and it is a better one --
+                  // a confirm people click through protects nothing.
+                  // snapshot BEFORE the dispatch -- snapshotFor reads the pre-delete state and
+                  // already handles a single id, including sub-account parentIds
+                  const snapshot = snapshotFor(st, [a.id]);
+                  dispatch({ type: "DELETE_ACCOUNT", id: a.id });
+                  toast({ text: `Deleted ${a.name}.`, tone: "success",
+                    undo: () => dispatch({ type: "RESTORE_SNAPSHOT", snapshot }) });
+                  back();
+                } },
+              ]} />
+            </div>}
+          </section>
+          <section aria-label="Key numbers" className="ad-stats">
+            <Stat k="arr" glyph="$" label="ARR" value={fmtMoney(a.arr, a.currency)} sub={arrSub || null} />
+            <Stat k="renewal" glyph="R" label="Renewal" value={fmtDate(a.renewalDate)} sev={renewSev} sub={`${d < 0 ? `${-d}d ago` : `in ${d}d`} · ${a.contractStatus}`} />
+            {f.total > 0
+              ? <Stat k="licenses" glyph="L" label="Licenses" value={f.deployed == null ? f.total : `${f.pct}%`} sub={f.deployed == null ? "total" : `${f.deployed} deployed of ${f.total} (${f.pct}%)`} />
+              : null}
+            <Stat k="csm" glyph={a.csm ? initialsOf(a.csm) : "—"} label="CSM" value={a.csm || "—"} sub={a.csm && a.csmSince ? <span data-csm-since-label>since {fmtDate(a.csmSince)}</span> : null} />
+          </section>
+          {/* Profile & status: quiet profile facts, retention since the prior-year close, then status pills. */}
+          <section aria-label="Profile and status" className="ad-card ad-profile">
+            <div className="ad-meta-row">
               <Meta label="Tier" value={a.tier} />
-              {(() => { const ld = a.leadId && (team || []).find(u => u.id === a.leadId); return ld ? <span data-lead-meta><Meta label="Lead" value={ld.name} /></span> : null; })()}
+              {ld ? <span data-lead-meta><Meta label="Lead" value={ld.name} /></span> : null}
               <Meta label="Industry" value={a.industry} />
               {a.modules ? <Meta label="Modules" value={a.modules} /> : null}
               {a.dedicatedSupport ? <Meta label="Support" value="Dedicated" /> : null}
-              {parent && <Meta label="Parent" value={<button className="text-indigo-600 hover:underline" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
+              {parent && <Meta label="Parent" value={<button className="ad-link" onClick={() => openAccount(parent.id)}>{parent.name}</button>} />}
             </div>
             {(() => { const shown = activeCustomFields(st.settings && st.settings.customFields)
                 .map(d => ({ d, text: formatCustomValue(d.type, a.custom && a.custom[d.id]) })).filter(x => x.text);
-              return shown.length > 0 && <div data-custom-details className="mt-1 flex flex-wrap gap-x-5 gap-y-1">
+              return shown.length > 0 && <div data-custom-details className="ad-meta-row">
                 {shown.map(({ d, text }) => <Meta key={d.id} label={d.label}
                   value={<span data-custom-value={d.id}>{d.type === "date" && /^\d{4}-\d{2}-\d{2}$/.test(text) ? fmtDate(text) : text}</span>} />)}
               </div>; })()}
             {/* Retention: the arithmetic lives in accountRetention so this and the list column cannot disagree. */}
-            <div data-retention-block className="mt-2 flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Retention since {r.baselineKey}</span>
+            <div data-retention-block className="ad-section ad-retention">
+              <span className="ad-caps">Retention since {r.baselineKey}</span>
               {r.isNew ? (
-                <p className="text-slate-500">
+                <p className="ad-meta">
                   This account started after the {r.baselineKey} close, so there is no prior-year
                   figure to compare against. New accounts are excluded from NRR and GRR.
                 </p>
               ) : (
-                <span className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-                  <span><span className="text-slate-500">{r.baselineKey} close </span><span data-baseline-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.baselineARR)}</span></span>
-                  <span><span className="text-slate-500">Today </span><span data-current-arr className="font-semibold tabular-nums text-slate-700">{fmtMoney(r.currentARR)}</span></span>
-                  <span><span className="text-slate-500">Change </span><span data-change className={`font-semibold tabular-nums ${r.delta > 0 ? "text-emerald-600" : r.delta < 0 ? "text-rose-600" : "text-slate-700"}`}>
+                <span className="flex flex-wrap items-baseline gap-x-[18px] gap-y-1">
+                  <span><span className="ad-meta">{r.baselineKey} close </span><span data-baseline-arr className="ad-val tabular-nums">{fmtMoney(r.baselineARR)}</span></span>
+                  <span><span className="ad-meta">Today </span><span data-current-arr className="ad-val tabular-nums">{fmtMoney(r.currentARR)}</span></span>
+                  <span><span className="ad-meta">Change </span><span data-change data-tone={r.delta > 0 ? "up" : r.delta < 0 ? "down" : undefined} className="ad-val tabular-nums">
                     {r.delta > 0 ? "+" : ""}{fmtMoney(r.delta)}{r.pct !== null ? ` (${r.pct > 0 ? "+" : ""}${r.pct.toFixed(1)}%)` : ""}
                   </span></span>
-                  <span><span className="text-slate-500">Retained </span><span data-ratio className="font-semibold tabular-nums text-slate-700">
+                  <span><span className="ad-meta">Retained </span><span data-ratio className="ad-val tabular-nums">
                     {r.baselineARR > 0 ? `${((r.currentARR / r.baselineARR) * 100).toFixed(1)}%` : "—"}
                   </span></span>
                 </span>
               )}
             </div>
-          </>; })()}
-        {/* Status pills: small and flat so they read as state, not as buttons. */}
-        <div className="mt-3 flex flex-wrap items-center gap-1.5 border-t border-slate-100 pt-3">
-          {!a.churn && ro && <span className={`rounded-full px-2.5 py-0.5 text-xs font-bold ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>{renewalStageOf(a)}</span>}
-          {!a.churn && !ro && <select value={renewalStageOf(a)} title="Renewal stage"
-            onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
-            className={`cursor-pointer rounded-full border-0 px-2.5 py-0.5 text-xs font-bold outline-none ${RENEWAL_STAGE_STYLE[renewalStageOf(a)]}`}>
-            {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
-          </select>}
-          <span className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${a.billingCompleted ? "text-emerald-600" : "text-amber-600"}`}>
-            {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</span>
-          {/* Handoff from sales to account management. Unset is the normal state for accounts
-              predating the field, so it reads as absent data, not as a risk flag. */}
-          <span data-transition-pill className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${a.transitionDate ? "text-slate-700" : "text-slate-500"}`}>
-            {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Transition date not set"}</span>
-          {/* Implementation → CSM: derived from each project's CSM sign-off (csmHandovers), one pill per project. */}
-          {csmHandovers(a.id, st.projects).map(h => (
-            <span key={h.projectId} data-csm-handover-pill className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-700"
-              title={`CSM sign-off${h.by ? ` by ${h.by}` : ""} (${h.type === "expansion" ? "expansion" : "onboarding"} project)`}>
-              {h.n === 1 ? `Impl → CSM ${fmtDate(h.date)}` : `Project ${h.n} → CSM ${fmtDate(h.date)}`}</span>))}
-          {(() => { const s = qbrStatus(a); return s && (
-            <span className={`rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold ${s.kind === "overdue" ? "text-rose-600" : s.kind === "due" ? "text-amber-600" : "text-slate-700"}`}>
-              {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
-            </span>); })()}
-          {hEpisode.length > 0 && <span title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}
-            className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-bold ${hDone === hEpisode.length ? "bg-emerald-100 text-emerald-700" : hBehind ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-700"}`}>♥ {hDone}/{hEpisode.length}</span>}
-          {/* "Renewal in Nd" is already the Renewal stat above. */}
-          {a.flags.filter(f => !f.startsWith("Renewal in")).map(f => <FlagPill key={f} flag={f} />)}
-        </div>
+            {/* Status pills: small and flat so they read as state, not as buttons. Colour comes from statusSev; the text always says it. */}
+            <div className="ad-section flex flex-wrap items-center gap-1.5">
+              {!a.churn && ro && <span data-renewal-stage className="ad-stage">{renewalStageOf(a)}</span>}
+              {!a.churn && !ro && <>
+                <label htmlFor={`ad-stage-${a.id}`} className="sr-only">Renewal stage</label>
+                <select id={`ad-stage-${a.id}`} data-renewal-stage value={renewalStageOf(a)} title="Renewal stage"
+                  onChange={e => dispatch({ type: "EDIT_ACCOUNT", id: a.id, patch: { renewalStage: e.target.value }, by: user?.name, source: "inline" })}
+                  className="ad-stage cursor-pointer">
+                  {RENEWAL_STAGES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select></>}
+              <StatusPill sev={statusSev.billing(a.billingCompleted)}>
+                {a.billingCompleted ? `Billing ✓ ${fmtDate(a.billingCompletedDate)}` : "Billing pending"}</StatusPill>
+              {/* Handoff from sales to account management. Unset is the normal state for accounts
+                  predating the field, so it reads as absent data, not as a risk flag. */}
+              <StatusPill data-transition-pill sev={statusSev.handover()}>
+                {a.transitionDate ? `Sales → AM ${fmtDate(a.transitionDate)}` : "Transition date not set"}</StatusPill>
+              {/* Implementation → CSM: derived from each project's CSM sign-off (csmHandovers), one pill per project. */}
+              {csmHandovers(a.id, st.projects).map(h => (
+                <StatusPill key={h.projectId} data-csm-handover-pill sev={statusSev.handover()}
+                  title={`CSM sign-off${h.by ? ` by ${h.by}` : ""} (${h.type === "expansion" ? "expansion" : "onboarding"} project)`}>
+                  {h.n === 1 ? `Impl → CSM ${fmtDate(h.date)}` : `Project ${h.n} → CSM ${fmtDate(h.date)}`}</StatusPill>))}
+              {(() => { const s = qbrStatus(a); return s && (
+                <StatusPill data-qbr-pill sev={statusSev.qbr(s.kind)}>
+                  {s.kind === "overdue" ? `QBR overdue ${s.d}d` : s.kind === "due" ? `QBR due in ${s.d}d` : s.kind === "scheduled" ? `Next QBR ${fmtDate(a.nextQbrDate)}` : "QBR not scheduled"}
+                </StatusPill>); })()}
+              {hEpisode.length > 0 && <StatusPill data-playbook-pill sev={statusSev.playbook(hDone, hEpisode.length, hBehind)}
+                title={hBehind ? "Health playbook behind pace — an open step is past due" : "Health playbook progress"}>♥ {hDone}/{hEpisode.length} playbook</StatusPill>}
+              {/* "Renewal in Nd" is already the Renewal stat above. */}
+              {a.flags.filter(f => !f.startsWith("Renewal in")).map(f => <FlagPill key={f} flag={f} />)}
+            </div>
+          </section>
+        </>; })()}
       </div>
       {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
         <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>

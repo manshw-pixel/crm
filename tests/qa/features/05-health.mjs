@@ -22,9 +22,11 @@ const listScores = page => page.evaluate(() => {
     score: (t => (t.match(/^\d+/) || [t])[0])(tr.children[col].textContent.trim()) }));
 });
 
-// The detail page's HealthChip sits right after the h2 (src/21-account-detail.jsx:64-66).
-const detailScore = async (page, name) =>
-  (await page.getByRole("heading", { level: 2, name, exact: true }).locator("xpath=following-sibling::*[2]").textContent()).trim();
+// Stage 4: the detail page's score is the number inside the health ring ([data-health-ring]).
+const detailScore = async (page, name) => {
+  await page.getByRole("heading", { level: 1, name, exact: true }).waitFor({ timeout: 15000 });
+  return (await page.locator("[data-header-card] [data-health-ring]").textContent()).trim();
+};
 
 export const scenarios = [
   { id: `${F}/score-renders`, feature: F, title: "Every run account shows a numeric 0-100 health score in the list", role: "admin",

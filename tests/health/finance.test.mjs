@@ -269,7 +269,7 @@ test("account detail: the tab resets to overview when another account opens", as
   const { page, browser } = await openFinance({ role: "admin" }, []);
   await openAccountTab(page, "a1", "Invoices");
   await page.waitForSelector("[data-invoices-empty]");
-  await page.evaluate(() => { const b = [...document.querySelectorAll("button")].find(x => /Back/.test(x.textContent)); b && b.click(); });
+  await page.click("button:has-text('← Accounts')"); // Stage 4: the back link reads "← Accounts"
   await page.click('[data-account-row]:has-text("Other Co")');
   await page.waitForSelector('[data-account-tab="Invoices"]');
   assert((await page.locator('[data-account-tab="overview"]').getAttribute("aria-selected")) === "true");

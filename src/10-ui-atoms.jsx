@@ -6,7 +6,18 @@ const FlagPill = ({ flag }) => { const sev = flagSeverity(flag); return <span da
 const RISK_WORD = { Green: "Healthy", Yellow: "Watch", Red: "At risk" };
 // Account avatar colour: one of 8 fixed pairs (crm.html .acct-av[data-av]), stable per account id.
 const avatarSlot = id => { let h = 0; for (const c of String(id)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h % 8; };
-const HealthChip = ({ score }) => <Chip risk={riskOf(score)}>{score}</Chip>;
+// Health as a ring: conic track filled to the score, coloured by riskOf (crm.html .ad-ring[data-risk]).
+// Never colour alone -- the label names the score and the word.
+const HealthRing = ({ score, size = 72 }) => {
+  const s = Math.max(0, Math.min(100, Math.round(+score || 0))), rk = riskOf(s);
+  return (
+    <div data-health-ring data-risk={rk} role="img" aria-label={`Health ${s}, ${RISK_WORD[rk]}`} className="ad-ring"
+      style={{ width: size, height: size, background: `conic-gradient(var(--ring-c) ${s * 3.6}deg, var(--ring-track) 0)` }}>
+      <div className="ad-ring-hole" style={{ width: size - 14, height: size - 14 }}><b className="ad-ring-n">{s}</b></div>
+    </div>
+  );
+};
+const HealthChip = ({ score }) =><Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
   <div id={id} className={`nm p-4 ${className}`}>
     {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">{title}</h3>{right}</div>}

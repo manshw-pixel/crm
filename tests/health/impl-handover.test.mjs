@@ -122,7 +122,7 @@ test("handover: switching account (palette, same AccountDetail) closes the open 
     await page.keyboard.type("betamax");
     const opt = page.getByRole("option", { name: /Betamax/ }).first();
     await opt.waitFor({ timeout: 5000 }).then(() => opt.click()).catch(async () => { await page.getByText("Betamax").first().click(); });
-    await page.waitForFunction(() => document.querySelector("#root").textContent.includes("← BackBetamax"));
+    await page.waitForFunction(() => document.querySelector("[data-header-card] h1")?.textContent === "Betamax");
     // wait on the condition: the Projects card can render a commit after the header under suite load
     await page.locator("[data-new-project]").waitFor({ timeout: 5000 }).catch(() => {});
     assert(await page.locator("[data-new-project]").count() === 1, "precondition: Projects card rendered on B");
@@ -161,7 +161,7 @@ test("handover: the Start onboarding toast does nothing once another account is 
     await page.keyboard.type("betaco");
     const opt = page.getByRole("option", { name: /Betaco/ }).first();
     await opt.waitFor({ timeout: 5000 }).then(() => opt.click()).catch(async () => { await page.getByText("Betaco").first().click(); });
-    await page.waitForFunction(() => document.querySelector("#root").textContent.includes("← BackBetaco"));
+    await page.waitForFunction(() => document.querySelector("[data-header-card] h1")?.textContent === "Betaco");
     await page.locator("[data-new-project]").waitFor({ timeout: 5000 });
     await btn.click();
     await page.waitForTimeout(400);
