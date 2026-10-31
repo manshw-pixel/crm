@@ -7,7 +7,7 @@ function ChangeHistoryCard({ a }) {
   const shown = showAll ? entries : entries.slice(0, 50);
   const fmtVal = (f, v) => f === "arr" ? fmtMoney(+v || 0, a.currency) : f === "renewalDate" ? fmtDate(v) : (v === "" || v == null ? "—" : String(v));
   return (
-    <AdCard title="Change history" n={`(${entries.length})`} right={<button className="ad-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
+    <AdCard title="Change history" n={`(${entries.length})`} right={<button className="ad-toggle" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} change history`} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
       {open && <>
         {shown.map(e => (
           <div key={e.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0">
@@ -50,39 +50,39 @@ function RevenueHistoryCard({ a }) {
     ...(a.churn ? [{ id: "churn", date: a.churn.date, sort: a.churn.date, kind: "churn" }] : []),
   ].sort((x, y) => y.sort.localeCompare(x.sort));
   return (
-    <AdCard title="Revenue history" n={`(${events.length})`} right={<button className="ad-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
+    <AdCard title="Revenue history" n={`(${events.length})`} right={<button className="ad-toggle" aria-expanded={open} aria-label={`${open ? "Hide" : "Show"} revenue history`} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
       {open && <div className="mt-2">
-        {events.length === 0 && <div className="text-sm text-slate-500">No revenue events yet — renewals, won opportunities, ARR adjustments and churn all land here.</div>}
+        {events.length === 0 && <div className="ad-empty">No revenue events yet — renewals, won opportunities, ARR adjustments and churn all land here.</div>}
         {events.map(e => (
-          <div key={e.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+          <div key={e.id} data-rev-row className="ad-rev">
             {e.kind === "renewal" && <>
-              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
-              <span className="text-slate-800">{fmtDate(e.date)}</span>
-              <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
-              <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-500"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
-              <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
-              <span className="text-xs text-slate-500">by {e.r.by}</span>
+              <span className="ad-pill ad-pill-sm" data-sev="green">✓ renewed</span>
+              <span className="ad-t-sm">{fmtDate(e.date)}</span>
+              <span className="ad-rev-d">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
+              <span className={`ad-xs ${e.r.billingCompleted ? "ad-up" : "ad-meta"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
+              <span className="ad-xs ad-val">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 ad-up" : "ml-1 ad-down"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
+              <span className="ad-xs">by {e.r.by}</span>
             </>}
             {(e.kind === "expansion" || e.kind === "contraction") && <>
-              <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${e.kind === "expansion" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600"}`}>{e.kind === "expansion" ? "▲ expansion" : "▼ reduction"}</span>
-              <span className="text-slate-800">{fmtDate(e.date)}</span>
-              <span className="flex-1 text-xs text-slate-700">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
-              <span className={`text-xs font-bold ${e.ev.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
-              <span className="text-xs text-slate-500">by {e.ev.by}</span>
+              <span className="ad-pill ad-pill-sm" data-sev={e.kind === "expansion" ? "green" : "red"}>{e.kind === "expansion" ? "▲ expansion" : "▼ reduction"}</span>
+              <span className="ad-t-sm">{fmtDate(e.date)}</span>
+              <span className="ad-rev-d">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
+              <span className={`ad-xs font-bold ${e.ev.delta > 0 ? "ad-up" : "ad-down"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
+              <span className="ad-xs">by {e.ev.by}</span>
             </>}
             {e.kind === "redenomination" && <>
-              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">⇄ redenominated</span>
-              <span className="text-slate-800">{fmtDate(e.date)}</span>
-              <span className="flex-1 text-xs text-slate-700">{e.ev.reason} — same revenue, restated</span>
-              <span className="text-xs font-semibold text-slate-600">{fmtMoney(e.ev.fromArr, e.ev.fromCurrency)} → {fmtMoney(e.ev.toArr, e.ev.toCurrency)}</span>
-              <span className="text-xs text-slate-500">by {e.ev.by}</span>
+              <span className="ad-pill ad-pill-sm" data-sev="grey">⇄ redenominated</span>
+              <span className="ad-t-sm">{fmtDate(e.date)}</span>
+              <span className="ad-rev-d">{e.ev.reason} — same revenue, restated</span>
+              <span className="ad-xs ad-val">{fmtMoney(e.ev.fromArr, e.ev.fromCurrency)} → {fmtMoney(e.ev.toArr, e.ev.toCurrency)}</span>
+              <span className="ad-xs">by {e.ev.by}</span>
             </>}
             {e.kind === "churn" && <>
-              <span className="rounded bg-rose-500 px-1.5 py-0.5 text-xs font-bold text-white">✖ churned</span>
-              <span className="text-slate-800">{fmtDate(e.date)}</span>
-              <span className="flex-1 text-xs text-slate-700">{a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
-              <span className="text-xs font-bold text-rose-600">−{fmtMoney(a.churn.arr, a.churn.currency || a.currency)}</span>
-              <span className="text-xs text-slate-500">by {a.churn.by}</span>
+              <span className="ad-pill ad-pill-sm" data-sev="red">✖ churned</span>
+              <span className="ad-t-sm">{fmtDate(e.date)}</span>
+              <span className="ad-rev-d">{a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
+              <span className="ad-xs font-bold ad-down">−{fmtMoney(a.churn.arr, a.churn.currency || a.currency)}</span>
+              <span className="ad-xs">by {a.churn.by}</span>
             </>}
           </div>
         ))}
@@ -163,7 +163,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <span aria-hidden="true" data-avatar className="acct-av ad-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
             <div className="ad-ident">
               <div className="flex flex-wrap items-baseline gap-x-2.5">
-                <h1 className="ad-h1" title={a.name}>{a.name}</h1>
+                <h1 className="ad-h1 break-words" title={a.name}>{a.name}</h1>
                 <span className="ad-no">#{subNumbers(scored).get(a.id) || a.accountNo || "—"}</span>
               </div>
               {subParts.length > 0 && <p data-sub-line className="ad-sub">
@@ -289,19 +289,19 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </section>
         </>; })()}
       </div>
-      {a.churn && <div className="nm-sm flex flex-wrap items-center gap-3 p-3 text-sm">
-        <span className="rounded-full bg-rose-500 px-3 py-1 text-xs font-bold text-white">CHURNED</span>
-        <span className="text-slate-700">{fmtDate(a.churn.date)} · {a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
-        <span className="ml-auto text-xs text-slate-500">{fmtMoney(a.churn.arr, a.churn.currency)} ARR lost · recorded by {a.churn.by}</span>
+      {a.churn && <div data-churned-banner className="ad-card ad-box-c flex flex-wrap items-center gap-3 text-sm">
+        <span className="ad-pill" data-sev="red">CHURNED</span>
+        <span className="ad-t-sm">{fmtDate(a.churn.date)} · {a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
+        <span className="ad-xs ml-auto">{fmtMoney(a.churn.arr, a.churn.currency)} ARR lost · recorded by {a.churn.by}</span>
       </div>}
-      {subs.length > 0 && <Card title={`Sub-accounts (${subs.length}) · rollup ${fmtMoney(rollup)} USD`}>
+      {subs.length > 0 && <AdCard title={`Sub-accounts (${subs.length}) · rollup ${fmtMoney(rollup)} USD`}>
         {subs.map(s => (
-          <button key={s.id} onClick={() => openAccount(s.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
-            <span>{s.name}{s.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</span>
-            <span className="flex items-center gap-2 text-xs text-slate-700">{fmtMoney(s.arr, s.currency)} <HealthChip score={s.score} /></span>
+          <button key={s.id} onClick={() => openAccount(s.id)} className="ad-sub-row">
+            <span className="ad-t-sm min-w-0 break-words">{s.name}{s.churn && <span className="ad-pill ad-pill-sm ml-2" data-sev="red">churned</span>}</span>
+            <span className="ad-xs ad-val flex items-center gap-2">{fmtMoney(s.arr, s.currency)} <HealthChip score={s.score} /></span>
           </button>
         ))}
-      </Card>}
+      </AdCard>}
       {form && !ro && <Card>{form === "activity" ? <LogActivityForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
         : form === "task" ? <AddTaskForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} team={team} user={user} />
         : form === "contact" ? <AddContactForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />
@@ -444,8 +444,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         confirmLabel={confirmOpp.kind === "won" ? "Book it" : "Continue"}
         onConfirm={() => confirmOpp.run()}
         onClose={() => setConfirmOpp(null)} />}
-      <ProjectsCard account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
-      <DocumentsCard a={a} dispatch={dispatch} user={user} readOnly={ro} />
+      <ProjectsCard className="ad-card" account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
+      <DocumentsCard className="ad-card" a={a} dispatch={dispatch} user={user} readOnly={ro} />
     </div>
   );
 }

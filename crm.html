@@ -392,7 +392,16 @@
   .ad-chip { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--d-acc-soft); color: var(--d-acc-tx); }
   .ad-opp-stage { min-height: 34px; border: 1px solid var(--d-line); border-radius: 10px; background: var(--d-card); color: var(--d-label); font-size: 12.5px; padding: 0 8px; }
   .ad-tab:focus-visible, .ad-toggle:focus-visible, .ad-ico:focus-visible, .ad-opp-stage:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
-  @media (max-width: 640px) { .ad-ico, .ad-tab { min-width: 44px; min-height: 44px; } .ad-toggle { min-height: 44px; } }
+  @media (max-width: 640px) { .ad-ico, .ad-tab { min-width: 44px; min-height: 44px; } .ad-toggle { min-width: 44px; min-height: 44px; } .ad-head { padding: 16px; } .ad-h1 { font-size: 21px; line-height: 27px; } }
+  .ad-rev { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 0; border-top: 1px solid var(--d-row); font-size: 13.5px; }
+  .ad-rev-d { flex: 1 1 160px; min-width: 0; font-size: 12px; color: var(--d-label); overflow-wrap: anywhere; }
+  .ad-up { color: var(--d-g-tx); } .ad-down { color: var(--d-r-tx); }
+  .ad-sub-row { display: flex; width: 100%; align-items: center; justify-content: space-between; gap: 10px; padding: 8px; border-radius: 8px; text-align: left; min-height: 40px; }
+  .ad-sub-row:hover { background: var(--d-row); }
+  .nm.ad-card:where(:not([data-toast])) { background: var(--d-card); box-shadow: var(--d-shadow); border-radius: 16px; color: var(--d-fg); }
+  .nm.ad-card > div.mb-3 > h3 { font-size: 15px; color: var(--d-fg); }
+  @media print { .ad-actions, .ad-tabs, .ad-toggle { display: none !important; } .ad-card { box-shadow: none !important; border: 1px solid #cbd5e1; break-inside: avoid; } .ad-ring { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
+  @media (forced-colors: active) { [data-stat] { border: 1px solid CanvasText; } .ad-toggle { border: 1px solid ButtonText; } }
   @media (forced-colors: active) { .ad-tab[aria-selected=true] { border-bottom-color: Highlight; } .ad-bar { border: 1px solid CanvasText; } .ad-bar > span { forced-color-adjust: none; background: CanvasText !important; } }
   @media (forced-colors: active) {
     .ad-card { border: 1px solid CanvasText; } .ad-pill, .ad-stage { border: 1px solid CanvasText; } .ad-dot { forced-color-adjust: none; background: CanvasText; }

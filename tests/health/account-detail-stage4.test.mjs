@@ -4,6 +4,7 @@ import { test, assert } from "./framework.mjs";
 import { launch, seedAccount } from "./harness.mjs";
 
 const day = n => new Date(Date.now() + n * 864e5).toISOString().slice(0, 10);
+const LONG = "Supercalifragilisticexpialidocious International Holdings and Logistics Group XY";
 const A = [
   seedAccount({ id: "g1", name: "Globex Corporation", tier: "Enterprise", industry: "Manufacturing", leadId: "u3", csm: "Priya Shah", csmSince: "2025-03-04",
     accountNo: "1002", arr: 240000, licenses: 200, deployedLicenses: 150, renewalDate: day(20), nextQbrDate: day(12),
@@ -16,7 +17,10 @@ const A = [
   seedAccount({ id: "b1", name: "Bare Co", industry: "", csm: "", accountNo: "1005" }),
   // Task 2: overview cards
   seedAccount({ id: "w1", name: "Wide Co", industry: "Tech", csm: "Priya Shah", accountNo: "1006",
-    arrEvents: [{ id: "ev1", date: day(-30), kind: "expansion", delta: 5000, reason: "Seats added", note: "", source: "manual", by: "Priya Shah" }] }),
+    arrEvents: [{ id: "ev1", date: day(-30), kind: "expansion", delta: 5000, reason: "Seats added", note: "", source: "manual", by: "Priya Shah" }],
+    audit: [{ id: "au1", date: day(-5), field: "tier", from: "Mid", to: "Enterprise", by: "Priya Shah", source: "manual" }] }),
+  // Task 3: 80-char name
+  seedAccount({ id: "l1", name: LONG, industry: "Tech", csm: "Priya Shah", accountNo: "1007" }),
 ];
 const ACTS = [
   { id: "a1", accountId: "w1", type: "call", date: day(-1), summary: "Sponsor call" },
@@ -349,5 +353,90 @@ test("phone: icon buttons and tabs >= 44px", async () => {
     assert(sizes.length >= 10, "precondition: buttons " + sizes.length);
     const small = sizes.filter(([, w, h]) => h < 44 || w < 44);
     assert(small.length === 0, "small: " + JSON.stringify(small));
+  } finally { await browser.close(); }
+});
+
+// ---------------- Task 3: phone, print, forced-colors, focus ----------------
+const noHScroll = page => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+
+for (const name of ["Globex Corporation", LONG]) test(`390px: no horizontal scroll, ring visible (${name.length} chars)`, async () => {
+  assert(LONG.length === 80, "precondition: long name is 80 chars");
+  const { page, browser } = await openDetail(name);
+  try {
+    await phone(page);
+    const over = await noHScroll(page);
+    const wide = over > 0 ? await page.evaluate(() => [...document.querySelectorAll("main *")].filter(e => e.getBoundingClientRect().right > 391).slice(-4).map(e => e.tagName + "." + e.className.toString().slice(0, 40) + ":" + Math.round(e.getBoundingClientRect().right))) : [];
+    assert(over <= 0, "horizontal overflow " + over + " " + wide.join(" | "));
+    const rb = await page.locator("[data-health-ring]").boundingBox();
+    assert(rb && rb.x >= 0 && rb.x + rb.width <= 390, "ring outside viewport " + JSON.stringify(rb));
+    if (name === LONG) assert(await page.getAttribute("[data-header-card] h1", "title") === LONG, "h1 title");
+  } finally { await browser.close(); }
+});
+
+test("200% zoom (720px viewport): no horizontal scroll", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    await page.setViewportSize({ width: 720, height: 450 });
+    await page.waitForTimeout(150);
+    const over = await noHScroll(page);
+    assert(over <= 0, "horizontal overflow " + over);
+  } finally { await browser.close(); }
+});
+
+test("print hides actions and tabs", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const disp = () => page.evaluate(() => [".ad-actions", "[role=tablist]"].map(s => getComputedStyle(document.querySelector(s)).display));
+    assert((await disp()).every(d => d !== "none"), "precondition: shown on screen");
+    await page.emulateMedia({ media: "print" });
+    const d = await disp();
+    assert(d.every(x => x === "none"), "print display " + d);
+  } finally { await browser.close(); }
+});
+
+test("forced-colors: pills and stat tiles have a border", async () => {
+  const { page, browser } = await openDetail("Globex Corporation");
+  try {
+    await page.emulateMedia({ forcedColors: "active" });
+    const st = await page.evaluate(() => [...document.querySelectorAll(".ad-pill, [data-stat]")].map(e => getComputedStyle(e).borderTopStyle));
+    assert(st.length >= 6, "precondition: elements " + st.length);
+    assert(st.every(s => s === "solid"), "borders " + st);
+  } finally { await browser.close(); }
+});
+
+test("focus ring visible on Log activity, a tab and an edit button", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    await page.keyboard.press("Tab");
+    for (const loc of [page.locator("button", { hasText: "+ Log activity" }).first(), page.locator('[data-account-tab="Invoices"]'), page.locator('[data-edit-contact="ct1"]')]) {
+      await loc.focus();
+      const o = await loc.evaluate(e => { const c = getComputedStyle(e); return [parseFloat(c.outlineWidth), c.outlineStyle]; });
+      assert(o[0] >= 2 && o[1] !== "none", "outline " + o);
+    }
+  } finally { await browser.close(); }
+});
+
+test("show/hide toggles are named", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const b = card(page, /^Revenue history/).locator("button[aria-expanded]");
+    assert(await b.getAttribute("aria-label") === "Show revenue history", "label " + await b.getAttribute("aria-label"));
+    await b.click();
+    assert(await b.getAttribute("aria-label") === "Hide revenue history", "label after click");
+    assert(await card(page, /^Change history/).locator("button[aria-expanded]").getAttribute("aria-label") === "Show change history", "change label");
+  } finally { await browser.close(); }
+});
+
+test("dark: open revenue row contrast >= 4.5", async () => {
+  const { page, browser } = await openDetail("Wide Co", { theme: "dark" });
+  try {
+    await card(page, /^Revenue history/).locator("button[aria-expanded]").click();
+    await page.addScriptTag({ content: PAGE_FNS });
+    const r = await page.evaluate(() => {
+      const els = [...document.querySelectorAll("[data-rev-row] > span")];
+      return { n: els.length, low: els.map(e => [window.__c.textOn(e), e.textContent.trim().slice(0, 24)]).filter(([k]) => k === null || k < 4.5).map(([k, t]) => (k === null ? "none" : k.toFixed(2)) + " " + t) };
+    });
+    assert(r.n >= 4, "precondition: spans " + r.n);
+    assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
   } finally { await browser.close(); }
 });
