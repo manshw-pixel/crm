@@ -57,7 +57,7 @@ export const scenarios = [
       await form.getByPlaceholder("Name *").fill(who);
       await form.getByRole("button", { name: "Add", exact: true }).click();
       await waitForSaved(page);
-      const row = page.locator("div.border-b").filter({ has: page.locator("[data-delete-contact]") }).filter({ hasText: who });
+      const row = page.locator("[data-contact-row]").filter({ has: page.locator("[data-delete-contact]") }).filter({ hasText: who });
       await row.waitFor({ timeout: 10000 });
       await row.locator("[data-delete-contact]").click();
       await page.locator("[data-confirm-go]").click();
@@ -74,10 +74,10 @@ export const scenarios = [
       await page.getByPlaceholder("Summary…").fill(summary);
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
-      // The timeline row: type badge (span.w-16) + summary carrying this run's id.
-      const entry = page.locator("div.border-b").filter({ has: page.getByText(summary, { exact: true }) }).first();
+      // The timeline row: type word ([data-activity-type]) + summary carrying this run's id.
+      const entry = page.locator("[data-activity-row]").filter({ has: page.getByText(summary, { exact: true }) }).first();
       await entry.waitFor({ timeout: 10000 });
-      assert.equal((await entry.locator("span.w-16").first().textContent()).trim(), "call", "logged activity is not a call");
+      assert.equal((await entry.locator("[data-activity-type]").first().textContent()).trim(), "call", "logged activity is not a call");
     } },
 
   { id: `${F}/attachment`, feature: F, title: "Upload a PDF; opening it yields a working signed URL", role: "admin",
@@ -90,7 +90,7 @@ export const scenarios = [
       await page.locator('form input[type="file"][multiple]').setInputFiles({ name: file, mimeType: "application/pdf", buffer: PDF });
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
-      const entry = page.locator("div.border-b").filter({ hasText: summary }).first();
+      const entry = page.locator("[data-activity-row]").filter({ hasText: summary }).first();
       const link = entry.locator("a[data-attachment]").filter({ hasText: file });
       await link.waitFor({ timeout: 30000 });
       const [popup] = await Promise.all([context.waitForEvent("page"), link.click()]);

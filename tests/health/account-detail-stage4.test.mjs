@@ -14,14 +14,33 @@ const A = [
   seedAccount({ id: "c1", name: "Gone Co", industry: "Media", csm: "Anita Rao", arr: 50000, accountNo: "1004",
     churn: { date: day(-60), arr: 50000, currency: "USD", reason: "Price", by: "Priya Shah" } }),
   seedAccount({ id: "b1", name: "Bare Co", industry: "", csm: "", accountNo: "1005" }),
+  // Task 2: overview cards
+  seedAccount({ id: "w1", name: "Wide Co", industry: "Tech", csm: "Priya Shah", accountNo: "1006",
+    arrEvents: [{ id: "ev1", date: day(-30), kind: "expansion", delta: 5000, reason: "Seats added", note: "", source: "manual", by: "Priya Shah" }] }),
 ];
+const ACTS = [
+  { id: "a1", accountId: "w1", type: "call", date: day(-1), summary: "Sponsor call" },
+  { id: "a2", accountId: "w1", type: "email", date: day(-2), summary: "Usage report" },
+  { id: "a3", accountId: "w1", type: "QBR", date: day(-3), summary: "Quarterly review" },
+  { id: "a4", accountId: "w1", type: "mystery", date: day(-4), summary: "Odd type" },
+];
+const CONTACTS = [
+  { id: "ct1", accountId: "w1", name: "Maya Kapoor", role: "VP Ops", email: "maya@wide.example", sentiment: "Positive", isChampion: true },
+  { id: "ct2", accountId: "w1", name: "Dan Lee", role: "IT", email: "dan@wide.example", sentiment: "Neutral" },
+];
+const OPPS = [{ id: "o1", accountId: "w1", type: "Upsell", value: 20000, stage: "Proposal", closeDate: day(30) }];
+const rowsOf = l => JSON.stringify(l.map(d => ({ id: d.id, data: d })));
 const TASKS = [
   { id: "hp1", accountId: "g1", title: "Step 1", due: day(5), priority: "High", status: "Done", owner: "Priya Shah", healthPlaybook: true, healthFor: "2026-10-01" },
   { id: "hp2", accountId: "g1", title: "Step 2", due: day(9), priority: "High", status: "Open", owner: "Priya Shah", healthPlaybook: true, healthFor: "2026-10-01" },
+  { id: "wt1", accountId: "w1", title: "Send quote", due: day(-3), priority: "High", status: "Open", owner: "Priya Shah" },
+  { id: "wt2", accountId: "w1", title: "Usage review", due: day(4), priority: "Medium", status: "Open", owner: "Priya Shah" },
+  { id: "wt3", accountId: "w1", title: "QBR prep", due: day(12), priority: "Low", status: "Open", owner: "Anita Rao" },
 ];
 const seed = (role = "admin", theme = "light") => `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}
   window.__seedRows = { accounts: ${JSON.stringify(A.map(d => ({ id: d.id, data: d })))},
-  contacts: [], activities: [], tasks: ${JSON.stringify(TASKS.map(t => ({ id: t.id, data: t })))}, opportunities: [], settings: [],
+  contacts: ${rowsOf(CONTACTS)}, activities: ${rowsOf(ACTS)},
+  tasks: ${rowsOf(TASKS)}, opportunities: ${rowsOf(OPPS)}, settings: [],
   profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "${role}" }, { id: "u2", org_id: "org-a", name: "Priya Shah", role: "user" },
     { id: "u3", org_id: "org-a", name: "Rahul Verma", role: "lead" }] };`;
 
@@ -209,5 +228,126 @@ for (const theme of ["light", "dark"]) test(`${theme}: header text contrast >= 4
     });
     assert(r.n > 30, "precondition: elements " + r.n);
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
+  } finally { await browser.close(); }
+});
+
+// ---------------- Task 2: tabs + two-column overview ----------------
+const card = (page, re) => page.locator("[data-ad-card]").filter({ has: page.locator("h2", { hasText: re }) }).first();
+const phone = async page => { await page.setViewportSize({ width: 390, height: 844 }); await page.waitForTimeout(150); };
+
+test("tabs are underline tabs", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const tabs = page.locator("[data-account-tab]");
+    assert(await tabs.count() === 3, "three tabs");
+    for (const h of await tabs.evaluateAll(es => es.map(e => e.getBoundingClientRect().height))) assert(h >= 44, "tab height " + h);
+    const ul = await page.$eval('[data-account-tab="overview"]', e => { const c = getComputedStyle(e); return c.borderBottomWidth + " " + c.borderBottomStyle; });
+    assert(ul === "2px solid", "selected underline " + ul);
+    assert(await page.getAttribute('[data-account-tab="overview"]', "aria-selected") === "true", "overview selected");
+    assert(await page.locator("[data-overview]").count() === 1, "precondition: overview shown");
+    await page.click('[data-account-tab="Invoices"]');
+    assert(await page.getAttribute('[data-account-tab="Invoices"]', "aria-selected") === "true", "invoices selected");
+    assert(await page.getAttribute('[data-account-tab="overview"]', "aria-selected") === "false", "overview deselected");
+    await page.locator(":is(h2,h3)", { hasText: /^Invoices$/ }).first().waitFor({ timeout: 3000 });
+    assert(await page.locator("[data-overview]").count() === 0, "overview hidden on Invoices");
+  } finally { await browser.close(); }
+});
+
+test("two columns on desktop, stacked on phone", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const box = re => card(page, re).boundingBox();
+    let [h, act] = [await box(/^Health breakdown/), await box(/^Activity timeline/)];
+    assert(h && act, "precondition: both cards");
+    assert(h.x >= act.x + act.width, `desktop: health x ${h.x} vs activity right ${act.x + act.width}`);
+    await phone(page);
+    [h, act] = [await box(/^Health breakdown/), await box(/^Activity timeline/)];
+    assert(h.y >= act.y + act.height, `phone: health y ${h.y} vs activity bottom ${act.y + act.height}`);
+  } finally { await browser.close(); }
+});
+
+test("activity icon by type", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const icons = await page.$$eval("[data-activity-icon]", e => e.map(x => x.getAttribute("data-activity-icon")));
+    assert(icons.join(",") === "call,email,qbr,note", "icons " + icons);
+    assert(await page.locator("[data-activity-icon] svg path").count() === 4, "an svg path per icon");
+    const words = await page.$$eval("[data-activity-type]", e => e.map(x => x.textContent.trim()));
+    assert(words.join(",") === "call,email,QBR,mystery", "type words " + words);
+    assert(await page.locator("[data-activity-type]").first().isVisible(), "type word visible");
+  } finally { await browser.close(); }
+});
+
+test("health bars keep hooks", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const hc = card(page, /^Health breakdown/);
+    assert(await hc.locator("[data-input-bar]").count() === 5, "5 input bars");
+    assert(/Inputs last updated/.test(await hc.textContent()), "Inputs last updated text");
+    const hgt = await hc.locator("[data-input-bar]").first().evaluate(e => e.getBoundingClientRect().height);
+    assert(Math.round(hgt) === 7, "bar height " + hgt);
+  } finally { await browser.close(); }
+});
+
+test("task priority pill", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const row = t => page.locator("[data-task-row]", { hasText: t });
+    assert(await row("Send quote").locator("[data-priority]").getAttribute("data-sev") === "red", "High red");
+    assert(await row("Usage review").locator("[data-priority]").getAttribute("data-sev") === "amber", "Medium amber");
+    assert(await row("QBR prep").locator("[data-priority]").getAttribute("data-sev") === "grey", "Low grey");
+    const due = row("Send quote").locator("[data-task-due]");
+    assert(await due.getAttribute("data-overdue") === "true", "overdue flag");
+    const c1 = await due.evaluate(e => getComputedStyle(e).color);
+    const c2 = await row("QBR prep").locator("[data-task-due]").evaluate(e => getComputedStyle(e).color);
+    assert(c1 !== c2, "overdue due colour should differ: " + c1);
+    assert(await row("Send quote").evaluate(e => e.tagName) === "LABEL", "task row is a label");
+  } finally { await browser.close(); }
+});
+
+test("contacts show avatar and champion word", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const row = page.locator("[data-contact-row]", { hasText: "Maya Kapoor" });
+    assert(/★ Champion/.test(await row.textContent()), "champion word");
+    assert(!/Champion/.test(await page.locator("[data-contact-row]", { hasText: "Dan Lee" }).textContent()), "non-champion has no word");
+    assert(await row.locator("[data-contact-av]").textContent() === "MK", "initials");
+    assert(await page.getAttribute('[data-edit-contact="ct1"]', "aria-label") === "Edit contact", "edit label");
+    assert(await page.getAttribute('[data-delete-contact="ct1"]', "aria-label") === "Delete contact", "delete label");
+  } finally { await browser.close(); }
+});
+
+test("revenue history collapsed by default", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const rc = card(page, /^Revenue history \(1\)/);
+    const btn = rc.locator("button[aria-expanded]");
+    assert(await btn.getAttribute("aria-expanded") === "false", "collapsed");
+    assert(await rc.getByText(/Seats added/).count() === 0, "events hidden");
+    await btn.click();
+    assert(await btn.getAttribute("aria-expanded") === "true", "expanded");
+    assert(await rc.getByText(/Seats added/).isVisible(), "events visible");
+  } finally { await browser.close(); }
+});
+
+test("won opportunity confirm still works", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    const sel = card(page, /^Opportunities/).locator("select");
+    const h = await sel.evaluate(e => e.getBoundingClientRect().height);
+    assert(h >= 34, "stage select height " + h);
+    await sel.selectOption("Won");
+    await page.getByText("Book expansion ARR").first().waitFor({ timeout: 3000 });
+  } finally { await browser.close(); }
+});
+
+test("phone: icon buttons and tabs >= 44px", async () => {
+  const { page, browser } = await openDetail("Wide Co");
+  try {
+    await phone(page);
+    const sizes = await page.$$eval("[data-overview] button[aria-label], [data-account-tab]", e => e.map(x => { const r = x.getBoundingClientRect(); return [x.getAttribute("aria-label") || x.textContent, Math.round(r.width), Math.round(r.height)]; }));
+    assert(sizes.length >= 10, "precondition: buttons " + sizes.length);
+    const small = sizes.filter(([, w, h]) => h < 44 || w < 44);
+    assert(small.length === 0, "small: " + JSON.stringify(small));
   } finally { await browser.close(); }
 });

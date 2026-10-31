@@ -95,6 +95,8 @@ test("the redenomination renders in the ARR timeline rather than as a blank row"
   await page.getByText("Redenom Co").first().waitFor({ timeout: 8000 });
   await page.getByText("Redenom Co").first().click();
   await page.waitForFunction(() => /Industry/.test(document.getElementById("root").textContent), { timeout: 8000 });
+  // Revenue history is collapsed by default (UI Stage 4): open it first.
+  await page.locator('[data-ad-card][aria-label="Revenue history"] button[aria-expanded]').click();
   const txt = await page.textContent("#root");
   assert(/redenominated/i.test(txt), "the timeline should label the entry as redenominated");
   assert(!/▼ reduction/.test(txt), "a redenomination must not be shown as a reduction");

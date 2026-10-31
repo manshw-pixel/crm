@@ -7,8 +7,7 @@ function ChangeHistoryCard({ a }) {
   const shown = showAll ? entries : entries.slice(0, 50);
   const fmtVal = (f, v) => f === "arr" ? fmtMoney(+v || 0, a.currency) : f === "renewalDate" ? fmtDate(v) : (v === "" || v == null ? "—" : String(v));
   return (
-    <Card title={`Change history (${entries.length})`}>
-      <button className="mb-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setOpen(o => !o)}>{open ? "Hide" : "Show"}</button>
+    <AdCard title="Change history" n={`(${entries.length})`} right={<button className="ad-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
       {open && <>
         {shown.map(e => (
           <div key={e.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1 text-xs last:border-0">
@@ -20,7 +19,75 @@ function ChangeHistoryCard({ a }) {
         ))}
         {!showAll && entries.length > 50 && <button className="mt-1 text-xs font-semibold text-indigo-600 hover:underline" onClick={() => setShowAll(true)}>Show all ({entries.length})</button>}
       </>}
-    </Card>
+    </AdCard>
+  );
+}
+// Overview card shell: h2 title + muted count. The visible title text stays "Title (N)" so
+// long-standing text tests keep matching.
+const AdCard = ({ title, n, right, children, compact }) => (
+  <section data-ad-card aria-label={title} className={`ad-card ${compact && !children ? "ad-box-c" : "ad-box"}`}>
+    <div className="flex items-center gap-2.5">
+      <h2 className={`ad-h2 ${right ? "!mb-0" : ""}`}>{title}{n != null && <> <span className="ad-n">{n}</span></>}</h2>{right}
+    </div>
+    {children}
+  </section>
+);
+// Activity icon paths, from the approved preview's `I` table. Unknown types fall back to note.
+const ACTIVITY_ICON = {
+  call: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2",
+  email: "M4 6h16v12H4z M4 7l8 6 8-6",
+  meeting: "M8 7V3m8 4V3M4 11h16M5 5h14v16H5z",
+  qbr: "M4 20V10m6 10V4m6 16v-7m4 7H2",
+  note: "M5 4h10l4 4v12H5z M9 12h6 M9 16h4",
+};
+const activityIconKey = type => { const k = String(type || "").toLowerCase(); return ACTIVITY_ICON[k] ? k : "note"; };
+const PRIORITY_SEV = { High: "red", Medium: "amber", Low: "grey" };
+function RevenueHistoryCard({ a }) {
+  const [open, setOpen] = useState(false);
+  const events = [
+    ...(a.renewals || []).map(r => ({ id: r.id, date: r.completedOn, sort: r.completedOn, kind: "renewal", r })),
+    ...(a.arrEvents || []).map(ev => ({ id: ev.id, date: ev.date, sort: ev.date, kind: ev.kind, ev })),
+    ...(a.churn ? [{ id: "churn", date: a.churn.date, sort: a.churn.date, kind: "churn" }] : []),
+  ].sort((x, y) => y.sort.localeCompare(x.sort));
+  return (
+    <AdCard title="Revenue history" n={`(${events.length})`} right={<button className="ad-toggle" aria-expanded={open} onClick={() => setOpen(o => !o)}>{open ? "Hide ▴" : "Show ▾"}</button>}>
+      {open && <div className="mt-2">
+        {events.length === 0 && <div className="text-sm text-slate-500">No revenue events yet — renewals, won opportunities, ARR adjustments and churn all land here.</div>}
+        {events.map(e => (
+          <div key={e.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
+            {e.kind === "renewal" && <>
+              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
+              <span className="text-slate-800">{fmtDate(e.date)}</span>
+              <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
+              <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-500"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
+              <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
+              <span className="text-xs text-slate-500">by {e.r.by}</span>
+            </>}
+            {(e.kind === "expansion" || e.kind === "contraction") && <>
+              <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${e.kind === "expansion" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600"}`}>{e.kind === "expansion" ? "▲ expansion" : "▼ reduction"}</span>
+              <span className="text-slate-800">{fmtDate(e.date)}</span>
+              <span className="flex-1 text-xs text-slate-700">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
+              <span className={`text-xs font-bold ${e.ev.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
+              <span className="text-xs text-slate-500">by {e.ev.by}</span>
+            </>}
+            {e.kind === "redenomination" && <>
+              <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">⇄ redenominated</span>
+              <span className="text-slate-800">{fmtDate(e.date)}</span>
+              <span className="flex-1 text-xs text-slate-700">{e.ev.reason} — same revenue, restated</span>
+              <span className="text-xs font-semibold text-slate-600">{fmtMoney(e.ev.fromArr, e.ev.fromCurrency)} → {fmtMoney(e.ev.toArr, e.ev.toCurrency)}</span>
+              <span className="text-xs text-slate-500">by {e.ev.by}</span>
+            </>}
+            {e.kind === "churn" && <>
+              <span className="rounded bg-rose-500 px-1.5 py-0.5 text-xs font-bold text-white">✖ churned</span>
+              <span className="text-slate-800">{fmtDate(e.date)}</span>
+              <span className="flex-1 text-xs text-slate-700">{a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
+              <span className="text-xs font-bold text-rose-600">−{fmtMoney(a.churn.arr, a.churn.currency || a.currency)}</span>
+              <span className="text-xs text-slate-500">by {a.churn.by}</span>
+            </>}
+          </div>
+        ))}
+      </div>}
+    </AdCard>
   );
 }
 const Meta = ({ label, value }) => (value === "" || value == null) ? null : (
@@ -248,116 +315,120 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         : form && form.t === "editActivity" ? <LogActivityForm acct={a} existing={form.item} dispatch={dispatch} onDone={() => setForm(null)} />
         : form && form.t === "editTask" ? <AddTaskForm acct={a} existing={form.item} team={team} user={user} dispatch={dispatch} onDone={() => setForm(null)} />
         : <UpdateHealthForm acct={a} dispatch={dispatch} onDone={() => setForm(null)} />}</Card>}
-      <div className="flex gap-2" role="tablist">
+      <div className="ad-tabs" role="tablist" aria-label="Account sections">
         {[["overview", "Overview"], ["Invoices", "Invoices"], ["Purchase orders", "Purchase orders"]].filter(([k]) => !ro || k === "overview").map(([k, label]) => <button key={k} role="tab" aria-selected={tab === k} data-account-tab={k}
-          className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === k ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(k)}>{label}</button>)}
+          className="ad-tab" onClick={() => setTab(k)}>{label}</button>)}
       </div>
       {tab === "Invoices" && <Card title="Invoices"><AccountInvoices account={a} user={user} /></Card>}
       {tab === "Purchase orders" && <Card title="Purchase orders"><AccountPurchaseOrders account={a} user={user} /></Card>}
-      {tab === "overview" && <>
-      <div className="grid gap-4 lg:grid-cols-3">
-        <Card title="Health trend">
-          {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); return (
-            <div className={`mb-2 text-xs font-bold ${iu >= 45 ? "text-rose-500" : iu >= 30 ? "text-amber-600" : "text-slate-500"}`}>
-              Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? (ro ? " — inputs are stale" : " — refresh via ✎ Update health") : ""}
-            </div>); })()}
-          <Sparkline points={[...(a.history || []), { d: iso(Date.now()), s: a.score }]} />
-          <div className="mt-2 space-y-0.5 text-xs text-slate-700">
-            {Object.keys(comps).filter(k => k !== "value" || st.settings.weights?.value > 0).map(k => <React.Fragment key={k}>
-              <div className="flex items-center gap-2">
-                <span className="w-36 shrink-0">{WEIGHT_LABELS[k]}</span>
-                <span data-input-bar className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100"><span className="block h-full rounded-full" style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%`, background: comps[k] >= 70 ? RISK_HEX.Green : comps[k] >= 40 ? RISK_HEX.Yellow : RISK_HEX.Red }} /></span>
-                <span className="w-8 text-right font-semibold tabular-nums">{comps[k]}</span>
-              </div>
-              {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="mb-1 ml-4 space-y-0.5 text-[11px] text-slate-500">
-                {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
-                  <div key={b.type} data-recency-type={b.type} className="flex justify-between">
-                    <span>{b.type}</span>
-                    <span className="tabular-nums">{b.score} · {b.lastDate ? `last ${daysSince(b.lastDate)}d ago` : "never"}</span>
-                  </div>)}
-              </div>}
-            </React.Fragment>)}
-          </div>
-        </Card>
-        <Card title={`Open tasks (${tasks.length})`}>
-          {tasks.length === 0 && <div className="text-sm text-slate-500">None open.</div>}
-          {tasks.map(t => (
-            <div key={t.id} className="border-b border-slate-100 py-1.5 last:border-0">
-              <div className="flex items-center gap-2 text-sm">
-                {!ro && <input type="checkbox" checked={false} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />}
-                <span className="flex-1">{t.title}</span>
-                <span className="text-xs text-slate-500">{t.owner}</span>
-                <span className={`text-xs ${daysUntil(t.due) < 0 ? "text-rose-600 font-semibold" : "text-slate-700"}`}>{fmtDate(t.due)}</span>
-                <span className="text-xs text-slate-500">{t.priority}</span>
-                {!ro && <button title="Edit task" aria-label="Edit task" className="text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editTask", item: t })}>✎</button>}
-              </div>
-              {t.details && <div className="ml-6 mt-1 whitespace-pre-wrap text-xs text-slate-600">{t.details}</div>}
-              {t.attachments && t.attachments.length > 0 && <div className="ml-6 mt-1"><AttachmentLinks items={t.attachments} /></div>}
-            </div>
-          ))}
-        </Card>
-        <Card title={`Contacts (${contacts.length})`}>
-          {contacts.map(c => (
-            <div key={c.id} className="border-b border-slate-100 py-1.5 text-sm last:border-0">
-              <div className="flex items-center gap-1 font-medium">{c.isChampion && <span title="Champion">⭐</span>}{c.name}
-                <span className={`ml-auto text-xs ${c.sentiment === "Positive" ? "text-emerald-600" : c.sentiment === "Negative" ? "text-rose-600" : "text-slate-500"}`}>{c.sentiment}</span>
-                {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-indigo-600 hover:text-indigo-800" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
-                {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} className="nm-btn shrink-0 px-1.5 py-0.5 text-xs text-rose-600 hover:text-rose-800" onClick={() => setConfirmContact(c)}>🗑</button>}</div>
-              <div className="text-xs text-slate-700">{c.role} · {c.email}</div>
-            </div>
-          ))}
-        </Card>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card title={`Activity timeline (${acts.length})`}>
-          {acts.length === 0 && <div className="text-sm text-slate-500">No activity yet.</div>}
-          {acts.map(x => (
-            <div key={x.id} className="border-b border-slate-100 py-1.5 last:border-0">
-              <div className="flex items-center gap-3 text-sm">
-                <span className="nm-inset w-16 shrink-0 px-1.5 py-0.5 text-center text-xs font-bold text-slate-700">{x.type}</span>
-                <span className="flex-1">{x.summary}</span>
-                <span className="shrink-0 text-xs text-slate-500">{fmtDate(x.date)}</span>
-                {!ro && <button title="Edit activity" aria-label="Edit activity" className="shrink-0 text-xs text-indigo-500 hover:text-indigo-700" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>}
-              </div>
-              {x.details && <div className="ml-[76px] mt-1 whitespace-pre-wrap text-xs text-slate-600">{x.details}</div>}
-              {x.attachments && x.attachments.length > 0 && <div className="ml-[76px] mt-1"><AttachmentLinks items={x.attachments} /></div>}
-            </div>
-          ))}
-        </Card>
-        <Card title={`Opportunities (${opps.filter(o => !["Won", "Lost"].includes(o.stage)).length} open)`}>
-          {opps.length === 0 && <div className="text-sm text-slate-500">None.</div>}
-          {opps.map(o => (
-            <div key={o.id} className={`flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0 ${["Won", "Lost"].includes(o.stage) ? "opacity-60" : ""}`}>
-              <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{o.type}</span>
-              <span className="flex-1 font-medium">{fmtMoney(o.value, a.currency)}</span>
-              {ro ? <span className="rounded bg-slate-100 px-2 py-0.5 text-xs font-semibold text-slate-700">{o.stage}</span> : <Select value={o.stage} options={["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"]}
-                disabled={!!a.churn} title={a.churn ? "Account is churned — reactivate it to work opportunities" : undefined}
-                className="!px-2 !py-0.5 text-xs disabled:opacity-50" onChange={e => {
-                  const stage = e.target.value;
-                  if (stage === o.stage) return;
-                  if (stage === "Won") {
-                    // The select is controlled by o.stage, so opening the dialog re-renders
-                    // it back to the current stage until the change is actually confirmed.
-                    setConfirmOpp({ kind: "won", opp: o, run: () => {
+      {tab === "overview" && <div data-overview className="ad-cols">
+        <div className="ad-col-l">
+          <AdCard title="Activity timeline" n={`(${acts.length})`}>
+            {acts.length === 0 && <div className="ad-empty">No activity yet.</div>}
+            {acts.map(x => { const ik = activityIconKey(x.type); return (
+              <div key={x.id} data-activity-row className="ad-row !items-start !gap-3.5">
+                <span aria-hidden="true" data-activity-icon={ik} className="ad-act-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d={ACTIVITY_ICON[ik]} /></svg></span>
+                <div className="min-w-0 flex-auto">
+                  <div className="ad-t" style={{ overflowWrap: "anywhere" }}><span data-activity-type className="ad-act-type">{x.type}</span><span>{x.summary}</span></div>
+                  {x.details && <div className="ad-body">{x.details}</div>}
+                  {x.attachments && x.attachments.length > 0 && <div className="mt-1"><AttachmentLinks items={x.attachments} /></div>}
+                </div>
+                <span className="ad-sm flex-none pt-0.5">{fmtDate(x.date)}</span>
+                {!ro && <button title="Edit activity" aria-label="Edit activity" className="ad-ico" onClick={() => setForm({ t: "editActivity", item: x })}>✎</button>}
+              </div>); })}
+          </AdCard>
+          <AdCard title="Opportunities" n={`(${opps.filter(o => !["Won", "Lost"].includes(o.stage)).length} open)`}>
+            {opps.length === 0 && <div className="ad-empty">None.</div>}
+            {opps.map(o => (
+              <div key={o.id} className={`ad-row flex-wrap ${["Won", "Lost"].includes(o.stage) ? "opacity-60" : ""}`}>
+                <span className="ad-chip">{o.type}</span>
+                <b className="flex-auto tabular-nums" style={{ color: "var(--d-fg)" }}>{fmtMoney(o.value, a.currency)}</b>
+                {ro ? <span className="ad-pill">{o.stage}</span> : <select value={o.stage} aria-label="Opportunity stage"
+                  disabled={!!a.churn} title={a.churn ? "Account is churned — reactivate it to work opportunities" : undefined}
+                  className="ad-opp-stage disabled:opacity-50" onChange={e => {
+                    const stage = e.target.value;
+                    if (stage === o.stage) return;
+                    if (stage === "Won") {
+                      // The select is controlled by o.stage, so opening the dialog re-renders
+                      // it back to the current stage until the change is actually confirmed.
+                      setConfirmOpp({ kind: "won", opp: o, run: () => {
+                        dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
+                        toast({ text: `${o.type} won for ${a.name}.`, tone: "success", action: { label: "Start onboarding", run: () => { if (shownId.current === a.id) setHandoverOpen(true); } } });
+                        dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
+                          entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
+                        dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
+                          summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
+                      } });
+                    } else if (o.stage === "Won") {
+                      setConfirmOpp({ kind: "stage", opp: o, run: () => dispatch({ type: "SET_OPP_STAGE", id: o.id, stage }) });
+                    } else {
                       dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
-                      toast({ text: `${o.type} won for ${a.name}.`, tone: "success", action: { label: "Start onboarding", run: () => { if (shownId.current === a.id) setHandoverOpen(true); } } });
-                      dispatch({ type: "ADJUST_ARR", id: a.id, newArr: a.arr + o.value,
-                        entry: { id: uid(), date: iso(Date.now()), delta: o.value, kind: "expansion", source: "opportunity", reason: `${o.type} won`, note: "", by: user.name } });
-                      dispatch({ type: "ADD_ACTIVITY", item: { id: uid(), accountId: a.id, type: "note", date: iso(Date.now()),
-                        summary: `Opportunity WON — ${fmtMoney(o.value, a.currency)} ${o.type} · ARR now ${fmtMoney(a.arr + o.value, a.currency)} · by ${user.name}` } });
-                    } });
-                  } else if (o.stage === "Won") {
-                    setConfirmOpp({ kind: "stage", opp: o, run: () => dispatch({ type: "SET_OPP_STAGE", id: o.id, stage }) });
-                  } else {
-                    dispatch({ type: "SET_OPP_STAGE", id: o.id, stage });
-                  }
-                }} />}
-              <span className="text-xs text-slate-500">close {fmtDate(o.closeDate)}</span>
-            </div>
-          ))}
-        </Card>
-      </div>
-      </>}
+                    }
+                  }}>
+                  {["Discovery", "Proposal", "Negotiation", "Stalled", "Won", "Lost"].map(s => <option key={s} value={s}>{s}</option>)}
+                </select>}
+                <span className="ad-xs">close {fmtDate(o.closeDate)}</span>
+              </div>
+            ))}
+          </AdCard>
+          <RevenueHistoryCard a={a} />
+          {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
+        </div>
+        <div className="ad-col-r">
+          {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); const sev = iu >= 45 ? "red" : iu >= 30 ? "amber" : undefined;
+            const pts = [...(a.history || []), { d: iso(Date.now()), s: a.score }];
+            return (
+            <AdCard title="Health breakdown" right={<span data-sev={sev} className="ad-stale ml-auto text-right">
+              Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? (ro ? " — inputs are stale" : " — refresh via ✎ Update health") : ""}</span>}>
+              <div className="ad-spark mt-2"><Sparkline points={pts} w={260} h={44} /></div>
+              <div className="mt-1 flex flex-col gap-[11px]">
+                {Object.keys(comps).filter(k => k !== "value" || st.settings.weights?.value > 0).map(k => { const rk = riskOf(comps[k]); return <React.Fragment key={k}>
+                  <div className="flex flex-col gap-1">
+                    <div className="flex text-[13px]"><span style={{ color: "var(--d-label)" }}>{WEIGHT_LABELS[k]}</span><b data-risk={rk} className="ad-bar-n ml-auto tabular-nums">{comps[k]}</b></div>
+                    <span data-input-bar data-risk={rk} aria-hidden="true" className="ad-bar"><span style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%` }} /></span>
+                  </div>
+                  {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="ml-4 space-y-0.5 text-[11px]" style={{ color: "var(--d-meta)" }}>
+                    {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
+                      <div key={b.type} data-recency-type={b.type} className="flex justify-between">
+                        <span>{b.type}</span>
+                        <span className="tabular-nums">{b.score} · {b.lastDate ? `last ${daysSince(b.lastDate)}d ago` : "never"}</span>
+                      </div>)}
+                  </div>}
+                </React.Fragment>; })}
+              </div>
+            </AdCard>); })()}
+          <AdCard title="Open tasks" n={`(${tasks.length})`}>
+            {tasks.length === 0 && <div className="ad-empty">None open.</div>}
+            {tasks.map(t => { const du = daysUntil(t.due); return (
+              <div key={t.id}>
+                <label data-task-row className="ad-task">
+                  {!ro && <input type="checkbox" checked={false} aria-label={`Complete ${t.title}`} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />}
+                  <span className="min-w-0 flex-auto" style={{ overflowWrap: "anywhere" }}>{t.title}
+                    <span className="ad-xs block">{t.owner}{t.owner ? " · " : ""}<span data-task-due data-overdue={du < 0 ? "true" : undefined} className="ad-due">{du < 0 ? `Overdue · ${fmtDate(t.due)}` : du === 0 ? "Today" : fmtDate(t.due)}</span></span></span>
+                  {t.priority && <span data-priority data-sev={PRIORITY_SEV[t.priority] || "grey"} className="ad-pill ad-pill-sm">{t.priority}</span>}
+                  {!ro && <button title="Edit task" aria-label="Edit task" className="ad-ico" onClick={e => { e.preventDefault(); setForm({ t: "editTask", item: t }); }}>✎</button>}
+                </label>
+                {t.details && <div className="ad-body ml-[26px] mb-1">{t.details}</div>}
+                {t.attachments && t.attachments.length > 0 && <div className="mb-1 ml-[26px]"><AttachmentLinks items={t.attachments} /></div>}
+              </div>); })}
+          </AdCard>
+          <AdCard title="Contacts" n={`(${contacts.length})`}>
+            {contacts.map(c => (
+              <div key={c.id} data-contact-row className="ad-row !gap-2.5">
+                <span aria-hidden="true" data-contact-av className="ad-cav">{initialsOf(c.name)}</span>
+                <div className="min-w-0 flex-auto">
+                  <div className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}{c.isChampion && <> <span className="ad-champ">★ Champion</span></>}</div>
+                  <div className="ad-xs truncate" title={[c.role, c.email].filter(Boolean).join(" · ")}>{[c.role, c.email].filter(Boolean).join(" · ")}</div>
+                </div>
+                {c.sentiment && <span data-sent={c.sentiment} className="ad-sent">{c.sentiment}</span>}
+                {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn ad-ico" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
+                {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} data-danger className="nm-btn ad-ico" onClick={() => setConfirmContact(c)}>🗑</button>}
+              </div>
+            ))}
+          </AdCard>
+        </div>
+      </div>}
       {confirmContact && <ConfirmDialog
         title="Delete contact"
         body={`Delete ${confirmContact.name}${confirmContact.email ? ` (${confirmContact.email})` : ""}? This cannot be undone. Email touchpoints will stop matching this address.`}
@@ -375,52 +446,6 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         onClose={() => setConfirmOpp(null)} />}
       <ProjectsCard account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
       <DocumentsCard a={a} dispatch={dispatch} user={user} readOnly={ro} />
-      {(() => {
-        const events = [
-          ...(a.renewals || []).map(r => ({ id: r.id, date: r.completedOn, sort: r.completedOn, kind: "renewal", r })),
-          ...(a.arrEvents || []).map(ev => ({ id: ev.id, date: ev.date, sort: ev.date, kind: ev.kind, ev })),
-          ...(a.churn ? [{ id: "churn", date: a.churn.date, sort: a.churn.date, kind: "churn" }] : []),
-        ].sort((x, y) => y.sort.localeCompare(x.sort));
-        return (
-          <Card title={`Revenue history (${events.length})`}>
-            {events.length === 0 && <div className="text-sm text-slate-500">No revenue events yet — renewals, won opportunities, ARR adjustments and churn all land here.</div>}
-            {events.map(e => (
-              <div key={e.id} className="flex flex-wrap items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-                {e.kind === "renewal" && <>
-                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">✓ renewed</span>
-                  <span className="text-slate-800">{fmtDate(e.date)}</span>
-                  <span className="flex-1 text-xs text-slate-700">term extended {fmtDate(e.r.from)} → <b>{fmtDate(e.r.to)}</b></span>
-                  <span className={`text-xs ${e.r.billingCompleted ? "text-emerald-600" : "text-slate-500"}`}>{e.r.billingCompleted ? `billed ${fmtDate(e.r.billingCompletedDate)}` : "billing n/a"}</span>
-                  <span className="text-xs">{fmtMoney(e.r.arr, a.currency)}{e.r.arr !== e.r.prevArr && <span className={e.r.arr > e.r.prevArr ? "ml-1 text-emerald-600" : "ml-1 text-rose-600"}>({e.r.arr > e.r.prevArr ? "▲" : "▼"} from {fmtMoney(e.r.prevArr, a.currency)})</span>}</span>
-                  <span className="text-xs text-slate-500">by {e.r.by}</span>
-                </>}
-                {(e.kind === "expansion" || e.kind === "contraction") && <>
-                  <span className={`rounded px-1.5 py-0.5 text-xs font-semibold ${e.kind === "expansion" ? "bg-emerald-100 text-emerald-700" : "bg-rose-100 text-rose-600"}`}>{e.kind === "expansion" ? "▲ expansion" : "▼ reduction"}</span>
-                  <span className="text-slate-800">{fmtDate(e.date)}</span>
-                  <span className="flex-1 text-xs text-slate-700">{e.ev.reason}{e.ev.note ? ` — ${e.ev.note}` : ""}{e.ev.source === "opportunity" ? " (from opportunity)" : ""}</span>
-                  <span className={`text-xs font-bold ${e.ev.delta > 0 ? "text-emerald-600" : "text-rose-600"}`}>{e.ev.delta > 0 ? "+" : "−"}{fmtMoney(Math.abs(e.ev.delta), a.currency)}</span>
-                  <span className="text-xs text-slate-500">by {e.ev.by}</span>
-                </>}
-                {e.kind === "redenomination" && <>
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 text-xs font-semibold text-slate-600">⇄ redenominated</span>
-                  <span className="text-slate-800">{fmtDate(e.date)}</span>
-                  <span className="flex-1 text-xs text-slate-700">{e.ev.reason} — same revenue, restated</span>
-                  <span className="text-xs font-semibold text-slate-600">{fmtMoney(e.ev.fromArr, e.ev.fromCurrency)} → {fmtMoney(e.ev.toArr, e.ev.toCurrency)}</span>
-                  <span className="text-xs text-slate-500">by {e.ev.by}</span>
-                </>}
-                {e.kind === "churn" && <>
-                  <span className="rounded bg-rose-500 px-1.5 py-0.5 text-xs font-bold text-white">✖ churned</span>
-                  <span className="text-slate-800">{fmtDate(e.date)}</span>
-                  <span className="flex-1 text-xs text-slate-700">{a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
-                  <span className="text-xs font-bold text-rose-600">−{fmtMoney(a.churn.arr, a.churn.currency || a.currency)}</span>
-                  <span className="text-xs text-slate-500">by {a.churn.by}</span>
-                </>}
-              </div>
-            ))}
-          </Card>
-        );
-      })()}
-      {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
     </div>
   );
 }
