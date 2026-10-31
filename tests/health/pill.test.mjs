@@ -36,8 +36,8 @@ async function openAccount(page) {
 async function pill(page) {
   return page.evaluate(() => {
     const root = document.getElementById("root");
-    const el = [...root.querySelectorAll("span")].find(s => /♥\s*\d+\/\d+/.test(s.textContent) && /rounded-full/.test(s.className));
-    return el ? { text: el.textContent.trim(), cls: el.className } : null;
+    const el = root.querySelector("[data-playbook-pill]"); // Stage 4: severity lives in data-sev
+    return el ? { text: el.textContent.trim(), cls: "sev-" + el.getAttribute("data-sev") } : null;
   });
 }
 
@@ -52,7 +52,7 @@ test("pill shows done/total for the latest episode", async () => {
   assert(p, "pill should render when health tasks exist");
   assert(/♥\s*1\/3/.test(p.text), `expected ♥ 1/3, got "${p && p.text}"`);
   // 1 done of 3, none past due (all due 30 days out) → on-pace rose, not amber
-  assert(/bg-rose-100/.test(p.cls) && !/bg-amber-100/.test(p.cls), "in-progress on-pace pill should be rose: " + p.cls);
+  assert(/sev-red/.test(p.cls), "in-progress on-pace pill should be rose: " + p.cls);
   await browser.close();
 });
 
@@ -65,7 +65,7 @@ test("pill turns amber when an open step is past due (behind pace)", async () =>
   await openAccount(page);
   const p = await pill(page);
   assert(p && /♥\s*1\/3/.test(p.text), `expected ♥ 1/3, got "${p && p.text}"`);
-  assert(/bg-amber-100/.test(p.cls), "behind-pace pill should be amber: " + (p && p.cls));
+  assert(/sev-amber/.test(p.cls), "behind-pace pill should be amber: " + (p && p.cls));
   await browser.close();
 });
 
@@ -77,7 +77,7 @@ test("pill turns emerald when all steps done", async () => {
   await openAccount(page);
   const p = await pill(page);
   assert(p && /♥\s*2\/2/.test(p.text), `expected ♥ 2/2, got "${p && p.text}"`);
-  assert(/bg-emerald-100/.test(p.cls), "all-done pill should be emerald: " + (p && p.cls));
+  assert(/sev-green/.test(p.cls), "all-done pill should be emerald: " + (p && p.cls));
   await browser.close();
 });
 

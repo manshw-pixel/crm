@@ -7,7 +7,7 @@ function Sparkline({ points, w = 220, h = 48 }) {
   const d = xy.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
   const last = points[points.length - 1].s;
   return (
-    <svg width={w} height={h}>
+    <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`}>
       <path d={d} fill="none" stroke={RISK_HEX[riskOf(last)]} strokeWidth="2" />
       {xy.map((p, i) => <circle key={i} cx={p[0]} cy={p[1]} r="2.5" fill={RISK_HEX[riskOf(points[i].s)]} />)}
     </svg>

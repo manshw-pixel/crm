@@ -38,12 +38,12 @@ export async function openAccount(page, name) {
   await nav(page, "Accounts").click();
   await page.getByPlaceholder(/^Search/).fill(name);
   await page.locator("tr[data-account-row]").filter({ has: page.getByText(name, { exact: true }) }).first().click({ timeout: 15000 });
-  await page.getByRole("heading", { level: 2, name, exact: true }).waitFor({ timeout: 15000 });
+  await page.getByRole("heading", { level: 1, name, exact: true }).waitFor({ timeout: 15000 });
 }
 
-// A header-card stat's value line ("ARR", "Renewal", "CSM"), src/21-account-detail.jsx:106-117.
+// A header stat card's value line ("ARR", "Renewal", "Licenses", "CSM") -> [data-stat="arr|renewal|licenses|csm"] (Stage 4).
 export const stat = (page, label) =>
-  page.locator("[data-header-card] .min-w-0").filter({ has: page.getByText(label, { exact: true }) }).first().locator("> div").nth(1);
+  page.locator(`[data-header-card] [data-stat="${label.toLowerCase()}"] .ad-stat-value`).first();
 
 // The app's own formatters (global in the built page) so expected text matches the UI exactly.
 export const fmtMoneyIn = (page, n, cur) => page.evaluate(([n, cur]) => fmtMoney(n, cur), [n, cur]);

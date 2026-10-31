@@ -69,14 +69,14 @@ function docExpiryBadge(doc) {
   if (d <= EXPIRY_WARN_DAYS) return <span className="nm-inset !rounded-full px-2 py-0.5 text-[10px] font-bold text-amber-600">Expires in {d}d</span>;
   return null;
 }
-function DocumentsCard({ a, dispatch, user, readOnly }) {
+function DocumentsCard({ a, dispatch, user, readOnly, className = "" }) {
   const toast = useToast();
   const docs = a.documents || [];
   const [adding, setAdding] = useState(false);
   const [editId, setEditId] = useState(null);
   const [confirmDoc, setConfirmDoc] = useState(null);
   return (
-    <Card title={`Documents (${docs.length})`} right={readOnly ? null : <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
+    <Card className={className} title={`Documents (${docs.length})`} right={readOnly ? null : <button className="text-xs font-semibold text-indigo-600 hover:underline" onClick={() => { setEditId(null); setAdding(v => !v); }}>{adding ? "Close" : "＋ Add document"}</button>}>
       {adding && <div className="nm-inset mb-3 rounded-xl p-3"><DocumentForm acct={a} user={user} dispatch={dispatch} onDone={() => setAdding(false)} /></div>}
       {docs.length === 0 && !adding && <div className="text-sm text-slate-500">No documents yet.</div>}
       {DOC_CATEGORIES.map(cat => {

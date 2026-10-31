@@ -57,7 +57,7 @@ export const scenarios = [
       await form.getByPlaceholder("Name *").fill(who);
       await form.getByRole("button", { name: "Add", exact: true }).click();
       await waitForSaved(page);
-      const row = page.locator("div.border-b").filter({ has: page.locator("[data-delete-contact]") }).filter({ hasText: who });
+      const row = page.locator("[data-contact-row]").filter({ has: page.locator("[data-delete-contact]") }).filter({ hasText: who });
       await row.waitFor({ timeout: 10000 });
       await row.locator("[data-delete-contact]").click();
       await page.locator("[data-confirm-go]").click();
@@ -74,10 +74,10 @@ export const scenarios = [
       await page.getByPlaceholder("Summary…").fill(summary);
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
-      // The timeline row: type badge (span.w-16) + summary carrying this run's id.
-      const entry = page.locator("div.border-b").filter({ has: page.getByText(summary, { exact: true }) }).first();
+      // The timeline row: type word ([data-activity-type]) + summary carrying this run's id.
+      const entry = page.locator("[data-activity-row]").filter({ has: page.getByText(summary, { exact: true }) }).first();
       await entry.waitFor({ timeout: 10000 });
-      assert.equal((await entry.locator("span.w-16").first().textContent()).trim(), "call", "logged activity is not a call");
+      assert.equal((await entry.locator("[data-activity-type]").first().textContent()).trim(), "call", "logged activity is not a call");
     } },
 
   { id: `${F}/attachment`, feature: F, title: "Upload a PDF; opening it yields a working signed URL", role: "admin",
@@ -90,7 +90,7 @@ export const scenarios = [
       await page.locator('form input[type="file"][multiple]').setInputFiles({ name: file, mimeType: "application/pdf", buffer: PDF });
       await page.getByRole("button", { name: "Log", exact: true }).click();
       await waitForSaved(page);
-      const entry = page.locator("div.border-b").filter({ hasText: summary }).first();
+      const entry = page.locator("[data-activity-row]").filter({ hasText: summary }).first();
       const link = entry.locator("a[data-attachment]").filter({ hasText: file });
       await link.waitFor({ timeout: 30000 });
       const [popup] = await Promise.all([context.waitForEvent("page"), link.click()]);
@@ -180,5 +180,47 @@ export const scenarios = [
       await page.waitForFunction(() => document.querySelector('th[data-sort-key="industry"]').getAttribute("aria-sort") === "descending", null, { timeout: 5000 });
       const desc = await read();
       assert.deepEqual(desc, [...desc].sort().reverse(), "industry column not descending");
+    } },
+
+  // ---- UI Stage 4 (account detail): health ring, status pill severity, collapsible revenue history ----
+  { id: `${F}/health-ring`, feature: F, title: "account header shows health ring", role: "admin",
+    run: async ({ page, thisRunId: runId }) => {
+      const name = await ensureManual(page, runId);
+      await openAccount(page, name);
+      const ring = page.locator("[data-header-card] [data-health-ring]").first();
+      await ring.waitFor({ timeout: 10000 });
+      const label = await ring.getAttribute("aria-label");
+      const m = /^Health (\d+), (.+)$/.exec(label || "");
+      assert.ok(m, `ring aria-label malformed: ${label}`);
+      assert.equal((await ring.textContent()).trim(), m[1], "ring shows a different score than its label");
+      const word = (await page.locator("[data-header-card] [data-health-word]").first().textContent()).trim();
+      assert.equal(m[2], word, "ring label word differs from the visible health word");
+    } },
+
+  { id: `${F}/status-pill-severity`, feature: F, title: "status pills carry severity", role: "admin",
+    run: async ({ page, thisRunId: runId }) => {
+      const name = await ensureManual(page, runId); // created with Billing completed = No
+      await openAccount(page, name);
+      const pill = page.locator("[data-status-pill]").filter({ hasText: /^Billing / }).first();
+      await pill.waitFor({ timeout: 10000 });
+      const text = (await pill.textContent()).trim();
+      if (text !== "Billing pending") throw new SkipScenario(`run account billing is not pending ("${text}") — amber severity not exercised`);
+      assert.equal(await pill.getAttribute("data-sev"), "amber", "billing-pending pill is not amber");
+    } },
+
+  { id: `${F}/revenue-history-toggle`, feature: F, title: "revenue history expands", role: "admin",
+    run: async ({ page, thisRunId: runId }) => {
+      const name = await ensureManual(page, runId);
+      await openAccount(page, name);
+      const btn = page.getByRole("button", { name: /revenue history$/ });
+      await btn.waitFor({ timeout: 10000 });
+      assert.equal(await btn.getAttribute("aria-expanded"), "false", "revenue history not collapsed by default");
+      await btn.click();
+      await page.waitForFunction(() => [...document.querySelectorAll("button[aria-expanded]")]
+        .some(b => /revenue history$/.test(b.getAttribute("aria-label") || "") && b.getAttribute("aria-expanded") === "true"), null, { timeout: 5000 });
+      // Open: either event rows or the empty-state line is shown.
+      const card = page.locator("[data-rev-row]").or(page.getByText(/^No revenue events yet/)).filter({ visible: true }).first();
+      await card.waitFor({ timeout: 5000 });
+      await btn.click(); // leave it collapsed
     } },
 ];
