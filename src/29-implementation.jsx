@@ -63,11 +63,11 @@ function HandoverForm({ account, st, dispatch, user, onDone }) {
   );
 }
 
-function ProjectsCard({ account, st, dispatch, user, open, setOpen, openProject }) {
+function ProjectsCard({ account, st, dispatch, user, open, setOpen, openProject, className = "" }) {
   const projects = (st.projects || []).filter(p => p.accountId === account.id);
   const canCreate = canCreateHandover(user);
   return (
-    <Card title={`Projects (${projects.length})`} right={canCreate && !open
+    <Card className={className} title={`Projects (${projects.length})`} right={canCreate && !open
       ? <Btn data-new-project onClick={() => setOpen(true)}>+ New project</Btn> : null}>
       {open && canCreate && <div className="mb-3"><HandoverForm key={account.id} account={account} st={st} dispatch={dispatch} user={user} onDone={() => setOpen(false)} /></div>}
       {projects.length === 0 && <div className="text-sm text-slate-500">No implementation projects.</div>}
