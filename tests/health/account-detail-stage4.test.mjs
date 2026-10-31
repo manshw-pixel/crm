@@ -146,6 +146,9 @@ test("churned account header: Reactivate, no Complete renewal, no stage select",
     assert(await page.locator("button", { hasText: "✓ Complete renewal" }).count() === 0, "no Complete renewal");
     assert(await page.locator("[data-renewal-stage]").count() === 0, "no renewal stage");
     assert(await page.getByText("CHURNED", { exact: true }).count() === 1, "churned banner");
+    const col = label => page.locator("[data-header-card] button", { hasText: label }).evaluate(e => getComputedStyle(e).color);
+    const [re, ed] = [await col("↻ Reactivate"), await col("✎ Edit account")];
+    assert(re !== ed, `Reactivate colour ${re} should differ from Edit ${ed} (emerald)`);
   } finally { await browser.close(); }
 });
 

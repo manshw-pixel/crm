@@ -64,6 +64,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hDone = hEpisode.filter(t => t.status === "Done").length;
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
   const comps = scoreComponents(a, st.activities, st.settings);
+  // Σ rollup (own ARR + live subs, USD): one value for the ARR stat and the Sub-accounts title.
+  const rollup = subs.length > 0 ? toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0) : null;
   return (
     <div className="ad-page space-y-4">
       <button onClick={back} className="ad-back">← Accounts</button>
@@ -74,7 +76,6 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         const ld = a.leadId && (team || []).find(u => u.id === a.leadId);
         const iu = daysSince(a.inputsUpdatedAt || a.startDate);
         const rk = riskOf(a.score);
-        const rollup = subs.length > 0 ? toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0) : null;
         // Sub line: empty parts drop out entirely, so there is never a stray "·".
         const subParts = [a.tier, a.industry, ld && `Lead ${ld.name}`,
           parent && <>Parent <button className="ad-link" onClick={() => openAccount(parent.id)}>{parent.name}</button></>].filter(Boolean);
@@ -114,7 +115,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               <Btn onClick={() => setForm("health")}>✎ Update health</Btn>
               {!a.churn && <Btn onClick={() => setForm("renewal")}>✓ Complete renewal</Btn>}
               <Btn onClick={() => setForm("edit")}>✎ Edit account</Btn>
-              {a.churn && <Btn className="ad-reactivate"
+              {a.churn && <Btn data-reactivate
                 onClick={() => {
                   // Reversible in one dispatch, so no dialog: act, then offer Undo.
                   const prev = a.churn;
@@ -226,7 +227,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         <span className="text-slate-700">{fmtDate(a.churn.date)} · {a.churn.reason}{a.churn.note ? ` — ${a.churn.note}` : ""}</span>
         <span className="ml-auto text-xs text-slate-500">{fmtMoney(a.churn.arr, a.churn.currency)} ARR lost · recorded by {a.churn.by}</span>
       </div>}
-      {subs.length > 0 && <Card title={`Sub-accounts (${subs.length}) · rollup ${fmtMoney(toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0))} USD`}>
+      {subs.length > 0 && <Card title={`Sub-accounts (${subs.length}) · rollup ${fmtMoney(rollup)} USD`}>
         {subs.map(s => (
           <button key={s.id} onClick={() => openAccount(s.id)} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-slate-50">
             <span>{s.name}{s.churn && <span className="ml-2 rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-bold text-rose-600">churned</span>}</span>
