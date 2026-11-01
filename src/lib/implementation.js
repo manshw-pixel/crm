@@ -180,3 +180,31 @@ export function csmHandovers(accountId, projects) {
     .sort((a, b) => String(a.e.at).localeCompare(String(b.e.at)))
     .map((x, i) => ({ projectId: x.p.id, type: x.p.type, date: day(x.e.at), by: x.e.by || null, n: i + 1 }));
 }
+
+/* Board card status tag: one per card, first match wins. null for handover / on_hold / cancelled. */
+export function boardTag(project, today) {
+  const stage = project.stage;
+  if (!OPEN_STAGES.includes(stage) && stage !== "live") return null;
+  const open = OPEN_STAGES.includes(stage);
+  if (open && !project.implementerId) return { text: "Needs owner", sev: "amber" };
+  const goLive = day(project.targetGoLive);
+  if (stage !== "live" && goLive) {
+    const d = Math.round((dayMs(goLive) - dayMs(today)) / DAY_MS);
+    if (d < 0) return { text: "Go-live passed", sev: "red" };
+    if (d <= 14) return { text: `Go-live in ${d}d`, sev: "amber" };
+  }
+  if (stage === "csm_review") return { text: "Awaiting sign-off", sev: "grey" };
+  if (stage === "live") return { text: "Live", sev: "green" };
+  return { text: "On track", sev: "green" };
+}
+
+/* Board subtitle counts over the given (already filtered) projects. */
+export function boardSummary(projects, today) {
+  const open = (projects || []).filter(p => OPEN_STAGES.includes(p.stage));
+  const month = day(today).slice(0, 7);
+  return {
+    open: open.length,
+    atRisk: open.filter(p => { const t = boardTag(p, today); return t && (t.sev === "red" || t.sev === "amber"); }).length,
+    goLiveThisMonth: open.filter(p => day(p.targetGoLive).slice(0, 7) === month && day(p.targetGoLive)).length,
+  };
+}

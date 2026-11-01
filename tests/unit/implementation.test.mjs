@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STAGES, STAGE_LABEL, OPEN_STAGES, projectType, canTransition, applySignoff, historyEntry,
-  loggedHours, workload, stageAt, chartCounts, csmHandovers } from "../../src/lib/implementation.js";
+  loggedHours, workload, stageAt, chartCounts, csmHandovers, boardTag, boardSummary } from "../../src/lib/implementation.js";
 
 const lead = { id: "L", role: "impl_lead", name: "Lead" };
 const admin = { id: "A", role: "admin", name: "Adm" };
@@ -197,4 +197,34 @@ test("csmHandovers: one entry per signed-off project, oldest first, numbered", (
   ]);
   assert.deepEqual(csmHandovers("a1", []), []);
   assert.deepEqual(csmHandovers("a1", undefined), []);
+});
+
+const T = "2026-11-01";
+test("boardTag priority", () => {
+  const tag = (o) => boardTag(proj(o), T);
+  assert.deepEqual(tag({ stage: "queued", implementerId: null, targetGoLive: "2026-10-01" }), { text: "Needs owner", sev: "amber" });
+  assert.deepEqual(tag({ stage: "in_progress", targetGoLive: "2026-10-24" }), { text: "Go-live passed", sev: "red" });
+  assert.deepEqual(tag({ stage: "in_progress", targetGoLive: "2026-11-01" }), { text: "Go-live in 0d", sev: "amber" });
+  assert.deepEqual(tag({ stage: "in_progress", targetGoLive: "2026-11-15" }), { text: "Go-live in 14d", sev: "amber" });
+  assert.deepEqual(tag({ stage: "in_progress", targetGoLive: "2026-11-16" }), { text: "On track", sev: "green" });
+  assert.deepEqual(tag({ stage: "csm_review", targetGoLive: "2026-12-20" }), { text: "Awaiting sign-off", sev: "grey" });
+  assert.equal(tag({ stage: "csm_review", targetGoLive: "2026-10-01" }).text, "Go-live passed");
+  assert.deepEqual(tag({ stage: "live", targetGoLive: "2026-10-01" }), { text: "Live", sev: "green" });
+  assert.deepEqual(tag({ stage: "planning", targetGoLive: "" }), { text: "On track", sev: "green" });
+  for (const stage of ["handover", "on_hold", "cancelled"]) assert.equal(tag({ stage }), null);
+});
+
+test("boardSummary counts", () => {
+  const ps = [
+    proj({ id: "1", stage: "queued", implementerId: null }),
+    proj({ id: "2", stage: "in_progress", targetGoLive: "2026-10-20" }),
+    proj({ id: "3", stage: "in_progress", targetGoLive: "2026-11-28" }),
+    proj({ id: "4", stage: "planning" }),
+    proj({ id: "5", stage: "csm_review", targetGoLive: "2026-12-20" }),
+    proj({ id: "6", stage: "planning", targetGoLive: "2027-01-10" }),
+    proj({ id: "7", stage: "live", targetGoLive: "2026-11-10" }),
+    proj({ id: "8", stage: "on_hold", targetGoLive: "2026-11-10" }),
+  ];
+  assert.deepEqual(boardSummary(ps, T), { open: 6, atRisk: 2, goLiveThisMonth: 1 });
+  assert.deepEqual(boardSummary([], T), { open: 0, atRisk: 0, goLiveThisMonth: 0 });
 });
