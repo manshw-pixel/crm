@@ -88,18 +88,42 @@ var BOARD_COLUMNS = ["queued", "planning", "in_progress", "csm_review", "live"];
 var BOARD_COLLAPSED = ["handover", "on_hold", "cancelled"];
 var BOARD_COLLAPSED_LABEL = { handover: "Handover drafts" };
 
-function BoardCard({ p, st, onOpen }) {
+// "Mon D" from an ISO day, read as UTC so the day never shifts with the viewer's timezone
+function imMonthDay(d) { return new Date(String(d).slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" }); }
+
+function BoardCard({ p, st, onOpen, today }) {
   const acct = (st.accounts || []).find(a => a.id === p.accountId);
   const tasks = (st.projectTasks || []).filter(t => t.projectId === p.id);
   const done = tasks.filter(t => t.status === "done").length;
+  const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
+  const tag = boardTag(p, today);
+  const name = acct ? acct.name : "Unknown account";
+  const owner = p.implementerId ? teamName(st, p.implementerId) : "Unassigned";
+  const when = p.stage === "live" && (p.liveAt || p.targetGoLive) ? `live ${imMonthDay(p.liveAt || p.targetGoLive)}`
+    : p.targetGoLive ? `go-live ${imMonthDay(p.targetGoLive)}` : "no go-live date";
+  const prog = `${done}/${tasks.length} tasks done`;
   return (
-    <button data-board-project={p.id} onClick={() => onOpen(p.id)} className="nm-btn mb-2 block w-full p-2 text-left text-xs">
-      <div className="text-sm font-semibold text-slate-800">{acct ? acct.name : "Unknown account"}</div>
-      <div className="text-slate-500">{IMPL_TYPE_LABEL[p.type] || p.type} · {p.implementerId ? teamName(st, p.implementerId) : "Unassigned"}</div>
-      <div className="text-slate-500">{p.targetGoLive ? `go-live ${fmtDate(p.targetGoLive)} · ` : ""}{done}/{tasks.length} tasks</div>
+    <button data-board-project={p.id} onClick={() => onOpen(p.id)} className="im-card">
+      <span className="im-card-top">
+        <span aria-hidden="true" data-avatar className="acct-av im-av" data-av={avatarSlot(p.accountId)}>{acct ? initialsOf(acct.name) : "?"}</span>
+        <b className="im-name" title={name}>{name}</b>
+      </span>
+      <span className="im-meta"><span className="im-type">{IMPL_TYPE_LABEL[p.type] || p.type}</span>{when}</span>
+      <span className="im-prog" data-board-progress>
+        <span className="im-prog-row"><span>{prog}</span><span className="im-pct">{pct}%</span></span>
+        <span role="img" aria-label={prog} className="im-bar"><span style={{ width: pct + "%" }} /></span>
+      </span>
+      <span className="im-foot">
+        <span aria-hidden="true" className="im-owner-av">{p.implementerId ? initialsOf(owner) : "—"}</span>
+        <span className="im-owner">{owner}</span>
+        {tag && <span data-board-tag data-sev={tag.sev} className="ad-pill im-tag">{tag.text}</span>}
+      </span>
     </button>
   );
 }
+
+var BOARD_DOT = { queued: "#0284c7", planning: "#4f46e5", in_progress: "#7c3aed", csm_review: "#d97706", live: "#059669", handover: "#64748b", on_hold: "#d97706", cancelled: "#64748b" };
+var BOARD_HINT = { handover: "Sales handovers not yet submitted", on_hold: "Paused with a reason", cancelled: "Closed without going live" };
 
 function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
   const [tab, setTab] = useState("Board");
@@ -114,42 +138,62 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
     .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
   const impls = implementersOf(st);
   if (selId) return <Card title="Implementation project"><ProjectDetail key={selId} st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
-  const column = s => {
-    const rows = projects.filter(p => p.stage === s);
-    return rows.map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} />);
-  };
+  const today = iso(Date.now());
+  const sum = boardSummary(projects, today);
+  const column = s => projects.filter(p => p.stage === s).map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} today={today} />);
+  const whoOpts = ["", "_mine", ...impls.map(u => u.id)];
+  const whoLabels = { "": "All implementers", _mine: "Mine", ...Object.fromEntries(impls.map(u => [u.id, u.name])) };
+  const typeLabels = { "": "All types", ...IMPL_TYPE_LABEL };
   return (
-    <Card title="Implementation projects">
-      <div className="mb-3 flex gap-2" role="tablist">
-        {["Board", ...(canManageImpl(user) ? ["Workload"] : []), "My tasks"].map(t => <button key={t} role="tab" aria-selected={tab === t} data-impl-tab={t}
-          className={`nm-btn px-3 py-1.5 text-xs font-bold ${tab === t ? "text-indigo-700" : "text-slate-600"}`} onClick={() => setTab(t)}>{t}</button>)}
-      </div>
+    <div className="im-page">
+      <header className="im-head">
+        <p data-board-subtitle className="im-sub">{`${sum.open} open projects · ${sum.atRisk} at risk · ${sum.goLiveThisMonth} go-live this month`}</p>
+        <div className="im-seg" role="tablist" aria-label="Implementation views">
+          {["Board", ...(canManageImpl(user) ? ["Workload"] : []), "My tasks"].map(t => <button key={t} role="tab" aria-selected={tab === t} data-impl-tab={t}
+            className="im-seg-btn" onClick={() => setTab(t)}>{t}</button>)}
+        </div>
+      </header>
       {tab === "Board" && <>
-        <div className="mb-3 flex flex-wrap gap-2">
-          <Select data-board-filter-who aria-label="Implementer filter" value={who} onChange={e => setWho(e.target.value)}
-            options={["", "_mine", ...impls.map(u => u.id)]} labels={{ "": "All implementers", _mine: "Mine", ...Object.fromEntries(impls.map(u => [u.id, u.name])) }} />
-          <Select data-board-filter-type aria-label="Type filter" value={type} onChange={e => setType(e.target.value)}
-            options={["", "onboarding", "expansion"]} labels={{ "": "All types", ...IMPL_TYPE_LABEL }} />
+        <div className="im-filters">
+          <label className="im-flabel">Implementer
+            <select data-board-filter-who className="im-sel" value={who} onChange={e => setWho(e.target.value)}>
+              {whoOpts.map(o => <option key={o} value={o}>{whoLabels[o] ?? o}</option>)}</select></label>
+          <label className="im-flabel">Type
+            <select data-board-filter-type className="im-sel" value={type} onChange={e => setType(e.target.value)}>
+              {["", "onboarding", "expansion"].map(o => <option key={o} value={o}>{typeLabels[o]}</option>)}</select></label>
         </div>
-        <div className="flex gap-3 overflow-x-auto pb-2">
-          {BOARD_COLUMNS.map(s => <div key={s} data-board-column={s} className="w-56 shrink-0">
-            <div className="mb-2 text-xs font-bold uppercase text-slate-500">{STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</div>
+        <div className="im-lanes">
+          {BOARD_COLUMNS.map(s => <section key={s} data-board-column={s} aria-label={STAGE_LABEL[s]} className="im-lane">
+            <div className="im-lane-head">
+              <span aria-hidden="true" className="im-dot" style={{ background: BOARD_DOT[s] }} />
+              <h2 className="im-lane-title">{STAGE_LABEL[s]}</h2>
+              <span className="im-count">{projects.filter(p => p.stage === s).length}</span>
+            </div>
             {column(s)}
-          </div>)}
+          </section>)}
         </div>
-        {BOARD_COLLAPSED.map(s => <details key={s} data-board-column={s} data-board-collapsed className="mt-2">
-          <summary className="cursor-pointer text-xs font-bold uppercase text-slate-500">{BOARD_COLLAPSED_LABEL[s] || STAGE_LABEL[s]} ({projects.filter(p => p.stage === s).length})</summary>
-          <div className="mt-2 grid grid-cols-1 gap-x-3 sm:grid-cols-3">{column(s)}</div>
-        </details>)}
+        <div className="im-collapsed-list">
+          {BOARD_COLLAPSED.map(s => <details key={s} data-board-column={s} data-board-collapsed className="im-collapsed">
+            <summary className="im-csum">
+              <span aria-hidden="true" className="im-dot" style={{ background: BOARD_DOT[s] }} />
+              <span>{BOARD_COLLAPSED_LABEL[s] || STAGE_LABEL[s]}</span>
+              <span className="im-count im-count-alt">{projects.filter(p => p.stage === s).length}</span>
+              <span className="im-hint">{BOARD_HINT[s]}</span>
+            </summary>
+            <div className="im-cgrid">{column(s)}</div>
+          </details>)}
+        </div>
       </>}
-      {tab === "Workload" && canManageImpl(user) && <WorkloadTable st={st} dispatch={dispatch} user={user} />}
-      {tab === "My tasks" && (myTasks.length === 0 ? <div className="text-sm text-slate-500">No open tasks assigned to you.</div>
-        : myTasks.map(t => <button key={t.id} data-my-task={t.id} onClick={() => select(t.projectId)}
-          className="flex w-full gap-3 border-b border-slate-100 py-1.5 text-left text-sm last:border-0">
-          <span className="flex-1 font-medium">{t.title}</span>
-          <span className="text-xs text-slate-500">{acctName(t.accountId)}</span>
-          <span className="text-xs text-slate-500">{t.due ? `due ${fmtDate(t.due)}` : "no due date"}</span></button>))}
-    </Card>
+      {tab !== "Board" && <Card>
+        {tab === "Workload" && canManageImpl(user) && <WorkloadTable st={st} dispatch={dispatch} user={user} />}
+        {tab === "My tasks" && (myTasks.length === 0 ? <div className="text-sm text-slate-500">No open tasks assigned to you.</div>
+          : myTasks.map(t => <button key={t.id} data-my-task={t.id} onClick={() => select(t.projectId)}
+            className="flex w-full gap-3 border-b border-slate-100 py-1.5 text-left text-sm last:border-0">
+            <span className="flex-1 font-medium">{t.title}</span>
+            <span className="text-xs text-slate-500">{acctName(t.accountId)}</span>
+            <span className="text-xs text-slate-500">{t.due ? `due ${fmtDate(t.due)}` : "no due date"}</span></button>))}
+      </Card>}
+    </div>
   );
 }
 

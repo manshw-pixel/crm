@@ -27,7 +27,7 @@ for (const role of ["impl_user", "impl_lead"]) {
       await page.waitForSelector('nav[aria-label="Main"] button');
       const titles = await navTitles(page);
       assert(titles.join("|") === "Implementation|Accounts", "sidebar: " + titles.join("|"));
-      await page.getByText("Implementation projects").first().waitFor({ timeout: 10000 });
+      await page.locator("[data-board-subtitle]").first().waitFor({ timeout: 10000 });
       assert(await page.locator("[data-scope-toggle]").count() === 0, "scope toggle shown");
     } finally { await browser.close(); }
   });
