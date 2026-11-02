@@ -556,7 +556,7 @@ function App({ user, onBackToClients }) {
       </div>
       <ViewBoundary key={view} view={view}>
         {!loaded && !loadFailed ? <LoadingSkeleton view={view} /> : <>
-        {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} projectId={implProjectId} setProjectId={setImplProjectId} />}
+        {view === "Implementation" && <ImplementationPage st={st} dispatch={dispatch} user={user} projectId={implProjectId} setProjectId={setImplProjectId} openAccount={openAccount} />}
         {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} goTasks={goTasks} openProject={openProject} goRenewals={() => setView("Renewals")} />}
         {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} initialFilter={taskFilter} />}
         {view === "Accounts" && (acctId

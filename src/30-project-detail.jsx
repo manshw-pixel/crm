@@ -28,12 +28,12 @@ function AssignDialog({ st, project, onAssign, onClose }) {
   );
 }
 
-function StageButton({ project, tasks, to, actor, account, onGo, label, action }) {
+function StageButton({ project, tasks, to, actor, account, onGo, label, action, kind }) {
   const r = canTransition(project, tasks, to, actor, account);
-  return <Btn data-stage-action={action} disabled={!r.ok} title={r.ok ? label : r.reason} onClick={onGo}>{label}</Btn>;
+  return <Btn data-stage-action={action} kind={kind} disabled={!r.ok} title={r.ok ? label : r.reason} onClick={onGo}>{label}</Btn>;
 }
 
-function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
+function ProjectDetail({ st, dispatch, user, projectId, onBack, openAccount }) {
   const project = (st.projects || []).find(p => p.id === projectId);
   const [assignOpen, setAssignOpen] = useState(false);
   const [newTask, setNewTask] = useState({ title: "", estHours: "", due: "" });
@@ -54,8 +54,8 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
   const manager = canManageImpl(user);
   const templates = (st.settings && st.settings.implPlanTemplates) || [];
   const move = (to, note = "") => dispatch({ type: "SET_PROJECT_STAGE", id: project.id, to, note, actor, now: now() });
-  const sb = (to, action, label, onGo) => <StageButton key={action} project={project} tasks={tasks} to={to} actor={actor} account={account}
-    action={action} label={label} onGo={onGo || (() => move(to))} />;
+  const sb = (to, action, label, onGo, kind) => <StageButton key={action} project={project} tasks={tasks} to={to} actor={actor} account={account}
+    action={action} label={label} kind={kind} onGo={onGo || (() => move(to))} />;
 
   const assign = id => {
     const prev = project.implementerId || null;
@@ -100,125 +100,188 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack }) {
   const resume = (() => { const h = (project.history || []).slice().reverse().find(e => e.to === "on_hold"); return h ? h.from : null; })();
   const done = tasks.filter(t => t.status === "done").length;
 
+  // header / stat card values (display only)
+  const today = iso(Date.now());
+  // the board's go-live date rule (Constraint 3), owner-independent: an unassigned project still shows its date severity
+  const gSev = (goLiveSev(project, today) || {}).sev || undefined;
+  const gDays = project.targetGoLive ? Math.round((Date.parse(String(project.targetGoLive).slice(0, 10)) - Date.parse(today)) / 86400000) : null;
+  const gSub = gDays === null ? "no date set" : project.stage === "live" ? "went live" : gDays < 0 ? `${-gDays}d overdue` : `in ${gDays}d`;
+  const estTotal = tasks.reduce((s, t) => s + (Number(t.estHours) || 0), 0);
+  const loggedTotal = tasks.reduce((s, t) => s + loggedHours(t), 0);
+  const pct = tasks.length ? Math.round(done / tasks.length * 100) : 0;
+  const acctName = account ? account.name : "Unknown account";
+  const implName = project.implementerId ? teamName(st, project.implementerId) : "Unassigned";
+  const csm = account && account.csm ? account.csm : "";
+  const subParts = [
+    account && <span key="a">Account {openAccount
+      ? <button type="button" data-project-account className="ad-link im-link" onClick={() => openAccount(account.id)}>{account.name}</button>
+      : <b data-project-account className="ad-link">{account.name}</b>}</span>,
+    csm && <span key="c">CSM {csm}</span>,
+  ].filter(Boolean);
+  const SEV_OF_STATUS = { done: "green", doing: "amber" };
+
   return (
-    <div data-project-detail={project.id} data-stage={project.stage}>
-      <div className="mb-3 flex flex-wrap items-center gap-2">
-        <Btn data-project-back onClick={onBack}>← Back</Btn>
-        <span className="text-base font-bold text-slate-800">{account ? account.name : "Unknown account"}</span>
-        <span className="rounded bg-indigo-50 px-1.5 py-0.5 text-xs font-semibold text-indigo-600">{IMPL_TYPE_LABEL[project.type] || project.type}</span>
-        <span data-project-stage className="text-sm font-semibold text-slate-700">{STAGE_LABEL[project.stage] || project.stage}</span>
-      </div>
-      <div className="mb-3 flex flex-wrap gap-4 text-xs text-slate-600">
-        <span>Implementer: <b data-project-implementer>{project.implementerId ? teamName(st, project.implementerId) : "Unassigned"}</b></span>
-        {project.targetGoLive && <span>Target go-live: {fmtDate(project.targetGoLive)}</span>}
-        {project.startedAt && <span>Started: {fmtDate(project.startedAt)}</span>}
-        {project.liveAt && <span>Live: {fmtDate(project.liveAt)}</span>}
-        <span>Tasks done: {done}/{tasks.length}</span>
-      </div>
-      {canWorkProject(user, project) && !closed && <div className="mb-3 flex flex-wrap gap-2">
-        {project.stage === "queued" && (() => {
-          const r = canTransition({ ...project, implementerId: project.implementerId || "_" }, tasks, "planning", actor, account);
-          return <Btn data-stage-action="assign" kind="primary" disabled={!r.ok} title={r.ok ? "Assign" : r.reason} onClick={() => setAssignOpen(true)}>Assign</Btn>;
-        })()}
-        {manager && project.stage !== "queued" && project.stage !== "on_hold" && <Btn data-stage-action="reassign" onClick={() => setAssignOpen(true)}>Reassign</Btn>}
-        {project.stage === "planning" && sb("in_progress", "start", "Start")}
-        {project.stage === "in_progress" && sb("csm_review", "review", "Send for sign-off")}
-        {OPEN_STAGES.includes(project.stage) && sb("on_hold", "hold", "Put on hold", () => {
-          const reason = window.prompt("Reason for putting on hold?", ""); if (reason !== null) move("on_hold", reason);
-        })}
-        {project.stage === "on_hold" && resume && sb(resume, "resume", "Resume")}
-        {manager && sb("cancelled", "cancel", "Cancel", () => { if (window.confirm("Cancel this project?")) move("cancelled"); })}
-      </div>}
-      {project.stage === "on_hold" && project.holdReason && <div className="mb-3 text-xs text-amber-700">On hold: {project.holdReason}</div>}
+    <div data-project-detail={project.id} data-stage={project.stage} className="ad-page im-page im-detail">
+      <div><button type="button" data-project-back className="ad-back" onClick={onBack}>← Implementation</button></div>
+
+      <section aria-label="Project header" className="ad-card ad-head">
+        <span aria-hidden="true" data-avatar className="acct-av ad-av" data-av={avatarSlot(project.accountId)}>{account ? initialsOf(account.name) : "?"}</span>
+        <div className="ad-ident">
+          <div className="im-title-row">
+            <h1 className="ad-h1">{acctName}</h1>
+            <span className="im-type">{IMPL_TYPE_LABEL[project.type] || project.type}</span>
+            <span data-project-stage className="im-stage"><span aria-hidden="true" className="im-dot" style={{ background: BOARD_DOT[project.stage] }} />{STAGE_LABEL[project.stage] || project.stage}</span>
+          </div>
+          {subParts.length > 0 && <p data-project-sub className="ad-sub">{subParts.map((p, i) => <React.Fragment key={i}>{i > 0 && " · "}{p}</React.Fragment>)}</p>}
+          {project.stage === "on_hold" && project.holdReason && <p className="im-hold">On hold: {project.holdReason}</p>}
+        </div>
+        {canWorkProject(user, project) && !closed && <div className="ad-actions im-actions">
+          {project.stage === "queued" && (() => {
+            const r = canTransition({ ...project, implementerId: project.implementerId || "_" }, tasks, "planning", actor, account);
+            return <Btn data-stage-action="assign" kind="primary" disabled={!r.ok} title={r.ok ? "Assign" : r.reason} onClick={() => setAssignOpen(true)}>Assign</Btn>;
+          })()}
+          {project.stage === "planning" && sb("in_progress", "start", "Start", undefined, "primary")}
+          {project.stage === "in_progress" && sb("csm_review", "review", "Send for sign-off", undefined, "primary")}
+          {project.stage === "on_hold" && resume && sb(resume, "resume", "Resume", undefined, "primary")}
+          {manager && project.stage !== "queued" && project.stage !== "on_hold" && <Btn data-stage-action="reassign" onClick={() => setAssignOpen(true)}>Reassign</Btn>}
+          {OPEN_STAGES.includes(project.stage) && sb("on_hold", "hold", "Put on hold", () => {
+            const reason = window.prompt("Reason for putting on hold?", ""); if (reason !== null) move("on_hold", reason);
+          })}
+          {manager && sb("cancelled", "cancel", "Cancel", () => { if (window.confirm("Cancel this project?")) move("cancelled"); })}
+        </div>}
+      </section>
       {assignOpen && <AssignDialog st={st} project={project} onAssign={assign} onClose={() => setAssignOpen(false)} />}
 
-      <div className="mb-3">
-        <div className="mb-1 text-xs font-bold uppercase text-slate-500">Plan</div>
-        {tasks.length === 0 && <div className="text-sm text-slate-500">No tasks yet.</div>}
-        {tasks.map(t => (
-          <div key={t.id} data-task-row={t.id} className="flex flex-wrap items-center gap-2 border-b border-slate-100 py-1.5 text-sm last:border-0">
-            <span className="flex-1 font-medium">{t.title}</span>
-            <span className="text-xs text-slate-500">{teamName(st, t.ownerId)}</span>
-            {t.due && <span className="text-xs text-slate-500">due {fmtDate(t.due)}</span>}
-            <span data-task-logged className="text-xs text-slate-600">{loggedHours(t)}h / {Number(t.estHours) || 0}h</span>
-            {canEdit ? <>
-              <Select data-task-status value={t.status} aria-label="Task status" options={["todo", "doing", "done"]} labels={TASK_STATUS_LABEL}
-                onChange={e => dispatch({ type: "EDIT_PROJECT_TASK", id: t.id, patch: { status: e.target.value } })} />
-              <Input data-task-log-hours type="number" min="0" step="0.5" aria-label="Hours to log" className="!w-16" value={logHours[t.id] || ""}
-                onChange={e => setLogHours(s => ({ ...s, [t.id]: e.target.value }))} />
-              <Btn data-task-log onClick={() => log(t)}>+ hours</Btn>
-              <button data-task-delete title="Delete task" aria-label="Delete task" className="text-xs text-rose-600"
-                onClick={() => { if (window.confirm(`Delete "${t.title}"?`)) dispatch({ type: "DELETE_PROJECT_TASK", id: t.id }); }}>✕</button>
-            </> : <span className="text-xs text-slate-600">{TASK_STATUS_LABEL[t.status] || t.status}</span>}
-            {t.signoff === "signed" && <span data-task-signed className="rounded bg-emerald-50 px-1.5 py-0.5 text-xs font-semibold text-emerald-700">Signed off{t.signedBy ? ` by ${t.signedBy}` : ""}</span>}
-            {reviewer && t.signoff !== "signed" && <>
-              <Btn data-task-signoff kind="primary" onClick={() => signoff(t, "signed")}>Sign off</Btn>
-              <Btn data-task-sendback onClick={() => setSendBack({ taskId: t.id, note: "" })}>Send back</Btn>
-            </>}
-            {reviewer && sendBack && sendBack.taskId === t.id && <form className="flex w-full gap-2" onSubmit={e => {
-              e.preventDefault(); const note = sendBack.note.trim(); if (!note) return;
-              signoff(t, "returned", note); setSendBack(null); }}>
-              <Input data-sendback-note placeholder="What needs fixing?" aria-label="Send back note" className="flex-1" value={sendBack.note}
-                onChange={e => setSendBack({ taskId: t.id, note: e.target.value })} />
-              <Btn data-sendback-confirm type="submit" disabled={!sendBack.note.trim()}>Send back</Btn><Btn onClick={() => setSendBack(null)}>Cancel</Btn>
-            </form>}
-            {t.signoff === "returned" && t.signoffNote && <div data-task-returned className="w-full text-xs text-rose-700">Returned by CSM: {t.signoffNote}</div>}
+      <section aria-label="Key dates" className="ad-stats">
+        <div data-project-stat="implementer" className="ad-card ad-stat">
+          <span aria-hidden="true" className="ad-stat-tile">{project.implementerId ? initialsOf(implName) : "—"}</span>
+          <div className="im-stat-body"><div className="ad-stat-label">Implementer</div>
+            <div className="ad-stat-value im-stat-value" data-project-implementer>{implName}</div>
+            <div className="ad-stat-sub">{project.assignedAt ? `assigned ${imMonthDay(project.assignedAt)}` : "not assigned yet"}</div></div>
+        </div>
+        <div data-project-stat="golive" data-sev={gSev} className="ad-card ad-stat">
+          <span aria-hidden="true" className="ad-stat-tile">G</span>
+          <div className="im-stat-body"><div className="ad-stat-label">Target go-live</div>
+            <div className="ad-stat-value im-stat-value">{project.targetGoLive ? fmtDate(String(project.targetGoLive).slice(0, 10) + "T00:00:00") : "Not set"}</div>
+            <div className="ad-stat-sub">{gSub}</div></div>
+        </div>
+        <div data-project-stat="progress" className="ad-card ad-stat">
+          <span aria-hidden="true" className="ad-stat-tile">✓</span>
+          <div className="im-stat-body"><div className="ad-stat-label">Progress</div>
+            <div className="ad-stat-value im-stat-value">{done}/{tasks.length} tasks</div>
+            <div className="ad-stat-sub">{loggedTotal}h logged of {estTotal}h est.</div>
+            <span role="img" aria-label={`${pct}% of tasks done`} className="im-bar im-stat-bar"><span style={{ width: pct + "%" }} /></span></div>
+        </div>
+        <div data-project-stat="started" className="ad-card ad-stat">
+          <span aria-hidden="true" className="ad-stat-tile">S</span>
+          <div className="im-stat-body"><div className="ad-stat-label">Started</div>
+            <div className="ad-stat-value im-stat-value">{project.startedAt ? fmtDate(project.startedAt) : "Not started"}</div>
+            <div className="ad-stat-sub">{project.liveAt ? `Live ${fmtDate(project.liveAt)}` : "not live yet"}</div></div>
+        </div>
+      </section>
+
+      <div className="im-cols">
+        <section aria-label="Plan" data-project-plan className="ad-card im-dcard im-plan">
+          <div className="im-dcard-head">
+            <h2 className="im-h2">Plan <span className="im-h2-meta">({done}/{tasks.length} done · {loggedTotal}h / {estTotal}h)</span></h2>
+            {manager && tasks.length > 0 && tplName === null && <Btn data-save-template onClick={() => setTplName("")}>Save as template</Btn>}
           </div>
-        ))}
-        {canEdit && <form className="mt-2 flex flex-wrap gap-2" onSubmit={submitTask}>
-          <Input data-new-task-title placeholder="New task" aria-label="Task title" className="!w-56" value={newTask.title} onChange={e => setNewTask(s => ({ ...s, title: e.target.value }))} />
-          <Input data-new-task-hours type="number" min="0" placeholder="Est. h" aria-label="Estimated hours" className="!w-20" value={newTask.estHours} onChange={e => setNewTask(s => ({ ...s, estHours: e.target.value }))} />
-          <Input type="date" aria-label="Due date" className="!w-40" value={newTask.due} onChange={e => setNewTask(s => ({ ...s, due: e.target.value }))} />
-          <Btn data-new-task-add type="submit">Add task</Btn>
-        </form>}
-        {canEdit && project.stage === "planning" && tasks.length === 0 && templates.length > 0 && <div className="mt-2 flex gap-2">
-          <Select data-template-pick aria-label="Plan template" value={tplPick} onChange={e => setTplPick(e.target.value)}
-            options={["", ...templates.map(x => x.name)]} labels={{ "": "Start from template…" }} />
-          <Btn data-template-apply disabled={!tplPick || applying} onClick={applyTemplate}>Apply</Btn>
-        </div>}
-        {manager && tasks.length > 0 && (tplName === null
-          ? <div className="mt-2"><Btn data-save-template onClick={() => setTplName("")}>Save as template</Btn></div>
-          : <div className="mt-2 flex gap-2">
+          {manager && tasks.length > 0 && tplName !== null && <div className="mb-2 flex flex-wrap gap-2">
             <Input data-template-name placeholder="Template name" aria-label="Template name" className="!w-56" value={tplName} onChange={e => setTplName(e.target.value)} />
             <Btn data-template-save kind="primary" disabled={!tplName.trim()} onClick={saveTemplate}>Save</Btn><Btn onClick={() => setTplName(null)}>Cancel</Btn>
-          </div>)}
-      </div>
+          </div>}
+          {tasks.length === 0 && <div className="im-empty">No tasks yet.</div>}
+          {tasks.map(t => {
+            const lg = loggedHours(t), est = Number(t.estHours) || 0, over = est > 0 && lg > est;
+            return (
+              <div key={t.id} data-task-row={t.id} className="im-task">
+                <span data-task-pill data-st={t.status} data-sev={SEV_OF_STATUS[t.status]} className="ad-pill ad-pill-sm im-task-pill">{TASK_STATUS_LABEL[t.status] || t.status}</span>
+                <div className="im-task-main">
+                  <div className="im-task-title">{t.title}</div>
+                  <div className="im-task-meta">{teamName(st, t.ownerId)}{t.due ? ` · due ${imMonthDay(t.due)}` : ""}</div>
+                  {t.signoff === "returned" && t.signoffNote && <div data-task-returned className="im-task-note">Returned by CSM: {t.signoffNote}</div>}
+                </div>
+                <span data-task-logged data-over={over ? "true" : undefined} className="im-hours">{lg}h / {est}h</span>
+                {canEdit && <>
+                  <Select data-task-status value={t.status} aria-label="Task status" options={["todo", "doing", "done"]} labels={TASK_STATUS_LABEL}
+                    onChange={e => dispatch({ type: "EDIT_PROJECT_TASK", id: t.id, patch: { status: e.target.value } })} />
+                  <Input data-task-log-hours type="number" min="0" step="0.5" aria-label="Hours to log" className="!w-16" value={logHours[t.id] || ""}
+                    onChange={e => setLogHours(s => ({ ...s, [t.id]: e.target.value }))} />
+                  <Btn data-task-log onClick={() => log(t)}>+ hours</Btn>
+                  <button data-task-delete title="Delete task" aria-label={`Delete task ${t.title}`} className="im-del"
+                    onClick={() => { if (window.confirm(`Delete "${t.title}"?`)) dispatch({ type: "DELETE_PROJECT_TASK", id: t.id }); }}>✕</button>
+                </>}
+                {t.signoff === "signed" && <span data-task-signed data-sev="green" className="ad-pill ad-pill-sm">Signed off{t.signedBy ? ` by ${t.signedBy}` : ""}</span>}
+                {reviewer && t.signoff !== "signed" && <>
+                  <Btn data-task-signoff kind="primary" onClick={() => signoff(t, "signed")}>Sign off</Btn>
+                  <Btn data-task-sendback onClick={() => setSendBack({ taskId: t.id, note: "" })}>Send back</Btn>
+                </>}
+                {reviewer && sendBack && sendBack.taskId === t.id && <form className="flex w-full gap-2" onSubmit={e => {
+                  e.preventDefault(); const note = sendBack.note.trim(); if (!note) return;
+                  signoff(t, "returned", note); setSendBack(null); }}>
+                  <Input data-sendback-note placeholder="What needs fixing?" aria-label="Send back note" className="flex-1" value={sendBack.note}
+                    onChange={e => setSendBack({ taskId: t.id, note: e.target.value })} />
+                  <Btn data-sendback-confirm type="submit" disabled={!sendBack.note.trim()}>Send back</Btn><Btn onClick={() => setSendBack(null)}>Cancel</Btn>
+                </form>}
+              </div>
+            );
+          })}
+          {canEdit && <form className="im-addtask" onSubmit={submitTask}>
+            <Input data-new-task-title placeholder="New task" aria-label="Task title" className="im-addtask-title" value={newTask.title} onChange={e => setNewTask(s => ({ ...s, title: e.target.value }))} />
+            <Input data-new-task-hours type="number" min="0" placeholder="Est. h" aria-label="Estimated hours" className="!w-20" value={newTask.estHours} onChange={e => setNewTask(s => ({ ...s, estHours: e.target.value }))} />
+            <Input type="date" aria-label="Due date" className="!w-40" value={newTask.due} onChange={e => setNewTask(s => ({ ...s, due: e.target.value }))} />
+            <Btn data-new-task-add kind="primary" type="submit">Add task</Btn>
+          </form>}
+          {canEdit && project.stage === "planning" && tasks.length === 0 && templates.length > 0 && <div className="im-tplpick mt-2 flex flex-wrap gap-2">
+            <Select data-template-pick aria-label="Plan template" value={tplPick} onChange={e => setTplPick(e.target.value)}
+              options={["", ...templates.map(x => x.name)]} labels={{ "": "Start from template…" }} />
+            <Btn data-template-apply disabled={!tplPick || applying} onClick={applyTemplate}>Apply</Btn>
+          </div>}
+        </section>
 
-      <div className="mb-3">
-        <div className="mb-1 text-xs font-bold uppercase text-slate-500">Handover checklist</div>
-        {project.stage === "handover" && canCreateHandover(user) ? (() => {
-          const template = project.checklistTemplate || [];
-          const values = draftVals || project.checklist || {};
-          const dateItem = template.find(it => it.kind === "date" && it.id === "go_live_target") || template.find(it => it.kind === "date");
-          const patchOf = () => ({ checklist: values, targetGoLive: (dateItem && values[dateItem.id]) || null,
-            missing: checklistFilled({ ...project, checklist: values }).map(m => m.label || m.id) });
-          const submit = () => {
-            const r = canTransition({ ...project, checklist: values }, tasks, "queued", actor, account);
-            if (!r.ok) { setDraftErr(r.reason); return; }
-            setDraftErr("");
-            dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { ...patchOf(), missing: [] } });
-            move("queued", "Handover submitted");
-          };
-          return <div data-draft-checklist className="space-y-2">
-            <ChecklistFields template={template} values={values} set={(k, v) => { setDraftErr(""); setDraftVals({ ...values, [k]: v }); }} />
-            {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold text-rose-600">{draftErr}</div>}
-            <div className="flex gap-2">
-              <Btn data-save-draft onClick={() => dispatch({ type: "EDIT_PROJECT", id: project.id, patch: patchOf() })}>Save draft</Btn>
-              <Btn data-submit-handover kind="primary" onClick={submit}>Submit handover</Btn>
-            </div>
-          </div>;
-        })() : (project.checklistTemplate || []).map(it => {
-          const v = (project.checklist || {})[it.id];
-          return <div key={it.id} className="flex gap-2 text-sm text-slate-700"><span className="w-64">{it.label}</span>
-            <span>{it.kind === "check" ? (v ? "✓" : "—") : (it.kind === "date" && v ? fmtDate(v) : v || "—")}</span></div>;
-        })}
-      </div>
-
-      <div>
-        <div className="mb-1 text-xs font-bold uppercase text-slate-500">History</div>
-        {(project.history || []).slice().reverse().map((h, i) => (
-          <div key={i} className="text-xs text-slate-600">{fmtDate(h.at)} · {h.by}: {STAGE_LABEL[h.from] || h.from} → {STAGE_LABEL[h.to] || h.to}{h.note ? ` — ${h.note}` : ""}</div>
-        ))}
+        <div className="im-side">
+          <section aria-label="Handover checklist" data-project-checklist className="ad-card im-dcard">
+            <h2 className="im-h2 im-h2-gap">Handover checklist</h2>
+            {project.stage === "handover" && canCreateHandover(user) ? (() => {
+              const template = project.checklistTemplate || [];
+              const values = draftVals || project.checklist || {};
+              const dateItem = template.find(it => it.kind === "date" && it.id === "go_live_target") || template.find(it => it.kind === "date");
+              const patchOf = () => ({ checklist: values, targetGoLive: (dateItem && values[dateItem.id]) || null,
+                missing: checklistFilled({ ...project, checklist: values }).map(m => m.label || m.id) });
+              const submit = () => {
+                const r = canTransition({ ...project, checklist: values }, tasks, "queued", actor, account);
+                if (!r.ok) { setDraftErr(r.reason); return; }
+                setDraftErr("");
+                dispatch({ type: "EDIT_PROJECT", id: project.id, patch: { ...patchOf(), missing: [] } });
+                move("queued", "Handover submitted");
+              };
+              return <div data-draft-checklist className="space-y-2">
+                <ChecklistFields template={template} values={values} set={(k, v) => { setDraftErr(""); setDraftVals({ ...values, [k]: v }); }} />
+                {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold" style={{ color: "var(--p-r-tx)" }}>{draftErr}</div>}
+                <div className="flex flex-wrap gap-2">
+                  <Btn data-save-draft onClick={() => dispatch({ type: "EDIT_PROJECT", id: project.id, patch: patchOf() })}>Save draft</Btn>
+                  <Btn data-submit-handover kind="primary" onClick={submit}>Submit handover</Btn>
+                </div>
+              </div>;
+            })() : (project.checklistTemplate || []).length === 0 ? <div className="im-empty">No checklist items.</div>
+              : (project.checklistTemplate || []).map(it => {
+                const v = (project.checklist || {})[it.id];
+                return <div key={it.id} className="im-kv"><span className="im-kv-k">{it.label}</span>
+                  <b className="im-kv-v">{it.kind === "check" ? (v ? "✓ Yes" : "—") : (it.kind === "date" && v ? fmtDate(v) : v || "—")}</b></div>;
+              })}
+          </section>
+          <section aria-label="History" className="ad-card im-dcard">
+            <h2 className="im-h2 im-h2-gap">History</h2>
+            {(project.history || []).length === 0 && <div className="im-empty">No history yet.</div>}
+            {(project.history || []).slice().reverse().map((h, i) => (
+              <div key={i} data-history-row className="im-hist">
+                <span aria-hidden="true" className="im-hist-dot" />
+                <div className="im-hist-body"><div className="im-hist-move">{STAGE_LABEL[h.from] || h.from} → {STAGE_LABEL[h.to] || h.to}</div>
+                  <div className="im-hist-meta">{[fmtDate(h.at), h.by, h.note].filter(Boolean).join(" · ")}</div></div>
+              </div>
+            ))}
+          </section>
+        </div>
       </div>
     </div>
   );
