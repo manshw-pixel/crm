@@ -7,13 +7,14 @@ import { waitForRunAccounts, runAccounts, fixtureRow } from "./_store.mjs";
 
 const F = "07-renewals";
 
-// Renewals board (src/23-renewals.jsx): 12 month columns [data-col]; each card's first div holds
-// the name (text node) + HealthChip, and a DaysChip [data-days-chip] "Nd" / "Nd overdue".
-const board = page => page.evaluate(() => [...document.querySelectorAll("[data-col]")].map(col => ({
-  month: col.querySelector(":scope > div span")?.textContent.trim(),
-  cards: [...col.querySelectorAll(":scope > div.nm-sm")].map(c => {
+// Renewals board (src/23-renewals.jsx): 12 month lanes [data-col-month] (the leading Past due lane
+// [data-col-past-due] is not one of them); lane label in its h2, cards [data-renewal-card] carry the
+// name [data-renewal-name] and a days pill [data-days-chip] "Nd" / "Nd overdue".
+const board = page => page.evaluate(() => [...document.querySelectorAll("[data-col-month]")].map(col => ({
+  month: col.querySelector("h2")?.textContent.trim(),
+  cards: [...col.querySelectorAll("[data-renewal-card]")].map(c => {
     const d = c.querySelector("[data-days-chip]").textContent.trim();
-    return { name: c.firstElementChild.firstChild.textContent.trim(), days: /overdue/.test(d) ? -parseInt(d) : parseInt(d) };
+    return { name: c.querySelector("[data-renewal-name]").textContent.trim(), days: /overdue/.test(d) ? -parseInt(d) : parseInt(d) };
   }),
 })));
 
@@ -49,7 +50,7 @@ export const scenarios = [
       await waitForRunAccounts(page, runId);
       const expected = (await runAccounts(page, runId)).filter(a => !a.churn);
       await nav(page, "Renewals").click();
-      await page.locator("[data-col]").first().waitFor({ timeout: 15000 });
+      await page.locator("[data-col-month]").first().waitFor({ timeout: 15000 });
       const cols = await board(page);
       assert.equal(cols.length, 12, "month columns");
       const months = cols.map(c => new Date(`1 ${c.month}`).getTime());

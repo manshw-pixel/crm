@@ -57,7 +57,7 @@ test("renewals: playbook progress is labelled and an empty outcomes table collap
     await page.click('button[title="Renewals"]');
     await page.waitForSelector("[data-playbook-progress]", { timeout: 8000 });
     const t = await page.$eval("[data-playbook-progress]", e => e.textContent);
-    assert(/^Playbook \d+\/\d+$/.test(t), "progress reads: " + t); // auto-seeded steps join ours
+    assert(/^Playbook \d+\/\d+ · (behind|on pace)$/.test(t), "progress reads: " + t); // auto-seeded steps join ours
     assert(await page.$("[data-outcomes-empty]") !== null, "empty outcomes still renders the table");
   } finally { await browser.close(); }
 });
