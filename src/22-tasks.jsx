@@ -1,36 +1,51 @@
 /* ------------------------------ tasks view ------------------------------ */
-const SOURCE_GLYPH = { health: "♥", renewal: "▶", manual: "" };
+// Playbook tasks are stored with a glyph title prefix; the UI shows a word tag instead.
+const SOURCE_TAG = { renewal: "Renewal", health: "Health" };
 const SOURCE_NAME = { health: "Health playbook step", renewal: "Renewal playbook step" };
+const TASK_PRI_SEV = { High: "red", Medium: "amber", Low: "grey" };
+const TkChevron = ({ open }) => (
+  <svg className="tk-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+    <path d={open ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"} />
+  </svg>
+);
 function TaskRow({ t, a, dispatch, openAccount }) {
   const [custom, setCustom] = useState(false);
-  const late = t.status !== "Done" && t.due && daysUntil(t.due) < 0;
+  const done = t.status === "Done";
+  const src = taskSource(t);
+  const title = SOURCE_TAG[src] ? t.title.replace(/^[▶♥]\s*/, "") : t.title;
+  const days = t.due ? daysUntil(t.due) : null;
+  const late = !done && t.due && days < 0;
+  const dueText = late ? `Overdue · ${-days}d` : !t.due ? "No due date" : days === 0 ? "Today" : fmtDate(t.due);
   return (
-    <div data-task-row className="flex items-center gap-3 border-b border-slate-100 py-1.5 text-sm last:border-0">
-      <input type="checkbox" checked={t.status === "Done"} title="Complete"
+    <div data-task-row className="tk-row" data-done={done ? "true" : undefined}>
+      <input type="checkbox" className="tk-check" checked={done} title="Complete" aria-label={`Complete ${title}`}
         onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
-      {/* Playbook tasks are stored with their glyph as a title prefix; show it once, named. */}
-      <span className="w-4 text-center text-xs text-slate-500" title={SOURCE_NAME[taskSource(t)]} aria-label={SOURCE_NAME[taskSource(t)]}>{SOURCE_GLYPH[taskSource(t)]}</span>
-      <span data-task-title className={t.status === "Done" ? "text-slate-400 line-through" : ""}>{SOURCE_GLYPH[taskSource(t)] ? t.title.replace(/^[▶♥]\s*/, "") : t.title}</span>
-      <button className="text-xs text-indigo-600 hover:underline" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
-      <span className="flex-1" />
-      <select value="" title="Reschedule" aria-label="Reschedule task" className="nm-inset px-2 py-1 text-xs text-slate-700 outline-none"
-        onChange={e => {
-          const v = e.target.value;
-          if (v === "custom") { setCustom(true); return; }
-          if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
-        }}>
-        <option value="">Reschedule</option>
-        <option value="0">Today</option>
-        <option value="1">Tomorrow</option>
-        <option value="7">+1 week</option>
-        <option value="custom">Pick date…</option>
-      </select>
-      {custom && <input type="date" className="nm-inset px-2 py-1 text-xs" autoFocus
-        onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
-        onBlur={() => setCustom(false)} />}
-      {late && <DaysChip days={daysUntil(t.due)} />}
-      <span className={`w-24 text-right text-xs ${late ? "font-semibold text-rose-600" : "text-slate-700"}`}>{t.due ? fmtDate(t.due) : "—"}</span>
-      <span className="w-14 text-right text-xs text-slate-500">{t.priority}</span>
+      <div className="tk-main">
+        <div className="tk-title-line">
+          <span data-task-title className={`tk-title${done ? " line-through" : ""}`}>{title}</span>
+          {SOURCE_TAG[src] && <span data-task-source={src} className="tk-tag" data-src={src} title={SOURCE_NAME[src]} aria-label={SOURCE_NAME[src]}>{SOURCE_TAG[src]}</span>}
+        </div>
+        <button data-task-account className="tk-acct" onClick={() => openAccount(t.accountId)}>{a ? a.name : "—"}</button>
+      </div>
+      <div className="tk-cluster">
+        <select value="" title="Reschedule" aria-label="Reschedule task" className="tk-sel tk-resched"
+          onChange={e => {
+            const v = e.target.value;
+            if (v === "custom") { setCustom(true); return; }
+            if (v !== "") dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: isoPlus(iso(Date.now()), +v) } });
+          }}>
+          <option value="">Reschedule</option>
+          <option value="0">Today</option>
+          <option value="1">Tomorrow</option>
+          <option value="7">+1 week</option>
+          <option value="custom">Pick date…</option>
+        </select>
+        {custom && <input type="date" className="tk-sel" autoFocus
+          onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
+          onBlur={() => setCustom(false)} />}
+        <span data-task-due data-sev={late ? "red" : "grey"} data-days-chip={late ? "overdue" : undefined} className="ad-pill tk-due">{dueText}</span>
+        <span data-task-priority data-sev={TASK_PRI_SEV[t.priority] || "grey"} className="tk-pri">{t.priority}</span>
+      </div>
     </div>
   );
 }
@@ -52,48 +67,59 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q, owner });
   const buckets = bucketTasks(filtered, iso(Date.now()));
   const total = Object.values(buckets).reduce((n, list) => n + list.length, 0);
+  const openCount = buckets.overdue.length + buckets.today.length + buckets.week.length + buckets.later.length;
+  const todayHint = new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).replace(",", "");
   const SECTIONS = [
-    ["overdue", "Overdue"], ["today", "Today"], ["week", "This week"], ["later", "Later"], ["done", "Done"],
+    ["overdue", "Overdue", "oldest first"], ["today", "Today", todayHint], ["week", "This week", "next 7 days"], ["later", "Later", ""], ["done", "Done", ""],
   ];
   return (
-    <Card title={`Work queue (${total})`} right={
-      <div className="flex flex-wrap items-center gap-2">
-        {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="nm-btn px-2 py-1 text-xs font-semibold text-indigo-700" aria-label={`Clear owner filter ${owner}`} title={`Owner: ${owner}`}>Owner: <span className="inline-block max-w-[16rem] truncate align-bottom">{owner}</span> ×</button>}
-        <Btn kind={scope === "mine" ? "primary" : "default"} onClick={() => setScope("mine")}>Mine</Btn>
-        <Btn kind={scope === "all" ? "primary" : "default"} onClick={() => setScope("all")}>All</Btn>
-        {/* plain <select> rather than the shared Select: these need readable labels with
-            short values (the values feed filterTasks, so they must stay as-is) */}
-        <select value={source} title="Source" onChange={e => setSource(e.target.value)}
-          className="nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none">
-          <option value="all">All sources</option>
-          <option value="health">♥ Health</option>
-          <option value="renewal">▶ Renewal</option>
-          <option value="manual">Manual</option>
-        </select>
-        <select value={band} title="Health band" onChange={e => setBand(e.target.value)}
-          className="nm-inset px-3 py-1.5 text-sm text-slate-800 outline-none">
-          <option value="all">All health</option>
-          <option value="Red">Red</option>
-          <option value="Yellow">Yellow</option>
-          <option value="Green">Green</option>
-        </select>
-        <Input value={q} placeholder="Search tasks…" onChange={e => setQ(e.target.value)} className="w-44" />
-      </div>
-    }>
-      <p data-source-legend className="mb-2 text-[11px] text-slate-500">▶ renewal playbook step · ♥ health playbook step · unmarked tasks were added by hand</p>
-      {st.tasks.length === 0 && <p className="text-sm text-slate-500">Nothing in the queue — tasks appear here as playbooks seed them.</p>}
-      {st.tasks.length > 0 && total === 0 && <p className="text-sm text-slate-500">No tasks match these filters.</p>}
-      {SECTIONS.map(([key, label]) => buckets[key].length > 0 && (
-        <div key={key} className="mb-3">
-          <button className="mb-1 flex w-full items-center gap-2 text-left" onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
-            <span className={`text-xs font-bold uppercase tracking-widest ${key === "overdue" ? "text-rose-600" : "text-slate-500"}`}>{label}</span>
-            <span className="text-xs text-slate-500">({buckets[key].length})</span>
-            <span className="text-xs text-slate-400">{open[key] ? "▾" : "▸"}</span>
-          </button>
-          {open[key] && buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}
+    <div className="tk-page">
+      <div className="tk-head">
+        <p data-tasks-subtitle className="tk-sub">{`${openCount} open · ${buckets.overdue.length} overdue · ${buckets.today.length} due today · ${buckets.week.length} this week`}</p>
+        <div role="group" aria-label="Scope" className="tk-seg">
+          <button className="tk-seg-btn" aria-pressed={scope === "mine"} onClick={() => setScope("mine")}>Mine</button>
+          <button className="tk-seg-btn" aria-pressed={scope === "all"} onClick={() => setScope("all")}>All</button>
         </div>
+      </div>
+      <div className="tk-filters">
+        {/* plain <select>s: the option values feed filterTasks, so they must stay as-is */}
+        <label className="tk-flabel">Source
+          <select value={source} title="Source" onChange={e => setSource(e.target.value)} className="tk-sel">
+            <option value="all">All sources</option>
+            <option value="renewal">Renewal playbook</option>
+            <option value="health">Health playbook</option>
+            <option value="manual">Manual</option>
+          </select>
+        </label>
+        <label className="tk-flabel">Health
+          <select value={band} title="Health band" onChange={e => setBand(e.target.value)} className="tk-sel">
+            <option value="all">All health</option>
+            <option value="Red">Red</option>
+            <option value="Yellow">Yellow</option>
+            <option value="Green">Green</option>
+          </select>
+        </label>
+        <label className="tk-flabel tk-search"><span className="tk-sr">Search tasks</span>
+          <input value={q} placeholder="Search tasks…" onChange={e => setQ(e.target.value)} className="tk-sel tk-input" />
+        </label>
+        {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="tk-chip" aria-label={`Clear owner filter ${owner}`} title={`Owner: ${owner}`}>Owner: <span className="inline-block max-w-[16rem] truncate align-bottom">{owner}</span> ×</button>}
+        <span className="tk-spacer" />
+        <p data-source-legend className="tk-legend">Tags: <b>Renewal</b> / <b>Health</b> = playbook step · untagged = added by hand</p>
+      </div>
+      {st.tasks.length === 0 && <p className="tk-empty">Nothing in the queue — tasks appear here as playbooks seed them.</p>}
+      {st.tasks.length > 0 && total === 0 && <p className="tk-empty">No tasks match these filters.</p>}
+      {SECTIONS.map(([key, label, hint]) => buckets[key].length > 0 && (
+        <section key={key} data-task-section={key} aria-label={label} className="tk-sec">
+          <button className="tk-sec-head" aria-expanded={!!open[key]} onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
+            <span className="tk-dot" data-sec={key} aria-hidden="true" />
+            <h2 className="tk-sec-title" data-sec={key}>{label}</h2>
+            <span data-section-count className="tk-count" data-sec={key}>{buckets[key].length}</span>
+            {hint && <span data-section-hint className="tk-hint">{hint}</span>}
+            <span className="tk-chev-wrap"><TkChevron open={!!open[key]} /></span>
+          </button>
+          {open[key] && <div className="tk-rows">{buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}</div>}
+        </section>
       ))}
-    </Card>
+    </div>
   );
 }
-

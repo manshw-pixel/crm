@@ -150,9 +150,9 @@ export const scenarios = [
       await openDashboard(page, runId);
       await page.locator('[data-kpi][data-stat="Overdue tasks"]').click();
       await page.locator("main h1", { hasText: /^Tasks$/ }).waitFor({ timeout: 10000 });
-      const head = page.locator("main button", { hasText: /^Overdue/ });
+      const head = page.locator('[data-task-section="overdue"] > button[aria-expanded]');
       if (!(await head.count())) throw new SkipScenario("no overdue tasks in the org, so no Overdue section");
-      assert.match(await head.first().innerText(), /▾/, "Overdue section collapsed");
+      assert.equal(await head.first().getAttribute("aria-expanded"), "true", "Overdue section collapsed");
     } },
 
   { id: `${F}/team-row-filters-tasks`, feature: F, title: "First Team tasks row opens Tasks filtered to that owner", role: "admin",
