@@ -3,12 +3,12 @@
 import { nav } from "./_users-card.mjs";
 export const scenarios = [];
 
-// Bucket sections are <section data-task-section> with a header button[aria-expanded];
+// Bucket sections are <section data-task-section> with an <h2><button aria-expanded> header;
 // collapsed ones hide their rows.
 export async function openAllTaskSections(page) {
   await settled(page);
   for (let i = 0; i < 6; i++) {
-    const closed = page.locator('[data-task-section] > button[aria-expanded="false"]');
+    const closed = page.locator('[data-task-section] > h2 > button[aria-expanded="false"]');
     if (!await closed.count()) return;
     await closed.first().click();
   }

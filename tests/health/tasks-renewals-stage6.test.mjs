@@ -28,11 +28,11 @@ const seed = (theme = "light") => `try { localStorage.setItem("onevio.theme", "$
 async function open({ theme = "light", w = 1440 } = {}) {
   const r = await launch(seed(theme));
   if (theme !== "light") await r.page.reload();
-  await r.page.setViewportSize({ width: w, height: 900 });
   await r.page.waitForFunction(() => window.__store && window.__store.getState().tasks.length >= 8);
   await r.page.click('button[title="Tasks"]');
   await r.page.waitForSelector("[data-tasks-subtitle]");
   await r.page.waitForSelector("[data-task-row]");
+  await r.page.setViewportSize({ width: w, height: 900 }); // after the sidebar click: narrow widths hide the sidebar
   return r;
 }
 // Store-derived subtitle for the current filters (scope All for this admin).
@@ -72,13 +72,19 @@ test("stage6 tasks: five stacked sections in order, Overdue + Today open, header
     assert(s[0].rows >= 2 && s[2].rows === 0 && s[0].count === String(s[0].rows), "rows " + JSON.stringify(s));
     const hints = await page.$$eval("[data-task-section] [data-section-hint]", e => e.map(x => x.textContent.trim()));
     assert(hints[0] === "oldest first" && /^[A-Z][a-z]{2} [A-Z][a-z]{2} \d{1,2}$/.test(hints[1]) && hints[2] === "next 7 days", "hints " + hints);
-    await page.click('[data-task-section="week"] > button');
+    // follow-up (5): the Today hint names the same (UTC ISO) day the buckets use
+    const wantHint = new Date(new Date().toISOString().slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" }).replace(",", "");
+    assert(hints[1] === wantHint, `today hint ${hints[1]} want ${wantHint}`);
+    // follow-up (1): <h2><button aria-expanded> -- the heading wraps the button, never the reverse
+    const shape = await page.$$eval("section[data-task-section]", s => s.map(x => !!x.querySelector(":scope > h2 > button[aria-expanded]") && !x.querySelector("button h2")));
+    assert(shape.every(Boolean) && shape.length === 5, "h2 > button shape " + shape);
+    await page.click('[data-task-section="week"] > h2 > button');
     await page.waitForSelector('[data-task-section="week"] [data-task-row]');
     assert((await sections(page))[2].exp === "true", "week header should report expanded");
-    await page.click('[data-task-section="overdue"] > button');
+    await page.click('[data-task-section="overdue"] > h2 > button');
     await page.waitForFunction(() => !document.querySelector('[data-task-section="overdue"] [data-task-row]'));
     assert((await sections(page))[0].exp === "false", "overdue header should report collapsed");
-    const chev = await page.$$eval("[data-task-section] > button svg", e => e.length);
+    const chev = await page.$$eval("[data-task-section] > h2 > button svg", e => e.length);
     assert(chev === 5, "chevron svg per header " + chev);
   } finally { await browser.close(); }
 });
@@ -122,7 +128,7 @@ test("stage6 tasks: dashboard hand-off unchanged (overdue-only, owner chip, side
     assert(s.filter(x => x.exp === "true").map(x => x.key).join() === "overdue" && s[1].rows === 0, "overdue only " + JSON.stringify(s));
     await page.evaluate(() => window.__goTasks({ owner: "Marco" }));
     await page.waitForSelector("[data-task-owner-filter]");
-    await page.click('[data-task-section="week"] > button');
+    await page.click('[data-task-section="week"] > h2 > button');
     await page.waitForSelector('[data-task-section="week"] [data-task-row]');
     const t = await page.$$eval("[data-task-row] [data-task-title]", e => e.map(x => x.textContent.trim()));
     assert(t.join() === "Marco weekly check", "Marco rows " + t);
@@ -180,7 +186,7 @@ for (const theme of ["light", "dark"]) test(`stage6 tasks: text contrast >= 4.5:
     await page.addScriptTag({ content: PAGE_FNS });
     const r = await page.evaluate(() => {
       const { textOn } = window.__c, low = [], seen = {};
-      const sels = { subtitle: "[data-tasks-subtitle]", section: "[data-task-section] h2", count: "[data-section-count]", title: "[data-task-title]",
+      const sels = { subtitle: "[data-tasks-subtitle]", section: "[data-task-section] [data-section-title]", count: "[data-section-count]", title: "[data-task-title]",
         account: "[data-task-account]", tag: "[data-task-source]", due: "[data-task-due]", pri: "[data-task-priority]", legend: "[data-source-legend]" };
       for (const [k, sel] of Object.entries(sels)) {
         const els = document.querySelectorAll(sel); seen[k] = els.length;
@@ -222,10 +228,10 @@ const rnSeed = ({ theme = "light", accounts = RN, tasks = RN_TASKS, pre = "" } =
 async function openRn({ theme = "light", w = 1440, ...o } = {}) {
   const r = await launch(rnSeed({ theme, ...o }));
   if (theme !== "light") await r.page.reload();
-  await r.page.setViewportSize({ width: w, height: 1000 });
   await r.page.waitForFunction(n => window.__store && window.__store.getState().accounts.length >= n, (o.accounts || RN).length);
   await r.page.click('button[title="Renewals"]');
   await r.page.waitForSelector("[data-renewals-subtitle]");
+  await r.page.setViewportSize({ width: w, height: 1000 }); // after the sidebar click: narrow widths hide the sidebar
   return r;
 }
 const forecastText = page => page.$$eval("[data-forecast]", e => e.map(x => x.dataset.forecast + "=" + x.querySelector("[data-forecast-value]").textContent.trim()).join());
@@ -463,4 +469,203 @@ for (const theme of ["light", "dark"]) test(`stage6 renewals: text contrast >= 4
     r = await check({ th: "[data-renewals-table] th", td: "[data-renewals-table] td", sel: "[data-renewals-table] select" });
     assert(r.seen.td > 50 && r.low.length === 0, "table low contrast: " + r.low.join(" | ") + JSON.stringify(r.seen));
   } finally { await browser.close(); }
+});
+
+// ---------------------------------------------------------------- Task 4: phone / print / a11y
+const LONG_ACCT = "Extraordinarily Long Account Name Holdings Group Pvt Ltd 60c"; // 60 chars
+// Polls (no fixed sleep) until the page has no horizontal scroll; reports the widest offender.
+async function noPageHScroll(page, what) {
+  const ok = await page.waitForFunction(() => document.documentElement.scrollWidth - document.documentElement.clientWidth <= 0, null, { timeout: 4000 }).then(() => true, () => false);
+  if (ok) return;
+  const off = await page.evaluate(() => { const vw = document.documentElement.clientWidth; let w = null;
+    for (const e of document.querySelectorAll("main *")) { const r = e.getBoundingClientRect(); if (r.right > vw + 0.5 && (!w || r.right > w.r)) w = { r: r.right, tag: e.tagName, cls: String(e.className).slice(0, 60) }; }
+    return { sw: document.documentElement.scrollWidth, vw, w }; });
+  assert(false, `${what}: page scrolls horizontally ${JSON.stringify(off)}`);
+}
+const heights = (page, sel) => page.$$eval(sel, e => e.filter(x => x.offsetParent !== null).map(x => Math.round(x.getBoundingClientRect().height)));
+async function openPhoneTasks() {
+  const accts = [...ACCTS, seedAccount({ id: "aL", name: LONG_ACCT, csm: "Priya" })];
+  const tasks = [...TASKS, { id: "s-longacct", accountId: "aL", title: "Long account follow-up", due: day(-1), priority: "High", status: "Open", owner: "Priya" }];
+  const r = await launch(`window.__seedRows = { accounts: ${rows(accts)}, contacts: [], activities: [], tasks: ${rows(tasks)}, opportunities: [], team: [], settings: [] };
+    window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin" };`);
+  await r.page.setViewportSize({ width: 390, height: 844 });
+  await r.page.waitForFunction(() => window.__store && window.__store.getState().tasks.length >= 9);
+  await r.page.evaluate(() => window.__goTasks());
+  await r.page.waitForSelector("[data-tasks-subtitle]");
+  await r.page.waitForSelector("[data-task-row]");
+  return r;
+}
+
+test("stage6 phone 390: Tasks -- no page h-scroll, 44px targets, long account name wraps", async () => {
+  const { page, browser } = await openPhoneTasks();
+  try {
+    await noPageHScroll(page, "tasks");
+    for (const [what, sel] of [["checkbox hit area", "[data-task-check-hit]"], ["reschedule", 'select[title="Reschedule"]'], ["filters", ".tk-filters select"],
+      ["scope buttons", '[role=group][aria-label="Scope"] button'], ["section headers", "[data-task-section] > h2 > button"], ["account link", "[data-task-account]"]]) {
+      const hs = await heights(page, sel);
+      assert(hs.length > 0 && hs.every(h => h >= 44), `${what} heights ${hs}`);
+    }
+    const hit = await page.$eval("[data-task-check-hit]", e => Math.round(e.getBoundingClientRect().width));
+    assert(hit >= 44, "checkbox hit width " + hit);
+    const acct = await page.evaluate(n => { const b = [...document.querySelectorAll("[data-task-account]")].find(x => x.textContent === n);
+      const r = b.getBoundingClientRect(); return { inside: r.right <= document.documentElement.clientWidth, h: Math.round(r.height), full: b.scrollWidth <= b.clientWidth + 1 }; }, LONG_ACCT);
+    assert(acct.inside && acct.full && acct.h >= 44, "long account name wraps in the row " + JSON.stringify(acct));
+    // tick still completes through the bigger hit area (click the label, not the input)
+    const t = await page.$eval("[data-task-row] [data-task-title]", e => e.textContent);
+    await page.locator("[data-task-check-hit]").first().click({ position: { x: 3, y: 3 } });
+    await page.waitForFunction(t => window.__store.getState().tasks.some(x => x.title.replace(/^[▶♥]\s*/, "") === t && x.status === "Done"), t);
+  } finally { await browser.close(); }
+});
+
+test("stage6 phone 390: Renewals board + table -- no page h-scroll, boxes scroll inside, 2x2 windows, 44px targets, long name", async () => {
+  const { page, browser } = await openRn({ w: 390 });
+  try {
+    await noPageHScroll(page, "renewals board");
+    const lanes = await page.$eval("[data-board]", e => ({ sw: e.scrollWidth, cw: e.clientWidth, ox: getComputedStyle(e).overflowX }));
+    assert(lanes.sw > lanes.cw && /auto|scroll/.test(lanes.ox), "lanes scroll in their own box " + JSON.stringify(lanes));
+    const wins = await page.$$eval("[data-renewal-window]", e => e.map(x => { const r = x.getBoundingClientRect(); return [Math.round(r.top), Math.round(r.height)]; }));
+    assert(wins[0][0] === wins[1][0] && wins[2][0] === wins[3][0] && wins[2][0] > wins[0][0], "window cards 2x2 " + JSON.stringify(wins));
+    assert(wins.every(([, h]) => h >= 44), "window card heights " + wins);
+    for (const [what, sel] of [["tabs", "[data-renewals-view]"], ["stage selects", "[data-renewal-card] select"], ["card name buttons", "[data-renewal-card] .rn-name-btn"]]) {
+      const hs = await heights(page, sel);
+      assert(hs.length > 0 && hs.every(h => h >= 44), `${what} heights ${hs}`);
+    }
+    const nm = await page.$eval("[data-renewal-card=r295] [data-renewal-name]", e => ({ t: e.title, trunc: e.scrollWidth > e.clientWidth, ell: getComputedStyle(e).textOverflow }));
+    assert(nm.t === LONG_NAME && nm.trunc && nm.ell === "ellipsis", "60-char name truncates on the card " + JSON.stringify(nm));
+    await page.click('[data-renewals-view="table"]');
+    await page.waitForSelector("[data-renewals-table]");
+    await noPageHScroll(page, "renewals table");
+    const tc = await page.$eval("[data-renewals-table]", t => { const c = t.parentElement; return { sw: c.scrollWidth, cw: c.clientWidth, ox: getComputedStyle(c).overflowX }; });
+    assert(tc.sw > tc.cw && /auto|scroll/.test(tc.ox), "table scrolls in its card " + JSON.stringify(tc));
+    const wrap = await page.$eval("[data-renewal-row=r295] .rn-tname", e => ({ full: e.scrollWidth <= e.clientWidth + 1, ow: getComputedStyle(e).overflowWrap }));
+    assert(wrap.full && wrap.ow === "anywhere", "long name wraps in the table " + JSON.stringify(wrap));
+  } finally { await browser.close(); }
+});
+
+test("stage6 print: filters (incl. label words), scope, tablist, reschedule, date input, Clear hidden; stage shown as text", async () => {
+  const t = await open();
+  try {
+    await t.page.locator('[data-task-section="overdue"] select[title="Reschedule"]').first().selectOption("custom");
+    await t.page.waitForSelector(".tk-date");
+    await t.page.emulateMedia({ media: "print" });
+    const shown = await t.page.evaluate(() => [".tk-filters", ".tk-filters label", '[role=group][aria-label="Scope"]', 'select[title="Reschedule"]', ".tk-date"]
+      .filter(s => [...document.querySelectorAll(s)].some(e => e.getClientRects().length > 0)));
+    assert(shown.length === 0, "visible in tasks print: " + shown);
+    const words = await t.page.evaluate(() => [...document.querySelectorAll("main label")].filter(l => l.getClientRects().length > 0).map(l => l.textContent.trim()));
+    assert(!words.some(w => /^(Source|Health)\b/.test(w)), "orphan label words in print: " + words);
+  } finally { await t.browser.close(); }
+  const r = await openRn();
+  try {
+    await r.page.click('[data-renewal-window="0-30"]');
+    await r.page.waitForSelector("[data-window-clear]");
+    await r.page.emulateMedia({ media: "print" });
+    const d = await r.page.evaluate(() => ({ tabs: document.querySelector('[role=tablist][aria-label="Renewals view"]').getClientRects().length,
+      clear: document.querySelector("[data-window-clear]").getClientRects().length, stage: getComputedStyle(document.querySelector("[data-renewal-card] select")).appearance }));
+    assert(d.tabs === 0 && d.clear === 0 && d.stage === "none", "renewals print " + JSON.stringify(d));
+  } finally { await r.browser.close(); }
+});
+
+const hasBorder = e => { const s = getComputedStyle(e); return s.borderTopStyle !== "none" && parseFloat(s.borderTopWidth) >= 1; };
+test("stage6 forced-colors + reduced motion: pills/tags/windows keep a border, selected tab/scope get Highlight, no transitions", async () => {
+  const t = await open();
+  try {
+    await t.page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+    const b = await t.page.evaluate(`(() => { const hasBorder = ${hasBorder};
+      const bw = s => [...document.querySelectorAll(s)].map(hasBorder);
+      const sel = document.querySelector('[role=group][aria-label="Scope"] [aria-pressed=true]');
+      const tr = [...document.querySelectorAll(".tk-page, .tk-page *")].filter(e => parseFloat(getComputedStyle(e).transitionDuration) > 0.001).length;
+      return { tag: bw("[data-task-source]"), pri: bw("[data-task-priority]"), due: bw("[data-task-due]"), count: bw("[data-section-count]"),
+        sel: parseFloat(getComputedStyle(sel).borderTopWidth), tr }; })()`);
+    for (const k of ["tag", "pri", "due", "count"]) assert(b[k].length && b[k].every(Boolean), `${k} border in forced colors ${b[k]}`);
+    assert(b.sel >= 2, "pressed scope button Highlight border " + b.sel);
+    assert(b.tr === 0, "transitions under reduce " + b.tr);
+  } finally { await t.browser.close(); }
+  const r = await openRn();
+  try {
+    await r.page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+    const b = await r.page.evaluate(`(() => { const hasBorder = ${hasBorder};
+      const bw = s => [...document.querySelectorAll(s)].map(hasBorder);
+      const tab = document.querySelector('[data-renewals-view][aria-selected=true]'), other = document.querySelector('[data-renewals-view][aria-selected=false]');
+      const tr = [...document.querySelectorAll(".rn-page, .rn-page *")].filter(e => parseFloat(getComputedStyle(e).transitionDuration) > 0.001).length;
+      return { win: bw("[data-renewal-window]"), card: bw("[data-renewal-card]"), stage: bw("[data-renewal-card] select"), pill: bw("[data-renewal-card] .ad-pill"),
+        tab: parseFloat(getComputedStyle(tab).borderTopWidth), other: parseFloat(getComputedStyle(other).borderTopWidth) || 0, tr }; })()`);
+    for (const k of ["win", "card", "stage", "pill"]) assert(b[k].length && b[k].every(Boolean), `${k} border in forced colors`);
+    assert(b.tab >= 2 && b.other === 0, "selected tab Highlight border " + JSON.stringify(b));
+    assert(b.tr === 0, "transitions under reduce " + b.tr);
+  } finally { await r.browser.close(); }
+});
+
+test("stage6 200% zoom (720px): subtitles not clipped, no page h-scroll on Tasks and Renewals", async () => {
+  const t = await open({ w: 720 });
+  try {
+    await noPageHScroll(t.page, "tasks 720");
+    assert(await t.page.$eval("[data-tasks-subtitle]", e => e.scrollWidth <= e.clientWidth + 1), "tasks subtitle clipped");
+  } finally { await t.browser.close(); }
+  const r = await openRn({ w: 720 });
+  try {
+    await noPageHScroll(r.page, "renewals 720");
+    assert(await r.page.$eval("[data-renewals-subtitle]", e => e.scrollWidth <= e.clientWidth + 1), "renewals subtitle clipped");
+  } finally { await r.browser.close(); }
+});
+
+// follow-ups (3) + (8): form-field borders and the window dots reach 3:1 against what they sit on.
+const BORDER_FNS = `window.__b = (() => {
+  const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  const p = s => (s.match(/[\\d.]+/g) || []).map(Number);
+  const ratio = (a, b) => { const [x, y] = [lum(a), lum(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+  const bgOf = e => { for (let x = e.parentElement; x; x = x.parentElement) { const c = p(getComputedStyle(x).backgroundColor); if (c.length === 3 || c[3] === 1) return c.slice(0, 3); } return [255, 255, 255]; };
+  return { edge: (e, prop) => ratio(p(getComputedStyle(e)[prop]).slice(0, 3), bgOf(e)) };
+})();`;
+for (const theme of ["light", "dark"]) test(`stage6 field borders + window dots >= 3:1 (${theme})`, async () => {
+  const t = await open({ theme });
+  try {
+    await t.page.addScriptTag({ content: BORDER_FNS });
+    const r = await t.page.evaluate(() => { const els = [...document.querySelectorAll(".tk-filters select, .tk-filters input, select[title=Reschedule]")];
+      return { n: els.length, low: els.map(e => window.__b.edge(e, "borderTopColor")).filter(c => c < 3).map(c => c.toFixed(2)) }; });
+    assert(r.n >= 5 && r.low.length === 0, "tasks field borders below 3:1: " + JSON.stringify(r));
+  } finally { await t.browser.close(); }
+  const r = await openRn({ theme });
+  try {
+    await r.page.addScriptTag({ content: BORDER_FNS });
+    const stages = ["Not started", "Outreach", "Quote sent", "Negotiating", "Committed", "At risk"];
+    for (const [i, id] of ["r195", "r295", "r115", "r80", "r65", "r50"].entries()) await r.page.selectOption(`[data-renewal-card="${id}"] select`, stages[i]);
+    const low = await r.page.evaluate(() => [
+      ...[...document.querySelectorAll("[data-renewal-card] select")].map(e => ["stage " + e.value, window.__b.edge(e, "borderTopColor")]),
+      ...[...document.querySelectorAll(".rn-win-dot")].map(e => ["dot " + e.dataset.win, window.__b.edge(e, "backgroundColor")]),
+    ].filter(([, c]) => c < 3).map(([k, c]) => k + " " + c.toFixed(2)));
+    assert(low.length === 0, "renewals borders/dots below 3:1: " + low);
+  } finally { await r.browser.close(); }
+});
+
+test("stage6 renewals tabs: tabpanel + aria-controls, roving tabindex, Left/Right arrows switch view and focus", async () => {
+  const { page, browser } = await openRn();
+  try {
+    const read = () => page.evaluate(() => {
+      const tabs = [...document.querySelectorAll('[role=tablist][aria-label="Renewals view"] [role=tab]')];
+      const panel = document.querySelector("[role=tabpanel]");
+      return { tabs: tabs.map(t => [t.dataset.renewalsView, t.getAttribute("aria-selected"), t.tabIndex, t.getAttribute("aria-controls")].join(":")),
+        panel: panel && [panel.id, panel.getAttribute("aria-labelledby"), !!panel.querySelector("[data-board]"), !!panel.querySelector("[data-renewals-table]")].join(":"),
+        focus: document.activeElement?.dataset?.renewalsView };
+    });
+    let s = await read();
+    assert(s.tabs.join() === "board:true:0:rn-view-panel,table:false:-1:rn-view-panel", "tabs " + s.tabs);
+    assert(s.panel === "rn-view-panel:rn-tab-board:true:false", "panel " + s.panel);
+    await page.focus('[data-renewals-view="board"]');
+    await page.keyboard.press("ArrowRight");
+    await page.waitForSelector("[data-renewals-table]");
+    s = await read();
+    assert(s.tabs.join() === "board:false:-1:rn-view-panel,table:true:0:rn-view-panel" && s.focus === "table", "after ArrowRight " + JSON.stringify(s));
+    assert(s.panel === "rn-view-panel:rn-tab-table:false:true", "panel after " + s.panel);
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForSelector("[data-col-month]");
+    s = await read();
+    assert(s.focus === "board" && s.tabs[0].startsWith("board:true:0"), "after ArrowLeft " + JSON.stringify(s));
+  } finally { await browser.close(); }
+});
+
+test("stage6 renewals: today and the first lane key come from the local calendar day (follow-up 7)", async () => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(new URL("../../src/23-renewals.jsx", import.meta.url), "utf8");
+  assert(/const today = localDateKey\(new Date\(\)\)/.test(src) && /const firstKey = today\.slice\(0, 7\)/.test(src),
+    "Renewals must derive today AND the first month key from localDateKey(new Date())");
 });

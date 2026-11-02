@@ -150,7 +150,7 @@ export const scenarios = [
       await openDashboard(page, runId);
       await page.locator('[data-kpi][data-stat="Overdue tasks"]').click();
       await page.locator("main h1", { hasText: /^Tasks$/ }).waitFor({ timeout: 10000 });
-      const head = page.locator('[data-task-section="overdue"] > button[aria-expanded]');
+      const head = page.locator('[data-task-section="overdue"] > h2 > button[aria-expanded]');
       if (!(await head.count())) throw new SkipScenario("no overdue tasks in the org, so no Overdue section");
       assert.equal(await head.first().getAttribute("aria-expanded"), "true", "Overdue section collapsed");
     } },

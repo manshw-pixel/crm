@@ -18,8 +18,8 @@ function TaskRow({ t, a, dispatch, openAccount }) {
   const dueText = late ? `Overdue · ${-days}d` : !t.due ? "No due date" : days === 0 ? "Today" : fmtDate(t.due);
   return (
     <div data-task-row className="tk-row" data-done={done ? "true" : undefined}>
-      <input type="checkbox" className="tk-check" checked={done} title="Complete" aria-label={`Complete ${title}`}
-        onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />
+      <label data-task-check-hit className="tk-hit"><input type="checkbox" className="tk-check" checked={done} title="Complete" aria-label={`Complete ${title}`}
+        onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
       <div className="tk-main">
         <div className="tk-title-line">
           <span data-task-title className={`tk-title${done ? " line-through" : ""}`}>{title}</span>
@@ -40,7 +40,7 @@ function TaskRow({ t, a, dispatch, openAccount }) {
           <option value="7">+1 week</option>
           <option value="custom">Pick date…</option>
         </select>
-        {custom && <input type="date" className="tk-sel" autoFocus
+        {custom && <input type="date" className="tk-sel tk-date" aria-label="New due date" autoFocus
           onChange={e => { if (e.target.value) { dispatch({ type: "EDIT_TASK", id: t.id, patch: { due: e.target.value } }); setCustom(false); } }}
           onBlur={() => setCustom(false)} />}
         <span data-task-due data-sev={late ? "red" : "grey"} data-days-chip={late ? "overdue" : undefined} className="ad-pill tk-due">{dueText}</span>
@@ -65,10 +65,11 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   }, [initialFilter]);
   const byId = useMemo(() => Object.fromEntries(scored.map(a => [a.id, a])), [scored]);
   const filtered = filterTasks(st.tasks, byId, { scope, userName: user.name, source, band, q, owner });
-  const buckets = bucketTasks(filtered, iso(Date.now()));
+  const todayIso = iso(Date.now()); // one date source for the buckets AND the Today hint
+  const buckets = bucketTasks(filtered, todayIso);
   const total = Object.values(buckets).reduce((n, list) => n + list.length, 0);
   const openCount = buckets.overdue.length + buckets.today.length + buckets.week.length + buckets.later.length;
-  const todayHint = new Date().toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }).replace(",", "");
+  const todayHint = fmtDayHint(todayIso);
   const SECTIONS = [
     ["overdue", "Overdue", "oldest first"], ["today", "Today", todayHint], ["week", "This week", "next 7 days"], ["later", "Later", ""], ["done", "Done", ""],
   ];
@@ -110,13 +111,13 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
       {st.tasks.length > 0 && total === 0 && <p className="tk-empty">No tasks match these filters.</p>}
       {SECTIONS.map(([key, label, hint]) => buckets[key].length > 0 && (
         <section key={key} data-task-section={key} aria-label={label} className="tk-sec">
-          <button className="tk-sec-head" aria-expanded={!!open[key]} onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
+          <h2 className="tk-sec-h"><button className="tk-sec-head" aria-expanded={!!open[key]} onClick={() => setOpen(o => ({ ...o, [key]: !o[key] }))}>
             <span className="tk-dot" data-sec={key} aria-hidden="true" />
-            <h2 className="tk-sec-title" data-sec={key}>{label}</h2>
+            <span data-section-title className="tk-sec-title" data-sec={key}>{label}</span>
             <span data-section-count className="tk-count" data-sec={key}>{buckets[key].length}</span>
             {hint && <span data-section-hint className="tk-hint">{hint}</span>}
             <span className="tk-chev-wrap"><TkChevron open={!!open[key]} /></span>
-          </button>
+          </button></h2>
           {open[key] && <div className="tk-rows">{buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}</div>}
         </section>
       ))}

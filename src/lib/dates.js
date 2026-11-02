@@ -6,6 +6,8 @@ export const daysUntil = d => Math.ceil((new Date(d) - Date.now()) / DAY);
 export const daysSince = d => Math.floor((Date.now() - new Date(d)) / DAY);
 export const isoMinus = (dateStr, days) => iso(new Date(dateStr).getTime() - days * DAY);
 export const isoPlus = (dateStr, days) => iso(new Date(dateStr).getTime() + days * DAY);
+// "Mon Nov 2" for a date-only ISO string, read in UTC so it names the same day the ISO says.
+export const fmtDayHint = d => new Date(String(d).slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-US", { timeZone: "UTC", weekday: "short", month: "short", day: "numeric" }).replace(",", "");
 export const fmtDate = d => new Date(d).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 /* textual, like isoPlus — setMonth() would overflow month-end (Jan 31 +1 = Mar 3) and mix local time into UTC-parsed dates */
 export const addMonths = (dateStr, m) => {

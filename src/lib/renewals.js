@@ -37,3 +37,9 @@ export function renewalWindows(accounts, today) {
   }
   return out;
 }
+
+// "Today" as the LOCAL calendar date (YYYY-MM-DD) of a Date. The board's month lanes are local,
+// so the window cards and the Past due lane must use the same local day (toISOString is UTC and
+// lands on the previous day east of UTC just after midnight).
+export const localDateKey = d =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;

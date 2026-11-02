@@ -253,7 +253,7 @@ test("__goTasks({ owner }) opens Tasks filtered to that owner and the chip clear
   assert(/Marco/.test(await page.textContent("[data-task-owner-filter]")), "chip should name Marco");
   assert(await page.textContent("main h1") === "Tasks", "should be on Tasks");
   // Marco owns only the q-week task, which sits in the (collapsed) This week section.
-  await page.click('[data-task-section="week"] > button');
+  await page.click('[data-task-section="week"] > h2 > button');
   await page.waitForSelector('[data-task-section="week"] [data-task-row]');
   const t = await titlesOf(page);
   assert(t.join() === "Send renewal quote", "only Marco's rows expected, got " + t);

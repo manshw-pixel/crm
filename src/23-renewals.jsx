@@ -3,6 +3,7 @@ const RENEWAL_STAGES = ["Not started", "Outreach", "Quote sent", "Negotiating", 
 const renewalStageOf = a => a.renewalStage || "Not started";
 const RENEWALS_VIEW_KEY = "onevio.renewals.view";
 const readRenewalsView = () => { try { const v = localStorage.getItem(RENEWALS_VIEW_KEY); return v === "table" ? "table" : "board"; } catch (e) { return "board"; } };
+const RN_VIEWS = [["board", "Board"], ["table", "Table"]];
 const RN_HEALTH = { Green: ["green", "Healthy"], Yellow: ["amber", "Watch"], Red: ["red", "At risk"] };
 
 // Days pill: keeps DaysChip's data-days-chip band + text; red <= 30 (and overdue), amber <= 60, grey beyond.
@@ -75,12 +76,13 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
   const [view, setViewRaw] = useState(readRenewalsView);
   const setView = v => { setViewRaw(v); try { localStorage.setItem(RENEWALS_VIEW_KEY, v); } catch (e) {} };
   const [win, setWin] = useState(null); // page-local window filter, not persisted
-  const today = iso(Date.now());
+  // Local calendar day (follow-up 7): month lanes are local, so windows + Past due use the same day.
+  const today = localDateKey(new Date());
   const inWin = a => !win || renewalWindowOf(a.renewalDate, today) === win;
   const byDate = (a, b) => (a.renewalDate || "").localeCompare(b.renewalDate || "") || a.name.localeCompare(b.name);
   const months = [];
   const now = new Date(); now.setDate(1);
-  const firstKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const firstKey = today.slice(0, 7);
   for (let i = 0; i < 12; i++) {
     const m = new Date(now.getFullYear(), now.getMonth() + i, 1);
     const key = `${m.getFullYear()}-${String(m.getMonth() + 1).padStart(2, "0")}`; // local, not toISOString — UTC shifts the month
@@ -106,13 +108,24 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
     { k: "risk", label: "At risk (90d)", value: fmtMoney(atRisk), sub: `${notStarted.length} not started yet`, tone: atRisk ? "red" : undefined },
   ];
   const cardProps = { openAccount, dispatch, user, tasks };
+  // Roving tabindex tabs: Left/Right (and Home/End) move selection and focus (follow-up 9).
+  const onTabKey = e => {
+    const i = RN_VIEWS.findIndex(([k]) => k === view), n = RN_VIEWS.length;
+    const j = e.key === "ArrowRight" ? (i + 1) % n : e.key === "ArrowLeft" ? (i - 1 + n) % n : e.key === "Home" ? 0 : e.key === "End" ? n - 1 : -1;
+    if (j < 0) return;
+    e.preventDefault();
+    const k = RN_VIEWS[j][0];
+    setView(k);
+    const el = document.getElementById(`rn-tab-${k}`); if (el) el.focus();
+  };
   return (
     <div className="rn-page">
       <div className="rn-head">
         <p data-renewals-subtitle className="rn-sub">Next 12 months · {horizon.length} accounts · {fmtMoney(sum(horizon))} ARR up for renewal</p>
-        <div role="tablist" aria-label="Renewals view" className="rn-seg">
-          {[["board", "Board"], ["table", "Table"]].map(([k, l]) => (
-            <button key={k} type="button" role="tab" aria-selected={view === k} data-renewals-view={k} className="rn-seg-btn" onClick={() => setView(k)}>{l}</button>
+        <div role="tablist" aria-label="Renewals view" className="rn-seg" onKeyDown={onTabKey}>
+          {RN_VIEWS.map(([k, l]) => (
+            <button key={k} id={`rn-tab-${k}`} type="button" role="tab" aria-selected={view === k} aria-controls="rn-view-panel" tabIndex={view === k ? 0 : -1}
+              data-renewals-view={k} className="rn-seg-btn" onClick={() => setView(k)}>{l}</button>
           ))}
         </div>
       </div>
@@ -136,6 +149,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
           </div>
         ))}
       </section>
+      <div role="tabpanel" id="rn-view-panel" aria-labelledby={`rn-tab-${view}`} className="rn-panel">
       {view === "board" ? (
         <HScroll className="rn-lanes">
           {pastAll.length > 0 && (() => { const items = pastAll.filter(inWin); return (
@@ -159,6 +173,7 @@ function Renewals({ scored, openAccount, dispatch, allBook = [], rates = {}, sna
             </section>); })}
         </HScroll>
       ) : <RenewalsTable items={tableItems} filtered={!!win} {...cardProps} />}
+      </div>
       <RenewalOutcomes accounts={allBook} rates={rates} snapshots={snapshots} />
     </div>
   );

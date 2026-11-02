@@ -568,11 +568,11 @@
   @media (forced-colors: active) { .im-tabcard { border: 1px solid CanvasText; } .ad-pill.im-due, .im-load-pill, .im-task .ad-pill { border: 1px solid CanvasText; } .im-load-bar { border: 1px solid CanvasText; } .im-load-bar > span { forced-color-adjust: none; background: CanvasText; } .im-mytask:focus-visible { outline-color: Highlight; } }
   @media (prefers-reduced-motion: reduce) { .im-page *, .im-page { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
   /* ---- stage 6 tasks work queue (approved Stage6Tasks / Stage6TasksDark) ---- */
-  .tk-page { --t-card: #ffffff; --t-fg: #0f172a; --t-label: #475569; --t-meta: #5f6f86; --t-line: #e2e8f0; --t-row: #f1f5f9; --t-seg: #e8eaf3; --t-field: #ffffff;
+  .tk-page { --t-card: #ffffff; --t-fg: #0f172a; --t-label: #475569; --t-meta: #5f6f86; --t-line: #e2e8f0; --t-row: #f1f5f9; --t-seg: #e8eaf3; --t-field: #ffffff; --t-field-ln: #7c8aa0;
     --t-link: #4f46e5; --t-acc: #6366f1; --t-acc-tx: #4338ca; --t-acc-soft: #eef2ff; --t-acc-ln: #c7d2fe; --t-shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px -14px rgba(15,23,42,.14);
     --t-dot-overdue: #dc2626; --t-dot-today: #d97706; --t-dot-week: #4f46e5; --t-dot-later: #64748b; --t-dot-done: #059669; --t-over-tx: #b91c1c;
     min-width: 0; display: flex; flex-direction: column; gap: 16px; color: var(--t-fg); }
-  @media screen { html.dark .tk-page { --t-card: rgb(19,27,44); --t-fg: #e2e8f0; --t-label: #cbd5e1; --t-meta: #94a3b8; --t-line: #2d3a4f; --t-row: #1e293b; --t-seg: #1e293b; --t-field: #0f172a;
+  @media screen { html.dark .tk-page { --t-card: rgb(19,27,44); --t-fg: #e2e8f0; --t-label: #cbd5e1; --t-meta: #94a3b8; --t-line: #2d3a4f; --t-row: #1e293b; --t-seg: #1e293b; --t-field: #0f172a; --t-field-ln: #64748b;
     --t-link: #a5b4fc; --t-acc: #818cf8; --t-acc-tx: #a5b4fc; --t-acc-soft: #1e2046; --t-acc-ln: #312e81; --t-shadow: 0 1px 3px rgba(0,0,0,.4);
     --t-dot-overdue: #f87171; --t-dot-today: #fbbf24; --t-dot-week: #818cf8; --t-dot-later: #94a3b8; --t-dot-done: #34d399; --t-over-tx: #fda4af; } }
   .tk-head { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
@@ -584,13 +584,15 @@
   .tk-flabel { display: flex; align-items: center; gap: 8px; font-size: 12.5px; font-weight: 600; color: var(--t-meta); }
   .tk-search { flex: 0 1 240px; min-width: 0; }
   .tk-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
-  .tk-sel { min-height: 36px; border: 1px solid var(--t-line); border-radius: 10px; background: var(--t-field); color: var(--t-fg); font-size: 13px; padding: 0 10px; }
+  .tk-sel { min-height: 36px; border: 1px solid var(--t-field-ln); border-radius: 10px; background: var(--t-field); color: var(--t-fg); font-size: 13px; padding: 0 10px; }
   .tk-input { width: 100%; min-width: 0; box-sizing: border-box; padding: 0 12px; }
   .tk-input::placeholder { color: var(--t-meta); opacity: 1; }
   .tk-chip { min-height: 36px; border: 1px solid var(--t-acc-ln); border-radius: 999px; background: var(--t-acc-soft); color: var(--t-acc-tx); font-size: 12.5px; font-weight: 600; padding: 0 12px; max-width: 100%; }
   .tk-spacer { flex: 1 1 auto; }
   .tk-legend { margin: 0; font-size: 12px; color: var(--t-meta); } .tk-legend b { font-weight: 600; }
   .tk-empty { margin: 0; font-size: 14px; color: var(--t-meta); }
+  .tk-sec-h { margin: 0; font: inherit; }
+  .tk-hit { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; cursor: pointer; }
   .tk-sec { background: var(--t-card); border-radius: 16px; box-shadow: var(--t-shadow); padding: 4px 18px; min-width: 0; }
   .tk-sec-head { width: 100%; min-height: 48px; border: 0; background: transparent; color: var(--t-fg); display: flex; align-items: center; gap: 10px; cursor: pointer; padding: 0; text-align: left; }
   .tk-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; }
@@ -620,16 +622,16 @@
   .tk-seg-btn:focus-visible, .tk-sel:focus-visible, .tk-chip:focus-visible, .tk-sec-head:focus-visible, .tk-acct:focus-visible, .tk-check:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
   @media (max-width: 640px) {
     .tk-seg-btn, .tk-sel, .tk-chip, .tk-resched { min-height: 44px; } .tk-sec-head { min-height: 48px; } .tk-search { flex: 1 1 100%; }
-    .tk-check { width: 22px; height: 22px; margin: 11px; } .tk-sec { padding: 4px 12px; } .tk-cluster { margin-left: 0; width: 100%; } .tk-acct { min-height: 32px; }
+    .tk-hit { width: 44px; height: 44px; margin-left: -10px; } .tk-check { width: 22px; height: 22px; } .tk-sec { padding: 4px 12px; } .tk-cluster { margin-left: 0; width: 100%; } .tk-acct { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) { .tk-page *, .tk-page { transition: none !important; animation: none !important; } }
-  @media (forced-colors: active) { .tk-sec, .tk-tag, .tk-pri, .tk-count, .ad-pill.tk-due { border: 1px solid CanvasText; } .tk-dot { forced-color-adjust: none; background: CanvasText; } .tk-sec-head:focus-visible, .tk-sel:focus-visible { outline-color: Highlight; } }
-  @media print { .tk-filters select, .tk-search, .tk-seg, .tk-resched { display: none; } .tk-sec { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } }
+  @media (forced-colors: active) { .tk-sec, .tk-tag, .tk-pri, .tk-count, .ad-pill.tk-due { border: 1px solid CanvasText; } .tk-dot { forced-color-adjust: none; background: CanvasText; } .tk-sec-head:focus-visible, .tk-sel:focus-visible { outline-color: Highlight; } .tk-seg-btn[aria-pressed=true] { border: 2px solid Highlight; } }
+  @media print { .tk-filters, .tk-flabel, .tk-search, .tk-seg, .tk-resched, .tk-date { display: none !important; } .tk-sec { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } }
   @media (forced-colors: active) { .im-stage, .im-task-pill { border: 1px solid CanvasText; } .im-hist-dot { forced-color-adjust: none; background: CanvasText; } .im-hours[data-over=true] { text-decoration: underline; } }
   /* ---- stage 6 renewals page (approved Stage6Renewals / Stage6RenewalsDark; owner addition: Past due lane) ---- */
   .rn-page { --r-card: #ffffff; --r-fg: #0f172a; --r-label: #475569; --r-meta: #5f6f86; --r-line: #e2e8f0; --r-row: #f1f5f9; --r-lane: #eceef7; --r-seg: #e8eaf3; --r-band: #f8fafc;
     --r-acc-tx: #4338ca; --r-acc: #6366f1; --r-shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px -14px rgba(15,23,42,.14); --r-red-tx: #b91c1c; --r-green-tx: #047857;
-    --r-w1: #dc2626; --r-w2: #b45309; --r-w3: #ca8a04; --r-w4: #4f46e5;
+    --r-w1: #dc2626; --r-w2: #b45309; --r-w3: #a16207; --r-w4: #4f46e5;
     --s-gy-bg: #f1f5f9; --s-gy-tx: #475569; --s-gy-ln: #e2e8f0; --s-sk-bg: #e0f2fe; --s-sk-tx: #075985; --s-sk-ln: #bae6fd; --s-in-bg: #eef2ff; --s-in-tx: #4338ca; --s-in-ln: #c7d2fe;
     --s-am-bg: #fef3c7; --s-am-tx: #92400e; --s-am-ln: #fde68a; --s-gn-bg: #d1fae5; --s-gn-tx: #047857; --s-gn-ln: #a7f3d0; --s-rd-bg: #fee2e2; --s-rd-tx: #b91c1c; --s-rd-ln: #fecaca;
     min-width: 0; display: flex; flex-direction: column; gap: 16px; color: var(--r-fg); }
@@ -674,12 +676,12 @@
   .rn-pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .ad-pill.rn-pill { font-variant-numeric: tabular-nums; }
   .rn-arr { font-size: 12.5px; color: var(--r-label); font-variant-numeric: tabular-nums; } .rn-arr b { font-weight: 700; color: var(--r-fg); }
-  .rn-stage { min-height: 34px; border: 1px solid var(--s-gy-ln); border-radius: 9px; background: var(--s-gy-bg); color: var(--s-gy-tx); font-size: 12.5px; font-weight: 700; padding: 0 8px; max-width: 100%; cursor: pointer; }
-  .rn-stage[data-stage=Outreach] { background: var(--s-sk-bg); color: var(--s-sk-tx); border-color: var(--s-sk-ln); }
-  .rn-stage[data-stage="Quote sent"] { background: var(--s-in-bg); color: var(--s-in-tx); border-color: var(--s-in-ln); }
-  .rn-stage[data-stage=Negotiating] { background: var(--s-am-bg); color: var(--s-am-tx); border-color: var(--s-am-ln); }
-  .rn-stage[data-stage=Committed] { background: var(--s-gn-bg); color: var(--s-gn-tx); border-color: var(--s-gn-ln); }
-  .rn-stage[data-stage="At risk"] { background: var(--s-rd-bg); color: var(--s-rd-tx); border-color: var(--s-rd-ln); }
+  .rn-stage { min-height: 34px; border: 1px solid currentColor; border-radius: 9px; background: var(--s-gy-bg); color: var(--s-gy-tx); font-size: 12.5px; font-weight: 700; padding: 0 8px; max-width: 100%; cursor: pointer; }
+  .rn-stage[data-stage=Outreach] { background: var(--s-sk-bg); color: var(--s-sk-tx); }
+  .rn-stage[data-stage="Quote sent"] { background: var(--s-in-bg); color: var(--s-in-tx); }
+  .rn-stage[data-stage=Negotiating] { background: var(--s-am-bg); color: var(--s-am-tx); }
+  .rn-stage[data-stage=Committed] { background: var(--s-gn-bg); color: var(--s-gn-tx); }
+  .rn-stage[data-stage="At risk"] { background: var(--s-rd-bg); color: var(--s-rd-tx); }
   .rn-pb { width: max-content; max-width: 100%; }
   .rn-pb[data-sev=none] { font-size: 11.5px; font-weight: 700; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--r-line); color: var(--r-meta); }
   .rn-tcard { background: var(--r-card); border-radius: 16px; box-shadow: var(--r-shadow); overflow-x: auto; }
@@ -707,7 +709,7 @@
     .rn-seg-btn, .rn-stage, .rn-table .rn-stage, .rn-clear { min-height: 44px; } .rn-name-btn { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) { .rn-page *, .rn-page { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
-  @media (forced-colors: active) { .rn-win, .rn-lane, .rn-card, .rn-tcard, .rn-outcomes, .rn-stage, .rn-pb { border: 1px solid CanvasText; } .rn-win[aria-pressed=true] { border: 3px solid Highlight; }
+  @media (forced-colors: active) { .rn-win, .rn-lane, .rn-card, .rn-tcard, .rn-outcomes, .rn-stage, .rn-pb { border: 1px solid CanvasText; } .rn-win[aria-pressed=true], .rn-seg-btn[aria-selected=true] { border: 3px solid Highlight; }
     .rn-win-dot { forced-color-adjust: none; background: CanvasText; } .rn-win:focus-visible, .rn-stage:focus-visible { outline-color: Highlight; } }
   @media print { .rn-seg, .rn-clear { display: none !important; } .rn-stage { appearance: none; -webkit-appearance: none; border: 0; background: transparent; padding: 0; }
     .rn-lanes, .rn-tcard { overflow: visible; } .rn-win, .rn-forecast, .rn-card, .rn-tcard, .rn-outcomes { box-shadow: none; border: 1px solid #cbd5e1; } .rn-card { break-inside: avoid; } }
