@@ -103,9 +103,13 @@ test("a card whose account was deleted shows Unknown account and a ? avatar", as
 test("card text: go-live wording, unassigned owner, live date", async () => {
   const { page, browser } = await open();
   try {
-    assert(/go-live [A-Z][a-z]{2} \d{1,2}/.test(await txt(page, '[data-board-project="q1"]')), "go-live text");
-    assert((await txt(page, '[data-board-project="q1"]')).includes("Unassigned"), "unassigned");
-    assert(/live [A-Z][a-z]{2} \d{1,2}/.test(await txt(page, '[data-board-project="lv1"]')), "live text");
+    const md = d => new Date(d.slice(0, 10) + "T00:00:00Z").toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+    const q1 = await txt(page, '[data-board-project="q1"]'), lv1 = await txt(page, '[data-board-project="lv1"]');
+    assert(q1.includes(`go-live ${md(day(40))}`), "go-live text: " + q1);
+    assert(q1.includes("Unassigned"), "unassigned");
+    // a live card says "live <liveAt>", never "go-live", and prefers liveAt over targetGoLive
+    assert(/(^|[^-])live [A-Z][a-z]{2} \d{1,2}/.test(lv1) && !lv1.includes("go-live"), "live text: " + lv1);
+    assert(lv1.includes(`live ${md(day(-20))}`) && !lv1.includes(md(day(-30))), "liveAt preferred: " + lv1);
   } finally { await browser.close(); }
 });
 
@@ -192,5 +196,160 @@ for (const theme of ["light", "dark"]) test(`board text contrast >= 4.5:1 (${the
     });
     assert(r.seen.h1 >= 1 && r.seen.subtitle === 1 && r.seen.lane === 5 && r.seen.name >= 6 && r.seen.tag >= 6, "targets present " + JSON.stringify(r.seen));
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
+  } finally { await browser.close(); }
+});
+
+/* ------------------------------ Task 3: project detail ------------------------------ */
+const H = (from, to, at, by = "Boss", note = "") => ({ from, to, at, by, note });
+const D_ACCTS = [...ACCTS, { ...seedAccount({ id: "a9", name: "Nocsm Labs" }), csm: "" }];
+const D_PROJECTS = [...PROJECTS,
+  proj("d1", "a3", "in_progress", "u2", day(-5), { startedAt: "2026-10-06T09:00:00.000Z", history: [
+    H("handover", "queued", "2026-10-01T09:00:00.000Z", "Cara", "Handover submitted"),
+    H("queued", "planning", "2026-10-02T09:00:00.000Z", "Boss", "Assigned to Ivy"),
+    H("planning", "in_progress", "2026-10-06T09:00:00.000Z", "Ivy")] }),
+  proj("nc1", "a9", "planning", "u2", day(40)),
+];
+const dtask = (id, projectId, status, est, logged, o = {}) => ({ ...task(id, projectId, status), title: "T " + id, estHours: est,
+  timeLog: logged ? [{ by: "Ivy", at: "2026-10-10T09:00:00.000Z", hours: logged }] : [], ...o });
+const D_TASKS = [...TASKS, dtask("x1", "d1", "done", 2, 2, { order: 1 }), dtask("x2", "d1", "doing", 8, 9, { order: 2 }), dtask("x3", "d1", "todo", 4, 0, { order: 3 }),
+  dtask("s1", "cr1", "done", 2, 2, { order: 1 }), dtask("s2", "cr1", "done", 2, 2, { order: 2 })];
+const dseed = (role = "admin") => seed(role).replace(rows(ACCTS), rows(D_ACCTS)).replace(rows(PROJECTS), rows(D_PROJECTS)).replace(rows(TASKS), rows(D_TASKS));
+async function openDetail(id, { role = "admin", w = 1440 } = {}) {
+  const r = await launch(dseed(role));
+  await r.page.setViewportSize({ width: 1440, height: 900 }); // the sidebar button is hidden at phone width
+  await r.page.click('button[title="Implementation"]').catch(() => {});
+  await r.page.waitForSelector("[data-board-project]");
+  const card = r.page.locator(`[data-board-project="${id}"]`);
+  if (!(await card.isVisible())) await r.page.locator("details[data-board-collapsed]", { has: card }).locator("summary").click();
+  await card.click();
+  await r.page.waitForSelector(`[data-project-detail="${id}"]`);
+  if (w !== 1440) { await r.page.setViewportSize({ width: w, height: 900 }); await r.page.waitForTimeout(600); }
+  return r;
+}
+
+test("detail header card: h1, stage pill, sub line, back link", async () => {
+  const { page, browser } = await openDetail("d1");
+  try {
+    assert(await txt(page, "[data-project-detail] h1") === "Stark Industries", "h1");
+    assert(await txt(page, "[data-project-stage]") === "In progress", "stage");
+    assert(await txt(page, "[data-project-sub]") === "Account Stark Industries · CSM Cara", "sub: " + await txt(page, "[data-project-sub]"));
+    assert(await page.locator("[data-project-sub] [data-project-account]").count() === 1, "account link");
+    assert(await page.locator("[data-stage-action]").count() > 0, "admin sees actions");
+    assert(await txt(page, "[data-project-back]") === "← Implementation", "back text");
+    await page.click("[data-project-back]");
+    await page.waitForSelector("[data-board-project]");
+  } finally { await browser.close(); }
+  const b = await openDetail("nc1");
+  try {
+    assert(await txt(b.page, "[data-project-sub]") === "Account Nocsm Labs", "no-CSM sub: " + await txt(b.page, "[data-project-sub]"));
+  } finally { await b.browser.close(); }
+});
+
+test("detail stat cards: four, go-live severity, progress text", async () => {
+  const { page, browser } = await openDetail("d1");
+  try {
+    assert(await page.locator("[data-project-stat]").count() === 4, "four stats");
+    for (const k of ["implementer", "golive", "progress", "started"]) assert(await page.locator(`[data-project-stat="${k}"]`).count() === 1, "stat " + k);
+    assert(await page.locator('[data-project-stat="golive"]').getAttribute("data-sev") === "red", "passed = red");
+    const pr = await txt(page, '[data-project-stat="progress"]');
+    assert(pr.includes("1/3 tasks") && pr.includes("11h logged of 14h est."), "progress: " + pr);
+    assert((await txt(page, '[data-project-stat="implementer"]')).includes("Ivy"), "implementer");
+  } finally { await browser.close(); }
+  const b = await openDetail("ip2");
+  try { assert(await b.page.locator('[data-project-stat="golive"]').getAttribute("data-sev") === "amber", "<=14d = amber"); }
+  finally { await b.browser.close(); }
+  const c = await openDetail("pl1");
+  try { assert(!(await c.page.locator('[data-project-stat="golive"]').getAttribute("data-sev")), "40d = no sev"); }
+  finally { await c.browser.close(); }
+});
+
+test("detail columns: checklist beside the plan at 1440, below at 390", async () => {
+  for (const [w, beside] of [[1440, true], [390, false]]) {
+    const { page, browser } = await openDetail("d1", { w });
+    try {
+      const plan = await page.locator("[data-project-plan]").boundingBox(), chk = await page.locator("[data-project-checklist]").boundingBox();
+      assert(plan && chk, "both cards at " + w);
+      if (beside) assert(chk.x > plan.x + plan.width - 1, "beside at 1440");
+      else assert(chk.y >= plan.y + plan.height - 1, "below at 390");
+      if (!beside) {
+        const wide = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth ? "" : document.documentElement.scrollWidth + " " +
+          [...document.querySelectorAll("body *")].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1).slice(-4).map(e => e.tagName + "." + e.className + "[" + Math.round(e.getBoundingClientRect().right) + "]").join(" | "));
+        assert(wide === "", "no page h-scroll at 390: " + wide);
+      }
+    } finally { await browser.close(); }
+  }
+});
+
+test("detail task pills and over-estimate ink", async () => {
+  const { page, browser } = await openDetail("d1");
+  try {
+    const pills = await page.$$eval("[data-task-pill]", es => es.map(e => e.textContent.trim()));
+    assert(JSON.stringify(pills) === JSON.stringify(["Done", "Doing", "To do"]), "pills " + pills);
+    assert(await page.locator('[data-task-row="x2"] [data-task-logged]').getAttribute("data-over") === "true", "9h/8h is over");
+    assert(await page.locator('[data-task-row="x1"] [data-task-logged]').getAttribute("data-over") === null, "2h/2h not over");
+    assert((await txt(page, "[data-project-plan] h2")).includes("(1/3 done · 11h / 14h)"), "plan title");
+  } finally { await browser.close(); }
+});
+
+test("detail history: newest first with From → To", async () => {
+  const { page, browser } = await openDetail("d1");
+  try {
+    const h = await page.$$eval("[data-history-row]", es => es.map(e => e.textContent.trim()));
+    assert(h.length === 3 && h[0].includes("Planning → In progress") && h[1].includes("Queued → Planning"), "history " + h.join(" | "));
+    assert(h[1].includes("Assigned to Ivy") && h[1].includes("Boss"), "meta " + h[1]);
+  } finally { await browser.close(); }
+});
+
+test("detail: states the preview does not draw keep working", async () => {
+  const a = await openDetail("q1");
+  try {
+    await a.page.click('[data-stage-action="assign"]');
+    await a.page.click('[data-assign-row="u2"] button');
+    await a.page.waitForSelector('[data-project-detail="q1"][data-stage="planning"]');
+    assert(await txt(a.page, "[data-project-implementer]") === "Ivy", "assigned");
+  } finally { await a.browser.close(); }
+  const b = await openDetail("d1");
+  try {
+    await b.page.evaluate(() => { window.prompt = () => "Customer freeze"; });
+    await b.page.click('[data-stage-action="hold"]');
+    await b.page.waitForSelector('[data-project-detail="d1"][data-stage="on_hold"]');
+    assert((await txt(b.page, "[data-project-detail]")).includes("On hold: Customer freeze"), "hold reason");
+    await b.page.click('[data-stage-action="resume"]');
+    await b.page.waitForSelector('[data-project-detail="d1"][data-stage="in_progress"]');
+  } finally { await b.browser.close(); }
+  const c = await openDetail("cr1");
+  try {
+    await c.page.click('[data-task-row="s1"] [data-task-signoff]');
+    await c.page.waitForSelector('[data-task-row="s1"] [data-task-signed]');
+    await c.page.click('[data-task-row="s2"] [data-task-sendback]');
+    await c.page.fill("[data-sendback-note]", "Fix the import");
+    await c.page.click("[data-sendback-confirm]");
+    await c.page.waitForSelector('[data-task-row="s2"] [data-task-returned]');
+  } finally { await c.browser.close(); }
+  const d = await openDetail("hd1");
+  try {
+    assert(await d.page.locator("[data-project-checklist] [data-draft-checklist]").count() === 1, "draft form in checklist card");
+    assert(await d.page.locator("[data-save-draft]").count() === 1 && await d.page.locator("[data-submit-handover]").count() === 1, "draft buttons");
+  } finally { await d.browser.close(); }
+});
+
+test("detail: read-only implementer sees pills but no actions or selects", async () => {
+  const { page, browser } = await openDetail("d1", { role: "impl_user" });
+  try {
+    assert(await page.locator("[data-task-pill]").count() === 3, "pills visible");
+    assert(await page.locator("[data-stage-action]").count() === 0, "no actions");
+    assert(await page.locator("[data-task-status]").count() === 0, "no status selects");
+    assert(await page.locator("[data-project-stat]").count() === 4, "stats visible");
+  } finally { await browser.close(); }
+});
+
+test("detail: unknown account has no account link", async () => {
+  const { page, browser } = await openDetail("un1");
+  try {
+    assert(await txt(page, "[data-project-detail] h1") === "Unknown account", "h1");
+    assert(await page.locator("[data-project-account]").count() === 0, "no link");
+    const sub = await page.locator("[data-project-sub]").count() ? await txt(page, "[data-project-sub]") : "";
+    assert(!/(^|\s)·(\s|$)/.test(sub.replace(/ · CSM /, "")) && !sub.startsWith("·") && !sub.endsWith("·"), "sub has no stray dot: " + sub);
+    assert((await txt(page, "[data-project-detail] [data-avatar]")) === "?", "? avatar");
   } finally { await browser.close(); }
 });

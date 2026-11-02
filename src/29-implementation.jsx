@@ -122,10 +122,11 @@ function BoardCard({ p, st, onOpen, today }) {
   );
 }
 
-var BOARD_DOT = { queued: "#0284c7", planning: "#4f46e5", in_progress: "#7c3aed", csm_review: "#d97706", live: "#059669", handover: "#64748b", on_hold: "#d97706", cancelled: "#64748b" };
+// lane dot colours live in crm.html (--i-dot-*, with html.dark variants at >= 3:1 on the dark lane)
+var BOARD_DOT = Object.fromEntries(["queued", "planning", "in_progress", "csm_review", "live", "handover", "on_hold", "cancelled"].map(s => [s, `var(--i-dot-${s})`]));
 var BOARD_HINT = { handover: "Sales handovers not yet submitted", on_hold: "Paused with a reason", cancelled: "Closed without going live" };
 
-function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
+function ImplementationPage({ st, dispatch, user, projectId, setProjectId, openAccount }) {
   const [tab, setTab] = useState("Board");
   const [localId, setLocalId] = useState(null);
   const selId = setProjectId ? projectId : localId;
@@ -137,7 +138,7 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId }) {
   const myTasks = (st.projectTasks || []).filter(t => t.ownerId === user.id && t.status !== "done")
     .sort((a, b) => String(a.due || "9999").localeCompare(String(b.due || "9999")));
   const impls = implementersOf(st);
-  if (selId) return <Card title="Implementation project"><ProjectDetail key={selId} st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} /></Card>;
+  if (selId) return <ProjectDetail key={selId} st={st} dispatch={dispatch} user={user} projectId={selId} onBack={() => select(null)} openAccount={openAccount} />;
   const today = iso(Date.now());
   const sum = boardSummary(projects, today);
   const column = s => projects.filter(p => p.stage === s).map(p => <BoardCard key={p.id} p={p} st={st} onOpen={select} today={today} />);
