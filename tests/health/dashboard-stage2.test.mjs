@@ -614,11 +614,11 @@ test("T7 click 2-4: Renewals card opens Renewals; NRR opens Accounts unfiltered;
     await home(page);
     await page.click('[data-kpi][data-stat="Overdue tasks"]');
     await waitH1(page, "Tasks");
-    await page.waitForSelector("[data-task-row]");
-    // section header buttons are [label, (count), arrow]; only Overdue is expanded
-    const secs = await page.$$eval("main button", bs => bs.map(b => Array.from(b.children).map(c => c.textContent.trim())).filter(c => c.length === 3 && /^[▾▸]$/.test(c[2])).map(c => [c[0], c[2]]));
-    const open = Object.fromEntries(secs.map(([l, a]) => [l.toLowerCase(), a === "▾"]));
-    assert(open.overdue === true && !open.today && !open["this week"] && secs.length >= 2, "sections " + JSON.stringify(secs));
+    // wait for the hand-off state itself (only Overdue expanded, rows rendered), then read titles
+    await page.waitForFunction(() => { const s = [...document.querySelectorAll("[data-task-section]")]; const ov = s.find(x => x.dataset.taskSection === "overdue"); return ov && ov.querySelector("[aria-expanded]")?.getAttribute("aria-expanded") === "true" && s.filter(x => x !== ov).every(x => x.querySelector("[aria-expanded]").getAttribute("aria-expanded") === "false") && document.querySelector("[data-task-row]"); }, null, { timeout: 8000 });
+    const secs = await page.$$eval("[data-task-section]", s => s.map(x => [x.dataset.taskSection, x.querySelector("[aria-expanded]").getAttribute("aria-expanded")]));
+    const open = Object.fromEntries(secs.map(([k, e]) => [k, e === "true"]));
+    assert(open.overdue === true && !open.today && !open.week && secs.length >= 2, "sections " + JSON.stringify(secs));
     const titles = await page.$$eval("[data-task-row] [data-task-title]", e => e.map(x => x.textContent));
     assert(titles.includes("Rahul overdue call") && !titles.includes("Priya prep deck"), "rows " + JSON.stringify(titles));
   } finally { await browser.close(); }

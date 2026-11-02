@@ -130,7 +130,7 @@ window.__seedProfile = { id: "u1", org_id: "org-a", name: "Priya", role: "admin"
 };
 export const openTasks = async page => {
   await page.getByRole("button", { name: "Tasks" }).first().click();
-  await page.waitForFunction(() => /Work queue/.test(document.querySelector("#root")?.textContent || ""));
+  await page.waitForSelector("[data-tasks-subtitle]");
 };
 
 test("Tasks view groups tasks into due-date sections with counts", async () => {
@@ -139,7 +139,8 @@ test("Tasks view groups tasks into due-date sections with counts", async () => {
   await openTasks(page);
   const txt = await rootText(page);
   // Scope defaults to All for admins, so every seeded task is in view.
-  assert(/Overdue\s*\(1\)/.test(txt), "overdue count missing: " + txt.slice(0, 500));
+  const overdueCount = await page.textContent('[data-task-section="overdue"] [data-section-count]');
+  assert(overdueCount.trim() === "1", "overdue count wrong: " + overdueCount);
   assert(/Escalate to exec/.test(txt), "overdue task not rendered");
   assert(/Call the champion/.test(txt), "today task not rendered");
   assert(/Northwind Analytics/.test(txt), "account name not rendered on the row");
@@ -252,7 +253,8 @@ test("__goTasks({ owner }) opens Tasks filtered to that owner and the chip clear
   assert(/Marco/.test(await page.textContent("[data-task-owner-filter]")), "chip should name Marco");
   assert(await page.textContent("main h1") === "Tasks", "should be on Tasks");
   // Marco owns only the q-week task, which sits in the (collapsed) This week section.
-  await page.getByText("This week", { exact: false }).first().click();
+  await page.click('[data-task-section="week"] > h2 > button');
+  await page.waitForSelector('[data-task-section="week"] [data-task-row]');
   const t = await titlesOf(page);
   assert(t.join() === "Send renewal quote", "only Marco's rows expected, got " + t);
   await page.click("[data-task-owner-filter]");
@@ -290,7 +292,7 @@ test("a plain Tasks visit drops a stale owner filter: sidebar while already on T
   await page.keyboard.press("Control+k");
   await page.keyboard.type("go to Tasks");
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => /Work queue/.test(document.querySelector("#root")?.textContent || ""));
+  await page.waitForSelector("[data-tasks-subtitle]");
   assert(!(await page.$("[data-task-owner-filter]")), "palette visit must not re-apply the old owner filter");
   await browser.close();
 });

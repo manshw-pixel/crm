@@ -72,40 +72,41 @@ function RenewalOutcomes({ accounts, rates, snapshots }) {
   const rows = useMemo(() => renewalOutcomeRows(accounts, rates, snapshots), [accounts, rates, snapshots]);
   const firstForecast = (snapshots || []).find(s => s.commit90 !== undefined);
   const anyForecast = rows.some(r => r.forecast !== null);
-  const wrChip = wr => wr === null ? <span className="text-slate-400">—</span>
-    : <span className={`rounded-full px-2 py-0.5 text-xs font-bold ${wr >= 0.9 ? "bg-emerald-100 text-emerald-700" : wr >= 0.75 ? "bg-amber-100 text-amber-700" : "bg-rose-100 text-rose-600"}`}>{Math.round(100 * wr)}%</span>;
+  const wrChip = wr => wr === null ? <span className="rn-o-muted">—</span>
+    : <span className="ad-pill ad-pill-sm" data-sev={wr >= 0.9 ? "green" : wr >= 0.75 ? "amber" : "red"}>{Math.round(100 * wr)}%</span>;
   return (
-    <Card title="Renewal outcomes by quarter" className="!p-3">
+    <section aria-label="Renewal outcomes by quarter" className="rn-outcomes">
+      <h2 className="rn-o-title">Renewal outcomes by quarter</h2>
       {rows.every(r => !r.renewedN && !r.churnedN && !r.slipped)
-        ? <p data-outcomes-empty className="text-sm text-slate-500">No renewals closed yet — outcomes appear here as renewals complete.</p>
-        : <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead><tr className="border-b border-slate-200 text-[11px] font-bold uppercase tracking-widest text-slate-500">
-            <th className="px-2 py-1.5 text-left">Quarter</th>
-            <th className="px-2 py-1.5 text-right">Renewed</th>
-            <th className="px-2 py-1.5 text-right">Churned</th>
-            <th className="px-2 py-1.5 text-right">Slipped</th>
-            <th className="px-2 py-1.5 text-right">Win rate</th>
-            {anyForecast && <th className="px-2 py-1.5 text-right">Forecast (commit)</th>}
+        ? <p data-outcomes-empty className="rn-o-note">No renewals closed yet — outcomes appear here as renewals complete.</p>
+        : <div className="rn-o-scroll">
+        <table className="rn-o-table">
+          <thead><tr>
+            <th className="rn-o-l">Quarter</th>
+            <th>Renewed</th>
+            <th>Churned</th>
+            <th>Slipped</th>
+            <th>Win rate</th>
+            {anyForecast && <th>Forecast (commit)</th>}
           </tr></thead>
           <tbody>
             {rows.map(r => (
-              <tr key={r.key} className="border-b border-slate-100 last:border-0">
-                <td className="px-2 py-1.5 font-semibold text-slate-700">{r.key}{r.current && <span className="ml-1 text-[11px] font-normal text-slate-500">(so far)</span>}</td>
-                <td className="px-2 py-1.5 text-right">{r.renewedN ? <span className="text-emerald-700">{fmtMoney(r.renewed)} <span className="text-xs text-slate-500">· {r.renewedN}</span></span> : "—"}</td>
-                <td className="px-2 py-1.5 text-right">{r.churnedN ? <span className="text-rose-600">{fmtMoney(r.churned)} <span className="text-xs text-slate-500">· {r.churnedN}</span></span> : "—"}</td>
-                <td className="px-2 py-1.5 text-right">{r.slipped || "—"}</td>
-                <td className="px-2 py-1.5 text-right">{wrChip(r.wr)}</td>
-                {anyForecast && <td className="px-2 py-1.5 text-right text-xs">{r.forecast === null ? "—"
-                  : <span>{fmtMoney(r.forecast)} <span className={r.renewed >= r.forecast ? "text-emerald-700" : "text-rose-600"}>({r.renewed >= r.forecast ? "+" : "−"}{fmtMoney(Math.abs(r.renewed - r.forecast))})</span></span>}</td>}
+              <tr key={r.key}>
+                <td className="rn-o-l rn-o-q">{r.key}{r.current && <span className="rn-o-muted"> (so far)</span>}</td>
+                <td>{r.renewedN ? <span className="rn-o-good">{fmtMoney(r.renewed)} <span className="rn-o-muted">· {r.renewedN}</span></span> : "—"}</td>
+                <td>{r.churnedN ? <span className="rn-o-bad">{fmtMoney(r.churned)} <span className="rn-o-muted">· {r.churnedN}</span></span> : "—"}</td>
+                <td>{r.slipped || "—"}</td>
+                <td>{wrChip(r.wr)}</td>
+                {anyForecast && <td>{r.forecast === null ? "—"
+                  : <span>{fmtMoney(r.forecast)} <span className={r.renewed >= r.forecast ? "rn-o-good" : "rn-o-bad"}>({r.renewed >= r.forecast ? "+" : "−"}{fmtMoney(Math.abs(r.renewed - r.forecast))})</span></span>}</td>}
               </tr>
             ))}
           </tbody>
         </table>
       </div>}
-      {!anyForecast && <p className="mt-2 text-xs text-slate-500">
+      {!anyForecast && <p className="rn-o-note">
         Forecast tracking started {firstForecast ? new Date(firstForecast.month + "-15").toLocaleDateString("en-US", { month: "long", year: "numeric" }) : "this month"} — accuracy appears after a full quarter.</p>}
-    </Card>
+    </section>
   );
 }
 
