@@ -103,8 +103,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack, openAccount }) {
   // header / stat card values (display only)
   const today = iso(Date.now());
   // the board's go-live date rule (Constraint 3), owner-independent: an unassigned project still shows its date severity
-  const gTag = boardTag({ ...project, implementerId: project.implementerId || "_" }, today);
-  const gSev = gTag && /^Go-live/.test(gTag.text) ? gTag.sev : undefined;
+  const gSev = (goLiveSev(project, today) || {}).sev || undefined;
   const gDays = project.targetGoLive ? Math.round((Date.parse(String(project.targetGoLive).slice(0, 10)) - Date.parse(today)) / 86400000) : null;
   const gSub = gDays === null ? "no date set" : project.stage === "live" ? "went live" : gDays < 0 ? `${-gDays}d overdue` : `in ${gDays}d`;
   const estTotal = tasks.reduce((s, t) => s + (Number(t.estHours) || 0), 0);
@@ -258,7 +257,7 @@ function ProjectDetail({ st, dispatch, user, projectId, onBack, openAccount }) {
               };
               return <div data-draft-checklist className="space-y-2">
                 <ChecklistFields template={template} values={values} set={(k, v) => { setDraftErr(""); setDraftVals({ ...values, [k]: v }); }} />
-                {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold text-rose-600">{draftErr}</div>}
+                {draftErr && <div data-submit-handover-reason role="alert" className="text-sm font-semibold" style={{ color: "var(--p-r-tx)" }}>{draftErr}</div>}
                 <div className="flex flex-wrap gap-2">
                   <Btn data-save-draft onClick={() => dispatch({ type: "EDIT_PROJECT", id: project.id, patch: patchOf() })}>Save draft</Btn>
                   <Btn data-submit-handover kind="primary" onClick={submit}>Submit handover</Btn>

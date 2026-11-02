@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { STAGES, STAGE_LABEL, OPEN_STAGES, projectType, canTransition, applySignoff, historyEntry,
-  loggedHours, workload, stageAt, chartCounts, csmHandovers, boardTag, boardSummary } from "../../src/lib/implementation.js";
+  loggedHours, workload, stageAt, chartCounts, csmHandovers, boardTag, boardSummary, goLiveSev } from "../../src/lib/implementation.js";
 
 const lead = { id: "L", role: "impl_lead", name: "Lead" };
 const admin = { id: "A", role: "admin", name: "Adm" };
@@ -227,4 +227,14 @@ test("boardSummary counts", () => {
   ];
   assert.deepEqual(boardSummary(ps, T), { open: 6, atRisk: 2, goLiveThisMonth: 1 });
   assert.deepEqual(boardSummary([], T), { open: 0, atRisk: 0, goLiveThisMonth: 0 });
+});
+
+test("goLiveSev: date rule only, owner-independent", () => {
+  const g = (o) => goLiveSev(proj(o), T);
+  assert.deepEqual(g({ stage: "in_progress", targetGoLive: "2026-10-31" }), { days: -1, sev: "red" });
+  assert.deepEqual(g({ stage: "queued", implementerId: null, targetGoLive: "2026-11-01" }), { days: 0, sev: "amber" });
+  assert.deepEqual(g({ stage: "planning", targetGoLive: "2026-11-15T10:00:00Z" }), { days: 14, sev: "amber" });
+  assert.deepEqual(g({ stage: "planning", targetGoLive: "2026-11-16" }), { days: 15, sev: null });
+  assert.equal(g({ stage: "planning", targetGoLive: "" }), null);
+  for (const stage of ["live", "handover", "on_hold", "cancelled"]) assert.equal(g({ stage, targetGoLive: "2026-10-01" }), null);
 });

@@ -99,6 +99,14 @@ async function implSaved(page, what) {
   assert.equal(await page.getByText("Not saved", { exact: true }).count(), 0, `${what}: the header reads "Not saved"`);
 }
 
+// Shows the Implementation Board (the app keeps an open project detail across navigation).
+async function toBoard(page) {
+  await nav(page, "Implementation").click();
+  const back = page.locator("[data-project-back]");
+  if (await back.count() && await back.first().isVisible()) await back.first().click();
+  await page.locator("[data-board-column=queued]").waitFor({ timeout: 15000 });
+}
+
 export const scenarios = [
   // Read-only: inspects the role dropdown options of an existing user row; nothing is changed or saved.
   { id: `${F}/team-offers-impl-roles`, feature: F, title: "Team role select offers impl_lead and impl_user", role: "admin",
@@ -432,5 +440,101 @@ ${name},Mid,100000,INR,onboarding,yes,15-12-2030,QA Contact,Core
       await feed(Date.now() + 5000); // later timestamp: a new signature, so the file is processed again
       assert.equal(await cards(), 1, `re-feeding the same row created a second project for "${name}"`);
       await page.locator("[data-board-column=queued] [data-board-project]").filter({ hasText: name }).first().waitFor({ timeout: 5000 });
+    } },
+
+  // ---- UI Stage 5 (restyled board, detail, My tasks). The first two are read-only; the third seeds one task. ----
+  { id: `${F}/board-tags-subtitle`, feature: F, title: "Board subtitle counts match the cards, and each open or live card has one valid status tag", role: "admin",
+    run: async ({ page }) => {
+      await toBoard(page);
+      const OPEN = ["queued", "planning", "in_progress", "csm_review"];
+      const openCards = OPEN.map(s => `[data-board-column=${s}] [data-board-project]`).join(", ");
+      // Projects load after the columns: wait until the subtitle's open count agrees with the cards, then assert it.
+      await page.waitForFunction(sel => {
+        const m = /^(\d+) open projects/.exec(document.querySelector("[data-board-subtitle]")?.textContent || "");
+        return !!m && +m[1] === document.querySelectorAll(sel).length && +m[1] > 0;
+      }, openCards, { timeout: 15000 }).catch(() => {});
+      const sub = (await page.locator("[data-board-subtitle]").innerText()).trim();
+      const m = /^(\d+) open projects · (\d+) at risk · (\d+) go-live this month$/.exec(sub);
+      assert.ok(m, `board subtitle "${sub}" is not "N open projects · N at risk · N go-live this month"`);
+      assert.equal(+m[1], await page.locator(openCards).count(), `subtitle says ${m[1]} open but the open lanes hold ${await page.locator(openCards).count()} cards`);
+      const RULES = [[/^Needs owner$/, "amber"], [/^Go-live passed$/, "red"], [/^Go-live in (\d+)d$/, "amber"], [/^Awaiting sign-off$/, "grey"], [/^Live$/, "green"], [/^On track$/, "green"]];
+      let risky = 0;
+      for (const stage of [...OPEN, "live"]) {
+        const cards = page.locator(`[data-board-column=${stage}] [data-board-project]`);
+        for (let i = 0, n = await cards.count(); i < n; i++) {
+          const tags = cards.nth(i).locator("[data-board-tag]");
+          assert.equal(await tags.count(), 1, `a ${stage} card has ${await tags.count()} status tags, expected exactly 1`);
+          const text = (await tags.innerText()).trim(), sev = await tags.getAttribute("data-sev");
+          const rule = RULES.find(([re]) => re.test(text));
+          assert.ok(rule, `${stage} card tag "${text}" is not a known status`);
+          assert.equal(sev, rule[1], `tag "${text}" has severity ${sev}, expected ${rule[1]}`);
+          const d = /^Go-live in (\d+)d$/.exec(text);
+          if (d) assert.ok(+d[1] <= 14, `tag "${text}" is beyond the 14-day window`);
+          if (stage === "live") assert.equal(text, "Live", `a Live-lane card is tagged "${text}"`);
+          if (OPEN.includes(stage) && (sev === "red" || sev === "amber")) risky++;
+        }
+      }
+      assert.equal(+m[2], risky, `subtitle says ${m[2]} at risk but ${risky} open cards carry a red or amber tag`);
+    } },
+
+  { id: `${F}/detail-stats`, feature: F, title: "Run project detail: four stat cards, progress text and newest-first history", role: "admin",
+    run: async ({ page, runId, thisRunId }) => {
+      const detail = await openRunProject(page, runId, thisRunId, ALL_STAGES, `did ${F}/go-live run first?`);
+      const stats = detail.locator("[data-project-stat]");
+      assert.deepEqual(await stats.evaluateAll(es => es.map(e => e.dataset.projectStat)), ["implementer", "golive", "progress", "started"], "stat cards");
+      const prog = (await detail.locator('[data-project-stat="progress"]').innerText()).replace(/\s+/g, " ");
+      const p = /(\d+)\/(\d+) tasks/.exec(prog);
+      assert.ok(p && /\d+(\.\d+)?h logged of \d+(\.\d+)?h est\./.test(prog), `progress stat reads "${prog}"`);
+      const stage = await detail.getAttribute("data-stage");
+      if (stage === "live") {
+        assert.equal(p[1], p[2], `a Live project shows ${p[1]}/${p[2]} tasks done`);
+        assert.equal(await detail.locator('[data-project-stat="golive"]').getAttribute("data-sev"), null, "a Live project's go-live stat carries a severity");
+      }
+      const hist = await detail.locator("[data-history-row]").allInnerTexts();
+      assert.ok(hist.length >= 3 && hist.every(h => h.includes("→")), `history rows: ${hist.join(" | ")}`);
+      if (stage === "live") assert.ok(hist[0].includes("CSM review → Live"), `newest history row is "${hist[0]}", expected the go-live`);
+    } },
+
+  // Seeds (as admin) one overdue task on this run's sales-feed project, assigned to the impl user, then checks the impl user's My tasks.
+  { id: `${F}/my-tasks-overdue-pill`, feature: F, title: "Impl user's My tasks shows an overdue task with a red Overdue pill", role: "impl",
+    run: async ctx => {
+      const { page, thisRunId, env, implName } = ctx;
+      if (!env?.users?.impl || !implName) throw new SkipScenario("no impl user configured");
+      const name = `QA ${thisRunId} Sales Onboarding`, title = `QA ${thisRunId} overdue task`;
+      await asAdmin(ctx, async ap => {
+        await toBoard(ap);
+        const card = ap.locator("[data-board-project]").filter({ hasText: name }).first();
+        await card.waitFor({ timeout: 15000 }).catch(() => { throw new Error(`no project for "${name}" on the board (did ${F}/sales-feed-onboarding run first?)`); });
+        await card.click();
+        const detail = ap.locator("[data-project-detail]");
+        await detail.waitFor({ timeout: 15000 });
+        if (await detail.getAttribute("data-stage") === "queued") {
+          await detail.locator('[data-stage-action="assign"]').click();
+          await ap.locator("[data-assign-row], :text('No active implementers')").first().waitFor({ timeout: 15000 });
+          const row = ap.locator("[data-assign-row]").filter({ hasText: implName });
+          if (!await row.count()) throw new Error(`impl user "${implName}" is not listed in the assign dialog`);
+          await row.first().getByRole("button", { name: "Assign", exact: true }).click();
+          await ap.locator('[data-project-detail][data-stage="planning"]').waitFor({ timeout: 15000 });
+          await waitForSaved(ap);
+        }
+        if (!await detail.locator("[data-task-row]").filter({ hasText: title }).count()) {
+          await detail.locator("[data-new-task-title]").fill(title);
+          await detail.locator("[data-new-task-hours]").fill("1");
+          await detail.getByLabel("Due date", { exact: true }).fill(isoPlus(-3));
+          await detail.locator("[data-new-task-add]").click();
+          await detail.locator("[data-task-row]").filter({ hasText: title }).first().waitFor({ timeout: 15000 });
+          await waitForSaved(ap);
+        }
+      });
+      await page.reload(); // pick up the task the admin just added
+      await nav(page, "Implementation").waitFor({ timeout: 20000 });
+      await toBoard(page);
+      await page.locator('[data-impl-tab="My tasks"]').click();
+      const row = page.locator("[data-my-task]").filter({ hasText: title }).first();
+      await row.waitFor({ timeout: 15000 }).catch(() => { throw new Error(`"${title}" is not in the impl user's My tasks (is the impl user the project's implementer?)`); });
+      const pill = row.locator("[data-my-task-due]");
+      assert.match((await pill.innerText()).trim(), /^Overdue · [A-Z][a-z]{2} \d{1,2}$/, "overdue task pill text");
+      assert.equal(await pill.getAttribute("data-sev"), "red", "overdue task pill is not red");
+      assert.ok((await row.boundingBox()).height >= 47.5, "My tasks row is shorter than 48px");
     } },
 ];

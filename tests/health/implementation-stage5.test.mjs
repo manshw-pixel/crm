@@ -201,18 +201,27 @@ for (const theme of ["light", "dark"]) test(`board text contrast >= 4.5:1 (${the
 
 /* ------------------------------ Task 3: project detail ------------------------------ */
 const H = (from, to, at, by = "Boss", note = "") => ({ from, to, at, by, note });
-const D_ACCTS = [...ACCTS, { ...seedAccount({ id: "a9", name: "Nocsm Labs" }), csm: "" }];
+const LONG = "Consolidated Intercontinental Manufacturing Holdings Pvt Ltd"; // 60 chars
+const LONG_SIGNER = "averyveryverylong.implementation.reviewer@example-enterprise.co.in";
+const D_ACCTS = [...ACCTS, { ...seedAccount({ id: "a9", name: "Nocsm Labs" }), csm: "" }, seedAccount({ id: "a10", name: LONG, csm: "Cara" })];
 const D_PROJECTS = [...PROJECTS,
   proj("d1", "a3", "in_progress", "u2", day(-5), { startedAt: "2026-10-06T09:00:00.000Z", history: [
     H("handover", "queued", "2026-10-01T09:00:00.000Z", "Cara", "Handover submitted"),
     H("queued", "planning", "2026-10-02T09:00:00.000Z", "Boss", "Assigned to Ivy"),
     H("planning", "in_progress", "2026-10-06T09:00:00.000Z", "Ivy")] }),
   proj("nc1", "a9", "planning", "u2", day(40)),
+  proj("ln1", "a10", "in_progress", "u3", day(40)),
 ];
 const dtask = (id, projectId, status, est, logged, o = {}) => ({ ...task(id, projectId, status), title: "T " + id, estHours: est,
   timeLog: logged ? [{ by: "Ivy", at: "2026-10-10T09:00:00.000Z", hours: logged }] : [], ...o });
 const D_TASKS = [...TASKS, dtask("x1", "d1", "done", 2, 2, { order: 1 }), dtask("x2", "d1", "doing", 8, 9, { order: 2 }), dtask("x3", "d1", "todo", 4, 0, { order: 3 }),
-  dtask("s1", "cr1", "done", 2, 2, { order: 1 }), dtask("s2", "cr1", "done", 2, 2, { order: 2 })];
+  dtask("s1", "cr1", "done", 2, 2, { order: 1 }), dtask("s2", "cr1", "done", 2, 2, { order: 2 }),
+  dtask("s3", "cr1", "done", 2, 2, { order: 3, signoff: "signed", signedBy: LONG_SIGNER, signedAt: "2026-10-20T09:00:00.000Z" }),
+  // My tasks (owner u1 = the signed-in Boss): overdue, future, no due date, and a done one that must not list
+  dtask("m1", "ln1", "todo", 2, 0, { ownerId: "u1", accountId: "a10", title: "Admin training", due: day(-3), order: 1 }),
+  dtask("m2", "ln1", "doing", 2, 0, { ownerId: "u1", accountId: "a10", title: "Go-live readiness check", due: day(16), order: 2 }),
+  dtask("m3", "ln1", "todo", 2, 0, { ownerId: "u1", accountId: "a10", title: "Import historical tickets", order: 3 }),
+  dtask("m4", "ln1", "done", 2, 2, { ownerId: "u1", accountId: "a10", title: "Kickoff", due: day(-9), order: 4 })];
 const dseed = (role = "admin") => seed(role).replace(rows(ACCTS), rows(D_ACCTS)).replace(rows(PROJECTS), rows(D_PROJECTS)).replace(rows(TASKS), rows(D_TASKS));
 async function openDetail(id, { role = "admin", w = 1440 } = {}) {
   const r = await launch(dseed(role));
@@ -223,8 +232,16 @@ async function openDetail(id, { role = "admin", w = 1440 } = {}) {
   if (!(await card.isVisible())) await r.page.locator("details[data-board-collapsed]", { has: card }).locator("summary").click();
   await card.click();
   await r.page.waitForSelector(`[data-project-detail="${id}"]`);
-  if (w !== 1440) { await r.page.setViewportSize({ width: w, height: 900 }); await r.page.waitForTimeout(600); }
+  if (w !== 1440) { await r.page.setViewportSize({ width: w, height: 900 }); await r.page.waitForFunction(w => window.innerWidth === w, w); }
   return r;
+}
+// "" when the page has no horizontal scroll (polled, the layout settles after a resize); else the widest offenders.
+async function hScroll(page) {
+  const ok = await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth, null, { timeout: 5000, polling: 100 }).then(() => true, () => false);
+  if (ok) return "";
+  return page.evaluate(() => document.documentElement.scrollWidth + "px: " + [...document.querySelectorAll("body *")]
+    .map(e => [e, e.getBoundingClientRect().right]).filter(([, r]) => r > window.innerWidth + 1).sort((a, b) => b[1] - a[1]).slice(0, 4)
+    .map(([e, r]) => e.tagName + "." + String(e.className).slice(0, 40) + "[" + Math.round(r) + "]").join(" | "));
 }
 
 test("detail header card: h1, stage pill, sub line, back link", async () => {
@@ -267,13 +284,15 @@ test("detail columns: checklist beside the plan at 1440, below at 390", async ()
   for (const [w, beside] of [[1440, true], [390, false]]) {
     const { page, browser } = await openDetail("d1", { w });
     try {
+      // the layout animates after a resize: wait until both cards hold still for one poll, then measure
+      if (!beside) await page.waitForFunction(() => { const k = ["[data-project-plan]", "[data-project-checklist]"].map(s => JSON.stringify(document.querySelector(s).getBoundingClientRect())).join();
+        const same = window.__lastCols === k; window.__lastCols = k; return same; }, null, { timeout: 5000, polling: 150 }).catch(() => {});
       const plan = await page.locator("[data-project-plan]").boundingBox(), chk = await page.locator("[data-project-checklist]").boundingBox();
       assert(plan && chk, "both cards at " + w);
       if (beside) assert(chk.x > plan.x + plan.width - 1, "beside at 1440");
-      else assert(chk.y >= plan.y + plan.height - 1, "below at 390");
+      else assert(chk.y >= plan.y + plan.height - 1, "below at 390: " + JSON.stringify({ plan, chk }));
       if (!beside) {
-        const wide = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth ? "" : document.documentElement.scrollWidth + " " +
-          [...document.querySelectorAll("body *")].filter(e => e.getBoundingClientRect().right > window.innerWidth + 1).slice(-4).map(e => e.tagName + "." + e.className + "[" + Math.round(e.getBoundingClientRect().right) + "]").join(" | "));
+        const wide = await hScroll(page);
         assert(wide === "", "no page h-scroll at 390: " + wide);
       }
     } finally { await browser.close(); }
@@ -351,5 +370,130 @@ test("detail: unknown account has no account link", async () => {
     const sub = await page.locator("[data-project-sub]").count() ? await txt(page, "[data-project-sub]") : "";
     assert(!/(^|\s)·(\s|$)/.test(sub.replace(/ · CSM /, "")) && !sub.startsWith("·") && !sub.endsWith("·"), "sub has no stray dot: " + sub);
     assert((await txt(page, "[data-project-detail] [data-avatar]")) === "?", "? avatar");
+  } finally { await browser.close(); }
+});
+
+/* ------------------------------ Task 4: workload, my tasks, phone, print, a11y ------------------------------ */
+async function openTab(tab, { role = "admin", w = 1440, theme = "light" } = {}) {
+  const r = await launch(dseed(role).replace('"onevio.theme", "light"', `"onevio.theme", "${theme}"`));
+  if (theme !== "light") await r.page.reload();
+  await r.page.setViewportSize({ width: 1440, height: 900 });
+  await r.page.click('button[title="Implementation"]').catch(() => {});
+  await r.page.waitForSelector("[data-board-project]");
+  if (tab !== "Board") await r.page.click(`[data-impl-tab="${tab}"]`);
+  if (w !== 1440) { await r.page.setViewportSize({ width: w, height: 900 }); await r.page.waitForFunction(w => window.innerWidth === w, w); }
+  return r;
+}
+// visible controls in `root` shorter than 44px (checkboxes and radios excluded)
+const shortTargets = (page, root) => page.$$eval(root.split(",").map(r => `${r} button, ${r} select, ${r} input:not([type=checkbox]):not([type=radio]), ${r} [role=tab]`).join(", "), es => es
+  .filter(e => e.offsetParent !== null).map(e => [e, e.getBoundingClientRect().height]).filter(([, h]) => h < 43.5)
+  .map(([e, h]) => (e.getAttribute("aria-label") || e.textContent.trim().slice(0, 20) || e.tagName) + "=" + Math.round(h)));
+
+test("workload look: band kept, numbers right-aligned, avatar, load bar + pill", async () => {
+  const { page, browser } = await openTab("Workload");
+  try {
+    await page.waitForSelector("[data-workload-table]");
+    const ids = await page.$$eval("[data-workload-row]", es => es.map(e => e.dataset.workloadRow));
+    assert(ids.length === 2, "two implementer rows " + ids);
+    for (const id of ids) assert(await page.locator(`[data-workload-row="${id}"] [data-col="load"][data-band]`).count() === 1, "load keeps data-band " + id);
+    assert(await page.getAttribute('[data-workload-row="u2"] [data-col="load"]', "data-band") !== "", "u2 has a band");
+    for (const col of ["active", "remaining", "logged30"]) {
+      const al = await page.$eval(`[data-workload-row="u2"] [data-col="${col}"]`, e => getComputedStyle(e).textAlign);
+      assert(al === "right", col + " align " + al);
+    }
+    assert(await txt(page, '[data-workload-row="u2"] .im-wname [aria-hidden]') === "I", "avatar initials");
+    assert(await page.locator('[data-workload-row="u2"] [data-col="load"] .im-load-bar').count() === 1, "load bar");
+    assert(/^\d+%$/.test(await txt(page, '[data-workload-row="u2"] [data-col="load"]')), "load text");
+    await page.fill('[data-workload-row="u2"] [data-capacity-input]', "25");
+    await page.locator('[data-workload-row="u2"] [data-capacity-input]').blur();
+    await page.waitForFunction(() => ((window.__store.getState().settings || {}).implCapacity || {}).u2 === 25, null, { timeout: 5000 });
+  } finally { await browser.close(); }
+  const b = await openTab("Workload", { role: "impl_lead" });
+  try {
+    await b.page.waitForSelector("[data-workload-row]");
+    assert(await b.page.locator("[data-capacity-input]").count() === 0, "impl_lead has no capacity input");
+    assert(await txt(b.page, '[data-workload-row="u2"] [data-col="capacity"]') === "30h", "read-only capacity");
+  } finally { await b.browser.close(); }
+});
+
+test("my tasks: 48px rows, due pill text and severity, done tasks left out", async () => {
+  const { page, browser } = await openTab("My tasks");
+  try {
+    await page.waitForSelector("[data-my-task]");
+    const ids = await page.$$eval("[data-my-task]", es => es.map(e => e.dataset.myTask));
+    assert(JSON.stringify(ids) === JSON.stringify(["m1", "m2", "m3"]), "rows " + ids);
+    const due = id => page.locator(`[data-my-task="${id}"] [data-my-task-due]`);
+    assert(/^Overdue · [A-Z][a-z]{2} \d{1,2}$/.test(await due("m1").textContent()) && await due("m1").getAttribute("data-sev") === "red", "overdue: " + await due("m1").textContent());
+    assert(/^Due [A-Z][a-z]{2} \d{1,2}$/.test(await due("m2").textContent()) && await due("m2").getAttribute("data-sev") === "grey", "future: " + await due("m2").textContent());
+    assert(await due("m3").textContent() === "No due date" && await due("m3").getAttribute("data-sev") === "grey", "none");
+    const h = await page.$eval('[data-my-task="m1"]', e => e.getBoundingClientRect().height);
+    assert(h >= 47.5, "row height " + h);
+    assert((await txt(page, '[data-my-task="m1"]')).includes(LONG), "account name on the row");
+    await page.click('[data-my-task="m1"]');
+    await page.waitForSelector('[data-project-detail="ln1"]');
+  } finally { await browser.close(); }
+});
+
+test("phone 390: board has no page h-scroll, lanes scroll in their box, 44px targets, long name truncates", async () => {
+  const { page, browser } = await openTab("Board", { w: 390 });
+  try {
+    const wide = await hScroll(page);
+    assert(wide === "", "board h-scroll: " + wide);
+    const lanes = await page.$eval(".im-lanes", e => ({ sw: e.scrollWidth, cw: e.clientWidth, ox: getComputedStyle(e).overflowX }));
+    assert(lanes.sw > lanes.cw && lanes.ox === "auto", "lanes scroll inside: " + JSON.stringify(lanes));
+    const short = await shortTargets(page, ".im-head,.im-filters,.im-collapsed-list");
+    assert(short.length === 0, "short targets: " + short.join(", "));
+    const nm = await page.$eval('[data-board-project="ln1"] .im-name', e => ({ sw: e.scrollWidth, cw: e.clientWidth, ws: getComputedStyle(e).whiteSpace, t: e.getAttribute("title") || (e.closest("[title]") || { getAttribute: () => null }).getAttribute("title") }));
+    assert(nm.sw > nm.cw && nm.ws === "nowrap" && nm.t === LONG, "card name truncates: " + JSON.stringify(nm));
+  } finally { await browser.close(); }
+});
+
+test("phone 390: detail no h-scroll, h1 wraps, 44px targets, long signed-off pill wraps", async () => {
+  const a = await openDetail("ln1", { w: 390 });
+  try {
+    const wide = await hScroll(a.page);
+    assert(wide === "", "detail h-scroll: " + wide);
+    const h1 = await a.page.$eval("[data-project-detail] h1", e => ({ h: e.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(e).lineHeight) || 30, r: e.getBoundingClientRect().right, sw: e.scrollWidth, cw: e.clientWidth }));
+    assert(h1.h > h1.lh * 1.5 && h1.r <= 390 && h1.sw <= h1.cw, "h1 wraps: " + JSON.stringify(h1));
+    const short = await shortTargets(a.page, "[data-project-detail]");
+    assert(short.length === 0, "short targets: " + short.join(", "));
+  } finally { await a.browser.close(); }
+  const b = await openDetail("cr1", { w: 390 });
+  try {
+    const wide = await hScroll(b.page);
+    assert(wide === "", "signed pill h-scroll: " + wide);
+    const pill = await b.page.$eval('[data-task-row="s3"] [data-task-signed]', e => ({ r: e.getBoundingClientRect().right, t: e.textContent }));
+    assert(pill.r <= 390 && pill.t.includes(LONG_SIGNER), "signed pill fits: " + JSON.stringify(pill));
+  } finally { await b.browser.close(); }
+});
+
+test("print hides the action row, tabs, filters and add-task form", async () => {
+  const a = await openTab("Board");
+  try {
+    assert(await a.page.locator("[role=tablist]").isVisible() && await a.page.locator(".im-filters").isVisible(), "visible on screen");
+    await a.page.emulateMedia({ media: "print" });
+    for (const sel of ["[role=tablist]", ".im-filters"]) assert(await a.page.$eval(sel, e => getComputedStyle(e).display) === "none", sel + " hidden in print");
+  } finally { await a.browser.close(); }
+  const b = await openDetail("d1");
+  try {
+    assert(await b.page.locator(".im-actions").isVisible() && await b.page.locator("form.im-addtask").isVisible(), "visible on screen");
+    await b.page.emulateMedia({ media: "print" });
+    for (const sel of [".im-actions", "form.im-addtask"]) assert(await b.page.$eval(sel, e => getComputedStyle(e).display) === "none", sel + " hidden in print");
+  } finally { await b.browser.close(); }
+});
+
+test("forced colors keep tag and pill borders; reduced motion drops transitions", async () => {
+  const { page, browser } = await openTab("Board");
+  try {
+    await page.emulateMedia({ forcedColors: "active" });
+    const b = await page.$eval("[data-board-tag]", e => { const s = getComputedStyle(e); return s.borderTopStyle + " " + s.borderTopWidth; });
+    assert(/^solid [1-9]/.test(b), "tag border " + b);
+    await page.click('[data-impl-tab="My tasks"]');
+    const d = await page.$eval("[data-my-task-due]", e => { const s = getComputedStyle(e); return s.borderTopStyle + " " + s.borderTopWidth; });
+    assert(/^solid [1-9]/.test(d), "due pill border " + d);
+    await page.emulateMedia({ forcedColors: "none", reducedMotion: "reduce" });
+    await page.click('[data-impl-tab="Board"]');
+    const t = await page.$$eval(".im-card, .im-seg-btn", es => es.map(e => getComputedStyle(e).transitionDuration.split(",").map(parseFloat)).flat());
+    assert(t.length > 0 && t.every(x => x <= 0.01), "transitions " + t.slice(0, 6));
   } finally { await browser.close(); }
 });

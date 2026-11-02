@@ -181,18 +181,24 @@ export function csmHandovers(accountId, projects) {
     .map((x, i) => ({ projectId: x.p.id, type: x.p.type, date: day(x.e.at), by: x.e.by || null, n: i + 1 }));
 }
 
+/* Go-live date rule (Constraint 3), owner-independent: open projects only. { days, sev } with sev
+   "red" (passed), "amber" (0-14d) or null; null when not open or no date. */
+export function goLiveSev(project, today) {
+  const goLive = day(project.targetGoLive);
+  if (!OPEN_STAGES.includes(project.stage) || !goLive) return null;
+  const days = Math.round((dayMs(goLive) - dayMs(today)) / DAY_MS);
+  return { days, sev: days < 0 ? "red" : days <= 14 ? "amber" : null };
+}
+
 /* Board card status tag: one per card, first match wins. null for handover / on_hold / cancelled. */
 export function boardTag(project, today) {
   const stage = project.stage;
   if (!OPEN_STAGES.includes(stage) && stage !== "live") return null;
   const open = OPEN_STAGES.includes(stage);
   if (open && !project.implementerId) return { text: "Needs owner", sev: "amber" };
-  const goLive = day(project.targetGoLive);
-  if (stage !== "live" && goLive) {
-    const d = Math.round((dayMs(goLive) - dayMs(today)) / DAY_MS);
-    if (d < 0) return { text: "Go-live passed", sev: "red" };
-    if (d <= 14) return { text: `Go-live in ${d}d`, sev: "amber" };
-  }
+  const g = goLiveSev(project, today);
+  if (g && g.sev === "red") return { text: "Go-live passed", sev: "red" };
+  if (g && g.sev === "amber") return { text: `Go-live in ${g.days}d`, sev: "amber" };
   if (stage === "csm_review") return { text: "Awaiting sign-off", sev: "grey" };
   if (stage === "live") return { text: "Live", sev: "green" };
   return { text: "On track", sev: "green" };

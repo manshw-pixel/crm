@@ -185,15 +185,22 @@ function ImplementationPage({ st, dispatch, user, projectId, setProjectId, openA
           </details>)}
         </div>
       </>}
-      {tab !== "Board" && <Card>
+      {tab !== "Board" && <section aria-label={tab} className="im-tabcard">
         {tab === "Workload" && canManageImpl(user) && <WorkloadTable st={st} dispatch={dispatch} user={user} />}
-        {tab === "My tasks" && (myTasks.length === 0 ? <div className="text-sm text-slate-500">No open tasks assigned to you.</div>
-          : myTasks.map(t => <button key={t.id} data-my-task={t.id} onClick={() => select(t.projectId)}
-            className="flex w-full gap-3 border-b border-slate-100 py-1.5 text-left text-sm last:border-0">
-            <span className="flex-1 font-medium">{t.title}</span>
-            <span className="text-xs text-slate-500">{acctName(t.accountId)}</span>
-            <span className="text-xs text-slate-500">{t.due ? `due ${fmtDate(t.due)}` : "no due date"}</span></button>))}
-      </Card>}
+        {tab === "My tasks" && <>
+          <h2 className="im-tab-h2">My tasks</h2>
+          {myTasks.length === 0 ? <div className="im-tab-empty">No open tasks assigned to you.</div>
+            : myTasks.map(t => {
+              const due = t.due ? String(t.due).slice(0, 10) : "";
+              const late = !!due && due < today;
+              return <button key={t.id} data-my-task={t.id} onClick={() => select(t.projectId)} className="im-mytask">
+                <span className="im-mytask-title">{t.title}</span>
+                <span className="im-mytask-acct">{acctName(t.accountId)}</span>
+                <span data-my-task-due data-sev={late ? "red" : "grey"} className="ad-pill im-due">{!due ? "No due date" : late ? `Overdue · ${imMonthDay(due)}` : `Due ${imMonthDay(due)}`}</span>
+              </button>;
+            })}
+        </>}
+      </section>}
     </div>
   );
 }
@@ -213,30 +220,34 @@ function WorkloadTable({ st, dispatch, user }) {
     if (!raw || !(n > 0)) delete next[id]; else next[id] = n;
     if ((caps[id] || null) !== (next[id] || null)) dispatch({ type: "SET_IMPL_CAPACITY", map: next });
   };
-  if (!rows.length) return <div className="text-sm text-slate-500">No implementers yet. Give a team member the impl_user or impl_lead role.</div>;
-  const th = "px-2 py-1.5 text-left text-xs font-bold uppercase text-slate-500";
+  if (!rows.length) return <div className="im-tab-empty">No implementers yet. Give a team member the impl_user or impl_lead role.</div>;
   return (
-    <div className="overflow-x-auto">
-      <table data-workload-table className="w-full text-sm">
-        <thead><tr className="border-b border-slate-200">
-          <th className={th}>Implementer</th><th className={th}>Active projects</th><th className={th}>Remaining</th>
-          <th className={th}>Logged 30d</th><th className={th}>Free from</th><th className={th}>Weekly capacity</th><th className={th}>Load</th>
-        </tr></thead>
-        <tbody>{rows.map(r => (
-          <tr key={r.id} data-workload-row={r.id} className="border-b border-slate-100 last:border-0">
-            <td className="px-2 py-1.5 font-medium text-slate-800">{r.name}</td>
-            <td data-col="active" className="px-2 py-1.5 tabular-nums">{r.active}</td>
-            <td data-col="remaining" className="px-2 py-1.5 tabular-nums">{hrs(r.remainingHours)}</td>
-            <td data-col="logged30" className="px-2 py-1.5 tabular-nums">{hrs(r.logged30)}</td>
-            <td data-col="freeFrom" className="px-2 py-1.5">{r.freeFrom ? fmtDate(r.freeFrom) : "—"}</td>
-            <td data-col="capacity" className="px-2 py-1.5 tabular-nums">{canEdit
-              ? <Input key={r.id + "|" + (caps[r.id] || "")} data-capacity-input type="number" min="1" aria-label={`Weekly capacity for ${r.name} (hours)`}
-                  defaultValue={caps[r.id] || ""} placeholder="30" className="w-20" onBlur={e => setCap(r.id, e.target.value.trim())} />
-              : hrs(caps[r.id] || 30)}</td>
-            <td data-col="load" data-band={r.band || ""} className={`px-2 py-1.5 font-bold tabular-nums ${r.band ? LOAD_BAND_TEXT[r.band] : "text-slate-400"}`}>{r.loadPct === null ? "—" : `${r.loadPct}%`}</td>
-          </tr>))}</tbody>
-      </table>
-      <p className="mt-2 text-xs text-slate-500">Load = remaining hours ÷ (weekly capacity × weeks until their latest due date). Green below 80%, amber 80–100%, red above 100%. Default capacity 30h.{canEdit ? "" : " Only admins can change capacity."}</p>
+    <div className="im-wl">
+      <h2 className="im-tab-h2">Workload</h2>
+      <div className="im-wl-scroll">
+        <table data-workload-table className="im-wtable">
+          <thead><tr>
+            <th scope="col">Implementer</th><th scope="col" className="im-num">Active projects</th><th scope="col" className="im-num">Remaining</th>
+            <th scope="col" className="im-num">Logged 30d</th><th scope="col">Free from</th><th scope="col">Weekly capacity</th><th scope="col">Load</th>
+          </tr></thead>
+          <tbody>{rows.map(r => (
+            <tr key={r.id} data-workload-row={r.id}>
+              <td><span className="im-wname"><span aria-hidden="true" className="im-owner-av im-wav">{initialsOf(r.name)}</span><b>{r.name}</b></span></td>
+              <td data-col="active" className="im-num">{r.active}</td>
+              <td data-col="remaining" className="im-num">{hrs(r.remainingHours)}</td>
+              <td data-col="logged30" className="im-num">{hrs(r.logged30)}</td>
+              <td data-col="freeFrom">{r.freeFrom ? fmtDate(r.freeFrom) : "—"}</td>
+              <td data-col="capacity" className="tabular-nums">{canEdit
+                ? <Input key={r.id + "|" + (caps[r.id] || "")} data-capacity-input type="number" min="1" aria-label={`Weekly capacity for ${r.name} (hours)`}
+                    defaultValue={caps[r.id] || ""} placeholder="30" className="im-cap" onBlur={e => setCap(r.id, e.target.value.trim())} />
+                : hrs(caps[r.id] || 30)}</td>
+              <td data-col="load" data-band={r.band || ""} className={`im-load ${r.band ? LOAD_BAND_TEXT[r.band] : ""}`}>
+                <span aria-hidden="true" className="im-load-bar"><span style={{ width: Math.min(r.loadPct || 0, 100) + "%" }} /></span>
+                <b className="im-load-pill">{r.loadPct === null ? "—" : `${r.loadPct}%`}</b></td>
+            </tr>))}</tbody>
+        </table>
+      </div>
+      <p className="im-wl-note">Load = remaining hours ÷ (weekly capacity × weeks until their latest due date). Green below 80%, amber 80–100%, red above 100%. Default capacity 30h.{canEdit ? "" : " Only admins can change capacity."}</p>
     </div>
   );
 }

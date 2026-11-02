@@ -443,7 +443,7 @@
   /* ---- stage 5 implementation board (approved Stage5 / Stage5Dark t table; tag colours come from the shared --p-* pills) ---- */
   .im-page { --i-card: #ffffff; --i-fg: #0f172a; --i-label: #475569; --i-meta: #5f6f86; --i-line: #e2e8f0; --i-track: #eef2f7; --i-lane: #eceef7; --i-seg: #e8eaf3; --i-field: #ffffff;
     --i-acc: #6366f1; --i-acc-tx: #4338ca; --i-acc-soft: #eef2ff; --i-av: #e0e7ff; --i-av-tx: #3730a3; --i-shadow: 0 1px 3px rgba(15,23,42,.06), 0 8px 24px -14px rgba(15,23,42,.14);
-    --i-dot-queued: #0284c7; --i-dot-planning: #4f46e5; --i-dot-in_progress: #7c3aed; --i-dot-csm_review: #d97706; --i-dot-live: #059669; --i-dot-handover: #64748b; --i-dot-on_hold: #d97706; --i-dot-cancelled: #64748b;
+    --i-dot-queued: #0284c7; --i-dot-planning: #4f46e5; --i-dot-in_progress: #7c3aed; --i-dot-csm_review: #b45309; --i-dot-live: #047857; --i-dot-handover: #64748b; --i-dot-on_hold: #b45309; --i-dot-cancelled: #64748b;
     min-width: 0; display: flex; flex-direction: column; gap: 16px; color: var(--i-fg); }
   @media screen { html.dark .im-page { --i-card: rgb(19,27,44); --i-fg: #e2e8f0; --i-label: #cbd5e1; --i-meta: #94a3b8; --i-line: #2d3a4f; --i-track: #1e293b; --i-lane: #111a2c; --i-seg: #1e293b; --i-field: #0f172a;
     --i-acc: #818cf8; --i-acc-tx: #a5b4fc; --i-acc-soft: #1e2046; --i-av: #1e2046; --i-av-tx: #c7d2fe; --i-shadow: 0 1px 3px rgba(0,0,0,.4);
@@ -536,6 +536,37 @@
   .im-hist-meta { font-size: 12px; color: var(--d-meta); overflow-wrap: anywhere; }
   @media (max-width: 639px) { .im-detail .nm-btn, .im-del, .im-link, .ad-back { min-height: 44px; } .im-del { min-width: 44px; } .im-dcard { padding: 16px; } }
   @media print { .im-actions, .im-addtask, .im-tplpick, .im-del, [data-task-log-hours], [data-task-log] { display: none !important; } .im-detail .ad-card { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } }
+  /* ---- stage 5 Workload + My tasks (approved Stage5Tabs) and Task 3 review follow-ups ---- */
+  .im-task .ad-pill { white-space: normal; max-width: 100%; overflow-wrap: anywhere; }
+  .im-tabcard { background: var(--i-card); color: var(--i-fg); border-radius: 16px; box-shadow: var(--i-shadow); padding: 20px; min-width: 0; }
+  .im-tab-h2 { margin: 0 0 8px; font-size: 15px; font-weight: 700; color: var(--i-fg); }
+  .im-tab-empty { font-size: 13px; color: var(--i-meta); padding: 8px 0; }
+  .im-wl-scroll { overflow-x: auto; max-width: 100%; }
+  .im-wtable { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13.5px; color: var(--i-fg); }
+  .im-wtable th { text-align: left; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--i-meta); padding: 10px 8px; border-bottom: 1px solid var(--i-line); }
+  .im-wtable td { padding: 12px 8px; border-bottom: 1px solid var(--i-track); vertical-align: middle; }
+  .im-wtable tr:last-child td { border-bottom: 0; }
+  .im-wtable .im-num { text-align: right; font-variant-numeric: tabular-nums; }
+  .im-wname { display: inline-flex; align-items: center; gap: 10px; } .im-wname b { font-weight: 600; }
+  .im-owner-av.im-wav { width: 30px; height: 30px; font-size: 11px; }
+  .im-wtable .im-cap { width: 72px; min-height: 34px; background: var(--i-field); color: var(--i-fg); border-color: var(--i-line); }
+  .im-load { min-width: 170px; }
+  .im-load > .im-load-bar { display: inline-block; vertical-align: middle; width: calc(100% - 64px); height: 6px; border-radius: 99px; background: var(--i-track); margin-right: 8px; }
+  .im-load-bar > span { display: block; height: 6px; border-radius: 99px; background: var(--p-n-dot); }
+  .im-load-pill { display: inline-block; vertical-align: middle; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; white-space: nowrap; background: var(--p-n-bg); color: var(--p-n-tx); border: 1px solid var(--p-n-ln); }
+  .im-load[data-band=green] .im-load-bar > span { background: var(--p-g-dot); } .im-load[data-band=green] .im-load-pill { background: var(--p-g-bg); color: var(--p-g-tx); border-color: var(--p-g-ln); }
+  .im-load[data-band=amber] .im-load-bar > span { background: var(--p-y-dot); } .im-load[data-band=amber] .im-load-pill { background: var(--p-y-bg); color: var(--p-y-tx); border-color: var(--p-y-ln); }
+  .im-load[data-band=red] .im-load-bar > span { background: var(--p-r-dot); } .im-load[data-band=red] .im-load-pill { background: var(--p-r-bg); color: var(--p-r-tx); border-color: var(--p-r-ln); }
+  .im-wl-note { margin: 10px 0 0; font-size: 12px; color: var(--i-meta); }
+  .im-mytask { width: 100%; min-height: 48px; text-align: left; border: 0; border-top: 1px solid var(--i-track); background: transparent; font: inherit; color: inherit; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 4px; cursor: pointer; }
+  .im-mytask:hover { background: var(--i-lane); } .im-mytask:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; border-radius: 8px; }
+  .im-mytask-title { flex: 1 1 220px; min-width: 0; font-size: 13.5px; font-weight: 600; overflow-wrap: anywhere; }
+  .im-mytask-acct { font-size: 12.5px; color: var(--i-label); min-width: 0; overflow-wrap: anywhere; }
+  .ad-pill.im-due { font-size: 12px; font-weight: 700; padding: 2px 8px; }
+  @media (max-width: 639px) { .im-detail .grad, .im-detail .nm-btn, .im-detail select, .im-detail input, .im-mytask, .im-wtable .im-cap { min-height: 44px; } .im-tabcard { padding: 16px; } }
+  @media print { .im-seg, .im-filters, .im-actions, .im-addtask, [role=tablist] { display: none !important; } .im-tabcard { box-shadow: none; border: 1px solid #cbd5e1; } .im-wl-scroll { overflow: visible; } .im-wtable { min-width: 0; } }
+  @media (forced-colors: active) { .im-tabcard { border: 1px solid CanvasText; } .ad-pill.im-due, .im-load-pill, .im-task .ad-pill { border: 1px solid CanvasText; } .im-load-bar { border: 1px solid CanvasText; } .im-load-bar > span { forced-color-adjust: none; background: CanvasText; } .im-mytask:focus-visible { outline-color: Highlight; } }
+  @media (prefers-reduced-motion: reduce) { .im-page *, .im-page { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
   @media (forced-colors: active) { .im-stage, .im-task-pill { border: 1px solid CanvasText; } .im-hist-dot { forced-color-adjust: none; background: CanvasText; } .im-hours[data-over=true] { text-decoration: underline; } }
 </style>
 </head>
