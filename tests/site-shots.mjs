@@ -230,8 +230,8 @@ try {
   await top(); await shot("renewals");
 
   // Tasks
-  await view("Tasks"); await page.waitForFunction(() => /Work queue/.test(document.getElementById("root").textContent));
-  for (const g of ["THIS WEEK", "LATER"]) await page.locator(`text=/^${g}$/i`).first().click();
+  await view("Tasks"); await page.waitForSelector("[data-tasks-subtitle]");
+  for (const g of ["week", "later"]) { const b = page.locator(`[data-task-section="${g}"] > h2 > button`); if (await b.count() && (await b.getAttribute("aria-expanded")) === "false") await b.click(); }
   await page.waitForFunction(() => document.querySelectorAll("#root input[type=checkbox]").length > 20);
   await top(); await shot("tasks");
 
