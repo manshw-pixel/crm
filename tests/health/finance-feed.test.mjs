@@ -35,7 +35,7 @@ const open = async (opts = {}) => {
   const ctx = await launchFinance({ user: FIN, ...opts, tables: { ...tables, ...(opts.tables || {}) }, seed });
   const { page } = ctx;
   await gotoSettings(page);
-  await page.waitForFunction(() => [...document.querySelectorAll("h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelectorAll("h2, h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
   await page.waitForFunction(() => document.querySelector("[data-files=finance]") || document.body.innerText.includes("Only finance users"), null, { timeout: 10000 });
   return ctx;
 };

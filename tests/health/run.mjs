@@ -18,6 +18,7 @@ import "./dates.test.mjs";
 import "./backfill.test.mjs";
 import "./tasks.test.mjs";
 import "./tasks-renewals-stage6.test.mjs";
+import "./finance-settings-stage7.test.mjs";
 import "./toast.test.mjs";
 import "./bulk.test.mjs";
 import "./segments.test.mjs";

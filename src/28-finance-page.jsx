@@ -11,23 +11,22 @@ function DueToRaise({ account, user, entities, onSent, onCount }) {
     .sort((a, b) => String(a.item.period_start).localeCompare(String(b.item.period_start)));
   useEffect(() => { onCount && onCount(due.length); }, [due.length]);
   if (error) return <div className="p-4 text-sm text-rose-600" data-due-error>Could not load purchase orders: {error}</div>;
-  const money = (po, item) => <><span className="mr-1 text-xs text-slate-400">{po.currency}</span>{Number(item.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}</>;
+  const money = (po, item) => `${po.currency} ${Number(item.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
   return <div data-due-list>
     {due.length === 0 && <div className="p-4 text-sm text-slate-500" data-due-empty>Nothing to invoice right now.</div>}
-    {due.map(({ po, item }) => <div key={item.id} data-due-item={item.id} className="flex items-center gap-3 border-t border-slate-100 px-4 py-2.5 text-sm first:border-t-0">
-      <div className="min-w-0 flex-1"><div className="truncate font-medium text-slate-800">{po.account_name}</div>
-        <div className="text-xs text-slate-500">PO {po.po_number} · {periodLabel(po, item)} · {fmtDate(item.period_start)} – {fmtDate(item.period_end)}</div></div>
-      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
-        <span className="whitespace-nowrap tabular-nums">{money(po, item)}</span>
-        {canFinance(user) && <Btn kind="primary" data-raise disabled={!account(po.account_id)} onClick={() => setRaising({ po, item })}>Raise invoice</Btn>}</div>
+    {due.map(({ po, item }) => <div key={item.id} data-due-item={item.id} className="fn-due-row">
+      <div className="fn-due-main"><div className="fn-due-acct" title={po.account_name}>{po.account_name}</div>
+        <div className="fn-po-meta">PO {po.po_number} · {periodLabel(po, item)} · {fmtDate(item.period_start)} – {fmtDate(item.period_end)}</div></div>
+      <span className="fn-due-amt">{money(po, item)}</span>
+      {canFinance(user) && <Btn kind="primary" data-raise className="fn-due-btn" disabled={!account(po.account_id)} onClick={() => setRaising({ po, item })}>Raise invoice</Btn>}
     </div>)}
-    {upcoming.length > 0 && <div className="border-t border-slate-100 px-4 py-2">
-      <button data-upcoming-toggle className="text-xs text-indigo-600 hover:underline" onClick={() => setShowUpcoming(v => !v)}>
+    {upcoming.length > 0 && <div className="fn-due-up">
+      <button type="button" data-upcoming-toggle className="fn-link" aria-expanded={showUpcoming ? "true" : "false"} onClick={() => setShowUpcoming(v => !v)}>
         {showUpcoming ? "Hide" : "Show"} upcoming ({upcoming.length})</button>
-      {showUpcoming && upcoming.map(({ po, item }) => <div key={item.id} data-upcoming-item={item.id} className="flex items-center gap-3 py-2 text-sm text-slate-400">
-        <div className="min-w-0 flex-1"><div className="truncate">{po.account_name}</div>
-          <div className="text-xs">PO {po.po_number} · {periodLabel(po, item)} · starts {fmtDate(item.period_start)}</div></div>
-        <span className="shrink-0 whitespace-nowrap tabular-nums">{money(po, item)}</span></div>)}
+      {showUpcoming && upcoming.map(({ po, item }) => <div key={item.id} data-upcoming-item={item.id} className="fn-due-row fn-due-upcoming">
+        <div className="fn-due-main"><div className="fn-due-acct" title={po.account_name}>{po.account_name}</div>
+          <div className="fn-po-meta">PO {po.po_number} · {periodLabel(po, item)} · starts {fmtDate(item.period_start)}</div></div>
+        <span className="fn-due-amt">{money(po, item)}</span></div>)}
     </div>}
     {raising && <InvoiceForm po={raising.po} item={raising.item} account={account(raising.po.account_id)} entities={entities} user={user}
       onClose={() => setRaising(null)} onSent={inv => { reload(); onSent(); if (inv) setRaising(null); }} />}
@@ -38,28 +37,27 @@ function DueToRaise({ account, user, entities, onSent, onCount }) {
 function FinanceSummary({ invoices }) {
   const s = summarizeInvoices(invoices, invToday());
   const curs = Object.keys(s).sort().filter(cur => invoices.some(i => i.currency === cur));
-  if (!curs.length) return <div className="nm p-6 text-center text-sm text-slate-500" data-fin-summary data-fin-summary-empty>No invoices in this range yet.</div>;
+  if (!curs.length) return <div className="fn-card fn-empty" data-fin-summary data-fin-summary-empty>No invoices in this range yet.</div>;
   const fmt = n => n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const fig = (cur, k, label, cls, sub) => <div className="min-w-0"><div className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">{label}</div>
-    <div {...{ [`data-fin-summary-${cur}-${k}`]: "" }} className={`truncate text-base font-semibold tabular-nums ${cls}`} title={`${cur} ${fmt(s[cur][k])}`}>{fmtFinance(s[cur][k])}</div>
-    {sub && <div className="text-[11px] text-slate-500">{sub}</div>}</div>;
-  return <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3" data-fin-summary>{curs.map(cur => {
-    const c = s[cur], base = c.paid + c.pending, paidPct = base > 0 ? (c.paid / base) * 100 : 0;
-    return <div key={cur} className="nm p-4" data-fin-summary-card={cur}>
-      <div className="mb-3 flex items-baseline justify-between"><h3 className="text-sm font-bold text-slate-800">{cur}</h3>
-        <span className="text-[11px] text-slate-500">{base > 0 ? `${Math.round(paidPct)}% paid` : ""}</span></div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {fig(cur, "paid", "Paid", "text-emerald-700")}{fig(cur, "pending", "Pending", "text-amber-700", "incl. overdue")}
-        {fig(cur, "overdue", "Overdue", "text-rose-700", `${c.overdueCount} invoice${c.overdueCount === 1 ? "" : "s"}`)}{fig(cur, "waived", "Waived", "text-slate-600")}</div>
-      <div className="mt-3 flex h-1.5 overflow-hidden rounded-full bg-amber-100" role="img" aria-label={`${cur}: ${Math.round(paidPct)}% of paid plus pending is paid`}>
-        <div className="h-full bg-emerald-500" style={{ width: `${paidPct}%` }} /></div>
-    </div>; })}</div>;
+  const fig = (cur, k, label, sub, hot) => <div className="fn-fig"><div className="fn-fig-label"><span className="fn-dot" data-k={k} aria-hidden="true" />{label}</div>
+    <div {...{ [`data-fin-summary-${cur}-${k}`]: "" }} className="fn-fig-val" data-k={k} data-hot={hot ? "true" : undefined} title={`${cur} ${fmt(s[cur][k])}`}>{fmtFinance(s[cur][k])}</div>
+    {sub && <div className="fn-fig-sub">{sub}</div>}</div>;
+  return <section aria-label="Invoices by currency" className="fn-cards" data-fin-summary>{curs.map(cur => {
+    const c = s[cur], base = c.paid + c.pending, paidPct = base > 0 ? (c.paid / base) * 100 : 0, n = invoices.filter(i => i.currency === cur).length;
+    return <div key={cur} className="fn-card" data-fin-summary-card={cur}>
+      <div className="fn-card-head"><h2 className="fn-cur-code">{cur}</h2><span className="fn-count" data-fin-count>{n} invoice{n === 1 ? "" : "s"}</span>
+        <span className="fn-pct">{base > 0 ? `${Math.round(paidPct)}% paid` : ""}</span></div>
+      <div className="fn-figs">
+        {fig(cur, "paid", "Paid")}{fig(cur, "pending", "Pending", "incl. overdue")}
+        {fig(cur, "overdue", "Overdue", `${c.overdueCount} invoice${c.overdueCount === 1 ? "" : "s"}`, c.overdue > 0)}{fig(cur, "waived", "Waived")}</div>
+      <span className="fn-bar" role="img" aria-label={`${cur}: ${Math.round(paidPct)}% of paid plus pending is paid`}><span style={{ width: `${paidPct}%` }} /></span>
+    </div>; })}</section>;
 }
 
-// A bordered Finance panel: title, count badge, body.
-const FinPanel = ({ title, count, children }) => <section className="nm min-w-0 overflow-hidden">
-  <div className="flex items-center gap-2 border-b border-slate-200 px-4 py-3"><h2 className="text-sm font-bold text-slate-800">{title}</h2>
-    {count != null && <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600">{count}</span>}</div>
+// A Finance panel: title, count badge (tone amber / indigo / grey), body.
+const FinPanel = ({ title, count, tone = "grey", children }) => <section className="fn-panel" aria-label={title}>
+  <div className="fn-panel-head"><h2 className="fn-panel-title">{title}</h2>
+    {count != null && <span className="fn-panel-count" data-sev={tone}>{count}</span>}</div>
   {children}</section>;
 
 function invoicesCSVText(rows, entities, today) {
@@ -76,7 +74,7 @@ function exportInvoicesCSV(rows, entities, today) {
 }
 
 function FinancePage({ st, user, openAccount }) {
-  const { invoices, entities, reload, error } = useInvoices();
+  const { invoices, entities, reload, error, loading } = useInvoices();
   const [q, setQ] = useState(""), [status, setStatus] = useState("all"), [ent, setEnt] = useState("all");
   const [from, setFrom] = useState(""), [to, setTo] = useState("");
   const [poCount, setPoCount] = useState(null), [dueCount, setDueCount] = useState(null);
@@ -87,24 +85,31 @@ function FinancePage({ st, user, openAccount }) {
   const rows = scoped.filter(i => (status === "all" || invoiceStatus(i, today) === status)
     && (!q || `${i.number} ${i.account_name}`.toLowerCase().includes(q.toLowerCase())));
   const entLabels = Object.fromEntries(entities.map(e => [e.id, e.name]));
-  const lbl = "flex shrink-0 items-center gap-1.5 text-xs font-semibold text-slate-500";
-  return <div data-finance-page className="space-y-5">
-    <div className="flex flex-wrap items-center justify-between gap-3">
-      <p className="text-sm text-slate-500">Purchase orders, invoices to raise, and every invoice by currency.</p>
+  const overdueAll = loading ? null : invoices.filter(i => invoiceStatus(i, today) === "overdue").length;
+  const plural = (n, w) => `${n} ${w}${n === 1 ? "" : "s"}`;
+  const parts = [poCount != null && `${plural(poCount, "PO")} awaiting approval`, dueCount != null && `${plural(dueCount, "invoice")} due to raise`,
+    overdueAll != null && `${overdueAll} overdue`].filter(Boolean);
+  const subtitle = poCount === 0 && dueCount === 0 && overdueAll === 0 ? "Nothing waiting" : parts.join(" · ");
+  const statusLabels = { all: "All", pending: "pending (not yet due)" };
+  return <div data-finance-page className="fn-page">
+    <div className="fn-head">
+      <p className="fn-sub" data-fin-subtitle>{subtitle}</p>
       <Btn data-fin-export disabled={!rows.length} onClick={() => exportInvoicesCSV(rows, entities, today)}>Export CSV</Btn>
     </div>
     <FinanceSummary invoices={scoped} />
-    <div className="grid gap-5 lg:grid-cols-2">
-      <FinPanel title="POs awaiting approval" count={poCount}><div className="px-4 sm:px-2"><POQueue user={user} openAccount={openAccount} onCount={setPoCount} /></div></FinPanel>
-      <FinPanel title="Due to raise" count={dueCount}><DueToRaise account={account} user={user} entities={entities} onSent={reload} onCount={setDueCount} /></FinPanel>
+    <div className="fn-two">
+      <FinPanel title="POs awaiting approval" count={poCount} tone="amber"><POQueue user={user} openAccount={openAccount} onCount={setPoCount} /></FinPanel>
+      <FinPanel title="Due to raise" count={dueCount} tone="indigo"><DueToRaise account={account} user={user} entities={entities} onSent={reload} onCount={setDueCount} /></FinPanel>
     </div>
     <FinPanel title="Invoices" count={rows.length}>
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-100 px-4 py-3 [&_input]:h-8 [&_input]:py-0 [&_select]:h-8 [&_select]:py-0">
-        <div className="min-w-[12rem] flex-1"><Input data-fin-search placeholder="Search number or account" aria-label="Search invoices" value={q} onChange={e => setQ(e.target.value)} /></div>
-        <label className={lbl}>Status<Select data-fin-filter-status aria-label="Status" value={status} onChange={e => setStatus(e.target.value)} options={["all", "pending", "overdue", "paid", "waived", "unsent"]} labels={{ all: "All", pending: "pending (not yet due)" }} /></label>
-        <label className={lbl}>Entity<Select data-fin-filter-entity aria-label="Entity" value={ent} onChange={e => setEnt(e.target.value)} options={["all", ...entities.map(e => e.id)]} labels={{ all: "All entities", ...entLabels }} className="max-w-[14rem]" /></label>
-        <div className={lbl}>Issued<Input type="date" aria-label="Issued from" value={from} onChange={e => setFrom(e.target.value)} className="!w-36" />
-          <span className="font-normal">–</span><Input type="date" aria-label="Issued to" value={to} onChange={e => setTo(e.target.value)} className="!w-36" /></div>
+      <div className="fn-filters">
+        <input data-fin-search className="fn-field fn-search" placeholder="Search number or account" aria-label="Search invoices" value={q} onChange={e => setQ(e.target.value)} />
+        <label className="fn-flabel">Status<select data-fin-filter-status className="fn-field" aria-label="Status" value={status} onChange={e => setStatus(e.target.value)}>
+          {["all", "pending", "overdue", "paid", "waived", "unsent"].map(o => <option key={o} value={o}>{statusLabels[o] ?? o}</option>)}</select></label>
+        <label className="fn-flabel">Entity<select data-fin-filter-entity className="fn-field fn-ent" aria-label="Entity" value={ent} onChange={e => setEnt(e.target.value)}>
+          {["all", ...entities.map(e => e.id)].map(o => <option key={o} value={o}>{o === "all" ? "All entities" : entLabels[o] ?? o}</option>)}</select></label>
+        <span className="fn-flabel" role="group" aria-label="Issued between">Issued<input type="date" className="fn-field fn-date-in" aria-label="Issued from" value={from} onChange={e => setFrom(e.target.value)} />
+          <span aria-hidden="true">–</span><input type="date" className="fn-field fn-date-in" aria-label="Issued to" value={to} onChange={e => setTo(e.target.value)} /></span>
       </div>
       <div className="px-4 sm:px-2"><InvoiceTable invoices={rows} entities={entities} user={user} onChanged={reload} showAccount openAccount={openAccount} error={error} accountOf={account} /></div>
     </FinPanel>

@@ -99,41 +99,42 @@ function fileSyncStatus(f, processed) {
 }
 // One folder's card: status, folder controls, file list, last sync, template downloads. Presentation only --
 // useFeedSync (below) owns the state and the single shared sync; IntegrationsCard renders it.
+const FEED_PILL = { "Connected": "green", "Needs access": "amber", "Not set": "grey" };
+const FILE_TAG = { done: ["green", "Imported"], new: ["amber", "Next sync"], error: ["red", "Error"] };
 function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, busy, lastSync, onPick, onClear, onSync, templates, notice, children }) {
   const status = !handle ? "Not set" : needsGrant ? "Needs access" : "Connected";
-  const tone = status === "Connected" ? "text-emerald-600" : status === "Needs access" ? "text-amber-700" : "text-slate-500";
   return (
-    <section data-feed={feed} className="nm-inset min-w-0 space-y-2 !rounded-xl p-3 text-sm">
-      <div className="flex flex-wrap items-center gap-2">
-        <h4 className="font-semibold">{label}</h4>
-        <span data-status className={`text-xs font-semibold ${tone}`}>{status}</span>
+    <section data-feed={feed} aria-label={label} className="st-card st-feed">
+      <div className="st-feed-head">
+        <span data-feed-tile aria-hidden="true" className="st-tile" data-k={feed}>{feed === "sales" ? "S" : "F"}</span>
+        <div className="st-feed-title"><h3>{label}</h3><div className="st-meta">{notice || hint}</div></div>
+        <span data-status data-sev={FEED_PILL[status]} className="ad-pill"><span className="ad-dot" aria-hidden="true" />{status}</span>
       </div>
-      <div className="text-xs text-slate-500">{notice || hint}</div>
-      <div className="flex flex-wrap items-center gap-2">
-        {handle ? <><span className="nm-inset !rounded-full px-2 py-0.5 text-xs">📁 {handle.name}</span>
-          {needsGrant && !notice && <span data-grant={feed} className="flex items-center gap-1.5 text-xs text-amber-700">Access expired —
+      <div className="st-feed-row">
+        {handle ? <><span className="st-chip"><span aria-hidden="true">📁</span> {handle.name}</span>
+          {needsGrant && !notice && <span data-grant={feed} className="st-grant">Access expired —
             <Btn onClick={onSync}>Grant access</Btn></span>}
-          <button className="text-xs text-rose-500 hover:underline" onClick={onClear}>disconnect</button></>
+          <button type="button" className="st-link st-danger-link" onClick={onClear}>Disconnect</button></>
           : <Btn onClick={onPick}>Choose folder…</Btn>}
-        {handle && !notice && <Btn kind="primary" onClick={onSync}>{busy ? "Syncing…" : "Sync now"}</Btn>}
+        <span className="st-meta st-last">{lastSync ? <>Last sync <b>{fmtDate(lastSync)}</b></> : "Never synced"}</span>
       </div>
-      <div className="text-xs text-slate-500">{lastSync ? `Last sync ${fmtDate(lastSync)}` : "Never synced"}</div>
-      {files && <ul data-files={feed} className="space-y-0.5 text-xs">
-        {files.length === 0 && <li className="text-slate-500">No .csv or .xlsx files directly in this folder (subfolders aren't read).</li>}
-        {files.map(f => { const s = fileSyncStatus(f, processed); return (
-          <li key={f.name} data-file={f.name} className="flex items-center gap-2">
-            <span className={s.kind === "done" ? "text-emerald-600" : s.kind === "new" ? "text-amber-600" : "text-rose-600"}>{s.kind === "done" ? "✓" : s.kind === "new" ? "⏳" : "⚠"}</span>
-            <span className="truncate font-medium text-slate-700">{f.name}</span>
-            <span className="shrink-0 text-slate-500">{s.text}</span>
+      {files && <ul data-files={feed} className="st-files">
+        {files.length === 0 && <li className="st-meta">No .csv or .xlsx files directly in this folder (subfolders aren't read).</li>}
+        {files.map(f => { const s = fileSyncStatus(f, processed); const [sev, word] = FILE_TAG[s.kind] || FILE_TAG.error; return (
+          <li key={f.name} data-file={f.name}>
+            <span data-file-tag data-sev={sev} className="st-file-tag">{word}</span>
+            <span className="st-file-name" title={f.name}>{f.name}</span>
+            <span className="st-meta st-file-when">{s.text}</span>
           </li>); })}
       </ul>}
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-slate-500">Templates</span>
-        {templates.map(([name, xlsx, csv, attr]) => <span key={name} className="inline-flex items-center gap-1">
+      <div className="st-feed-row">
+        <span className="st-label">Templates</span>
+        {templates.map(([name, xlsx, csv, attr]) => <span key={name} className="st-tpl">
           <Btn onClick={xlsx} {...(attr ? { [attr]: true } : {})}>{name}</Btn>
-          <button type="button" data-csv-template={name} className="text-xs text-slate-500 hover:underline" onClick={csv}>CSV</button></span>)}
+          <button type="button" data-csv-template={name} className="st-link" onClick={csv}>CSV</button></span>)}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+      {children && <div className="st-feed-row">{children}</div>}
+      {handle && !notice && <Btn kind="primary" onClick={onSync}>{busy ? "Syncing…" : "Sync now"}</Btn>}
     </section>
   );
 }
@@ -141,17 +142,21 @@ function SyncLog({ log }) {
   const [filter, setFilter] = useState("All");
   const rows = [...log].reverse().filter(l => filter === "All" ? true : filter === "Errors" ? l.err : l.folder === filter.toLowerCase());
   return (
-    <div data-synclog className="mt-3 border-t border-slate-100 pt-2 text-xs">
-      <div className="mb-1 flex flex-wrap items-center gap-1">
-        <span className="mr-1 font-semibold text-slate-600">Activity</span>
-        {["All", "Sales", "Finance", "Errors"].map(f => <button key={f} type="button" data-log-filter={f} onClick={() => setFilter(f)}
-          className={`rounded-full px-2 py-0.5 ${filter === f ? "grad font-bold text-white" : "nm-btn text-slate-700"}`}>{f}</button>)}
+    <section data-synclog aria-label="Sync activity" className="st-card st-log">
+      <div className="st-log-head">
+        <h3>Activity</h3>
+        <div role="group" aria-label="Filter activity" className="st-filters">
+          {["All", "Sales", "Finance", "Errors"].map(f => <button key={f} type="button" data-log-filter={f} aria-pressed={filter === f} onClick={() => setFilter(f)}>{f}</button>)}
+        </div>
       </div>
-      <div className="max-h-48 overflow-y-auto">
-        {rows.length === 0 && <div className="py-0.5 text-slate-500">{log.length === 0 ? "No activity yet" : filter === "Errors" ? "No errors" : "No entries"}</div>}
-        {rows.map((l, i) => <div key={i} {...(l.err ? { "data-log-err": true } : {})} className={`py-0.5 ${l.err ? "text-rose-600" : "text-slate-600"}`}>{fmtDate(l.t)} · <b>{l.folder}</b> · {l.file}: {l.msg}</div>)}
+      <div className="max-h-48 overflow-y-auto st-log-rows">
+        {rows.length === 0 && <div className="st-meta st-log-empty">{log.length === 0 ? "No activity yet" : filter === "Errors" ? "No errors" : "No entries"}</div>}
+        {rows.map((l, i) => <div key={i} {...(l.err ? { "data-log-err": true } : {})} className="st-log-row">
+          <span data-file-tag className="st-file-tag" data-sev={l.err ? "red" : "green"}>{l.err ? "Error" : "OK"}</span>
+          <div className="st-log-body"><b>{l.folder} · {l.file}{": "}</b><div className="st-log-msg">{l.msg}</div></div>
+          <span className="st-meta st-log-when">{fmtDate(l.t)}</span></div>)}
       </div>
-    </div>
+    </section>
   );
 }
 // The feed engine. Called once from App (admins only) so the 5-minute auto-sync keeps running on every page;
@@ -363,7 +368,9 @@ function useFeedSync({ st, dispatch, user, enabled = true }) {
   return { supported: on, handles, needsGrant, files, busy, pick, clear, sync };
 }
 function IntegrationsCard({ st, dispatch, user, feed }) {
-  if (!feed || !feed.supported) return <Card title="Integrations — shared drive"><p className="text-sm text-slate-500">Folder sync needs Chrome or Edge (File System Access API).</p></Card>;
+  const intro = <div className="st-intro"><h2>Integrations — shared drive</h2>
+    <p>Point each feed at a shared-drive folder. OneVio reads new .csv and .xlsx files every 5 minutes while it is open in Chrome or Edge.</p></div>;
+  if (!feed || !feed.supported) return <div data-integrations className="st-integ">{intro}<div className="st-card"><p className="st-meta">Folder sync needs Chrome or Edge (File System Access API).</p></div></div>;
   const { handles, needsGrant, files, busy, pick, clear, sync } = feed;
   const integ = { processed: {}, log: [], ...(st.settings.integrations || {}) };
   // template downloads prefilled with current data — drop into the shared-drive folder, edit, sync picks it up
@@ -404,8 +411,9 @@ function IntegrationsCard({ st, dispatch, user, feed }) {
   const common = key => ({ handle: handles[key], needsGrant: needsGrant[key], files: files[key], processed: integ.processed, busy,
     lastSync: lastSync(key), onPick: () => pick(key), onClear: () => clear(key), onSync: () => sync(true) });
   return (
-    <Card title="Integrations — shared drive">
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+    <div data-integrations className="st-integ">
+      {intro}
+      <div className="st-feeds">
         <FeedCard feed="sales" label="Sales feed" hint="new-account CSVs (same columns as Accounts → Import CSV)" {...common("sales")}
           templates={[templateSet("Accounts → CSM", "sales-accounts.csv", salesCSV, accountDropdowns),
             templateSet("Onboarding", "sales-onboarding.csv", onboardingCSV, onboardingDropdowns, "data-onboarding-template")]}>
@@ -424,7 +432,7 @@ function IntegrationsCard({ st, dispatch, user, feed }) {
             templateSet("Billing completed", "finance-billing.csv", billingCSV, () => ({}))]} />
       </div>
       <SyncLog log={integ.log} />
-      <p className="mt-2 text-xs text-slate-500">Works in Chrome or Edge, and only while a OneVio tab is open (checks every 5 minutes). Each file is imported once per saved version; editing and re-saving a file imports it again, and duplicate projects and POs are refused, so that's safe. Finance files are recognised by their columns, not their names; put each PO's PDF in the same folder.</p>
-    </Card>
+      <p className="st-meta st-note">Works in Chrome or Edge, and only while a OneVio tab is open (checks every 5 minutes). Each file is imported once per saved version; editing and re-saving a file imports it again, and duplicate projects and POs are refused, so that's safe. Finance files are recognised by their columns, not their names; put each PO's PDF in the same folder.</p>
+    </div>
   );
 }

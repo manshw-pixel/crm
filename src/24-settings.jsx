@@ -338,13 +338,37 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
     r.onload = async () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; await bulkReplace(s); toast({ text: "Imported for the whole team.", tone: "success" }); } catch (ex) { toast({ text: ex && ex.message ? "Import failed: " + ex.message : "Invalid JSON file.", tone: "error" }); } };
     r.readAsText(f); e.target.value = "";
   };
+  const admin = user.role === "admin";
+  const sections = [["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users", true],
+    ...(admin ? [["Implementation", "set-implementation", true], ["Billing", "set-billing", true], ["Error log", "set-errors", true]] : []), ["Data", "set-data"]];
+  const [cur, setCur] = useState(sections[0][1]);
+  const idsKey = sections.map(s => s[1]).join();
+  const lockUntil = useRef(0); // after an index click, the smooth scroll passes other sections through the band; ignore them so the clicked entry stays current (bottom sections never reach the band)
+  // The section in view = the first one inside the observer band (20%-30% down the viewport); in a gap between sections the last answer stands.
+  useEffect(() => {
+    const ids = idsKey.split(","), inBand = new Set();
+    const io = new IntersectionObserver(entries => {
+      entries.forEach(e => { if (e.isIntersecting) inBand.add(e.target.id); else inBand.delete(e.target.id); });
+      const now = ids.find(id => inBand.has(id));
+      if (now && Date.now() > lockUntil.current) setCur(now);
+    }, { rootMargin: "-20% 0px -70% 0px" });
+    ids.forEach(id => { const el = document.getElementById(id); if (el) io.observe(el); });
+    return () => io.disconnect();
+  }, [idsKey]);
+  const go = (e, id) => {
+    e.preventDefault(); setCur(id); lockUntil.current = Date.now() + 1200;
+    const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    document.getElementById(id)?.scrollIntoView({ behavior: calm ? "auto" : "smooth" });
+  };
   return (
-    <div className="grid gap-4 lg:grid-cols-2">
-      <nav data-settings-index aria-label="Settings sections" className="flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold lg:col-span-2">
-        {[["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users"],
-          ...(user.role === "admin" ? [["Implementation", "set-implementation"], ["Billing", "set-billing"], ["Error log", "set-errors"]] : []), ["Data", "set-data"]].map(([l, id]) =>
-          <a key={id} href={"#" + id} className="text-indigo-600 hover:underline" onClick={e => { e.preventDefault(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth" }); }}>{l}</a>)}
+    <div className="st-page">
+    <div className="st-layout">
+      <nav data-settings-index aria-label="Settings sections" className="st-index">
+        {sections.map(([l, id, tag]) =>
+          <a key={id} href={"#" + id} aria-current={cur === id ? "true" : undefined} onClick={e => go(e, id)}>
+            <span className="st-index-label">{l}</span>{tag && <span className="st-tag">Admin</span>}</a>)}
       </nav>
+      <div className="st-main">
       <Card title="Appearance" id="set-appearance">
         <p className="mb-2 text-xs text-slate-500">Saved on this device. Auto follows your device's light/dark setting.</p>
         <div className="nm-inset inline-flex gap-0.5 !rounded-lg p-0.5" role="group" aria-label="Theme">
@@ -444,6 +468,8 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
           onClose={() => setConfirmData(null)} />}
         <p className="mt-3 text-xs text-slate-700">Data is shared by the whole team in your Supabase project. Export JSON any time for a backup; Import replaces everything for everyone (admin only).</p>
       </Card>
+      </div>
+    </div>
     </div>
   );
 }

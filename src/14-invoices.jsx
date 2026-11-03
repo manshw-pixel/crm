@@ -16,8 +16,14 @@ function useInvoices(filter) {
   return { ...state, reload };
 }
 
-const STATUS_PILL = { paid: ["Paid", "bg-emerald-50 text-emerald-700"], waived: ["Waived", "bg-slate-100 text-slate-600"],
-  overdue: ["Overdue", "bg-rose-50 text-rose-700"], pending: ["Pending", "bg-amber-50 text-amber-700"], unsent: ["Unsent", "bg-indigo-50 text-indigo-700"] };
+const STATUS_PILL = { paid: ["Paid", "green"], waived: ["Waived", "grey"], overdue: ["Overdue", "red"], pending: ["Pending", "amber"], unsent: ["Unsent", "indigo"] };
+// Pill severity + text for one invoice. Overdue reads "Overdue · Nd" (whole UTC days past due_date).
+function invoiceStatusPill(inv, today) {
+  const st = invoiceStatus(inv, today), [label, sev] = STATUS_PILL[st];
+  if (st !== "overdue") return { sev, text: label };
+  const days = Math.max(0, Math.round((Date.parse(String(today).slice(0, 10)) - Date.parse(String(inv.due_date).slice(0, 10))) / 86400000));
+  return { sev, text: `${label} · ${days}d` };
+}
 
 async function setStatus(inv, status, extra = {}) {
   const { error } = await sb.rpc("set_invoice_status", { p_id: inv.id, p_status: status,
@@ -101,7 +107,7 @@ function WaiveDialog({ inv, onDone, onClose }) {
 
 // Small bordered action button, shared by the invoice and PO tables. tone "danger" for destructive actions.
 const MiniBtn = ({ tone, className = "", ...p }) => <button type="button" {...p}
-  className={`rounded-md border border-slate-200 bg-white px-2 py-0.5 text-xs font-semibold hover:bg-slate-50 disabled:opacity-50 ${tone === "danger" ? "text-rose-600" : "text-indigo-600"} ${className}`} />;
+  className={`fn-mini disabled:opacity-50 ${tone === "danger" ? "fn-mini-danger" : ""} ${className}`} />;
 const invDate = d => d ? fmtDate(d) : "—";
 const invMoney = n => Number(n).toLocaleString(undefined, { minimumFractionDigits: 2 });
 // Below sm the table collapses to one card per row: number + status, account, amount + due, then actions.
@@ -113,21 +119,21 @@ function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAc
   const today = invToday();
   if (error) return <div className="p-4 text-sm text-rose-600" data-invoices-error>Could not load invoices: {error}</div>;
   if (!invoices.length) return <div className="p-4 text-sm text-slate-500" data-invoices-empty>No invoices yet.</div>;
-  return <div className="sm:overflow-x-auto"><table className="block w-full text-sm sm:table">
-    <thead className="hidden sm:table-header-group"><tr className="border-b border-slate-200 text-left text-xs text-slate-500">
+  return <div className="relative sm:overflow-x-auto"><table className="fn-table block w-full text-sm sm:table">
+    <thead className="hidden sm:table-header-group"><tr className="text-left text-xs">
       <th className="p-2 font-semibold">Number</th>{showAccount && <th className="p-2 font-semibold">Account</th>}
       <th className="p-2 font-semibold">Issued</th><th className="p-2 font-semibold">Due</th><th className="p-2 text-right font-semibold">Amount</th>
       <th className="p-2 font-semibold">Status</th>{fin && <th className="p-2 text-center font-semibold">Paid</th>}<th className="p-2 text-right font-semibold"><span className="sr-only">Actions</span></th></tr></thead>
     <tbody className="block sm:table-row-group">{invoices.map(inv => {
-      const st = invoiceStatus(inv, today), [label, cls] = STATUS_PILL[st];
-      return <tr key={inv.id} data-invoice-row={inv.number} className="grid grid-cols-2 items-center gap-x-3 gap-y-1.5 border-t border-slate-100 py-3 first:border-t-0 sm:table-row sm:py-0 sm:first:border-t-0">
-        <td className={`${IT_CELL} order-1 font-medium text-slate-800`}>{inv.number}</td>
-        {showAccount && <td className={`${IT_CELL} order-3 col-span-2 min-w-0 truncate`}><button className="text-indigo-600 hover:underline" onClick={() => openAccount(inv.account_id)}>{inv.account_name}</button></td>}
-        <td className={`${IT_CELL} hidden whitespace-nowrap tabular-nums text-slate-600`}>{invDate(inv.issue_date)}</td>
-        <td className={`${IT_CELL} order-5 whitespace-nowrap text-right text-xs tabular-nums text-slate-600 sm:text-left sm:text-sm`}><span className="sm:hidden">Due </span>{invDate(inv.due_date)}</td>
-        <td className={`${IT_CELL} order-4 whitespace-nowrap tabular-nums sm:text-right`}><span className="mr-1 text-xs text-slate-400">{inv.currency}</span>{invMoney(inv.total)}</td>
-        <td className={`${IT_CELL} order-2 text-right sm:text-left`}><span data-invoice-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${cls}`} title={inv.waive_reason || inv.payment_ref || ""}>{label}</span></td>
-        {fin && <td className={`${IT_CELL} order-6 sm:text-center`}><label className="inline-flex items-center gap-1.5 text-xs text-slate-500"><input type="checkbox" data-paid-checkbox aria-label={`Paid ${inv.number}`}
+      const pill = invoiceStatusPill(inv, today);
+      return <tr key={inv.id} data-invoice-row={inv.number} className="fn-row grid grid-cols-2 items-center gap-x-3 gap-y-1.5 py-3 sm:table-row sm:py-0">
+        <td className={`${IT_CELL} order-1 fn-no`}>{inv.number}</td>
+        {showAccount && <td className={`${IT_CELL} fn-acct-cell order-3 col-span-2 min-w-0`}><button className="fn-acct" onClick={() => openAccount(inv.account_id)}>{inv.account_name}</button></td>}
+        <td className={`${IT_CELL} fn-date hidden whitespace-nowrap tabular-nums`}>{invDate(inv.issue_date)}</td>
+        <td className={`${IT_CELL} fn-date order-5 whitespace-nowrap text-right text-xs tabular-nums sm:text-left sm:text-sm`}><span className="sm:hidden">Due </span>{invDate(inv.due_date)}</td>
+        <td className={`${IT_CELL} fn-amt order-4 whitespace-nowrap tabular-nums sm:text-right`}><span className="fn-cur">{inv.currency}</span> {invMoney(inv.total)}</td>
+        <td className={`${IT_CELL} order-2 text-right sm:text-left`}><span data-invoice-status data-sev={pill.sev} className="ad-pill ad-pill-sm" title={inv.waive_reason || inv.payment_ref || ""}><span className="ad-dot" aria-hidden="true" />{pill.text}</span></td>
+        {fin && <td className={`${IT_CELL} order-6 sm:text-center`}><label className="fn-paid inline-flex items-center gap-1.5 text-xs"><input type="checkbox" data-paid-checkbox aria-label={`Paid ${inv.number}`}
           checked={inv.status === "paid"} disabled={inv.status === "waived" || !inv.sent_at}
           onChange={e => e.target.checked ? setPaying(inv) : setReverting(inv)} /><span className="sm:hidden">Paid</span></label></td>}
         <td className={`${IT_CELL} order-7 ${fin ? "" : "col-span-2"}`}><div className="flex flex-wrap justify-end gap-1.5 whitespace-nowrap">
