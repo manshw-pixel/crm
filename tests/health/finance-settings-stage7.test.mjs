@@ -2,7 +2,7 @@
 // Seed: INR has one invoice overdue 31 days; USD has 5 (2 paid, 1 pending, 1 waived, 1 unsent);
 // 2 submitted POs; 1 approved PO with 3 started periods (= 3 invoices due to raise).
 import { test, assert } from "./framework.mjs";
-import { launchFinance } from "./harness.mjs";
+import { launchFinance, gotoSettings, seedAccount } from "./harness.mjs";
 
 const DAY = 86400000;
 const day = n => new Date(Date.now() + n * DAY).toISOString().slice(0, 10);
@@ -280,7 +280,6 @@ test("stage7 due: rows keep hooks, Raise invoice is primary, amount is CUR 1,234
 });
 
 // ---- Task 3: Settings long page, sticky index, Integrations + Activity ----
-import { gotoSettings, seedAccount } from "./harness.mjs";
 const SACCT = seedAccount({ id: "b1", name: "Billco", accountNo: "ACC-1" });
 const INTEG = { processed: { "a.csv|1000": "2026-10-28" }, log: [
   { t: "2026-10-27T10:00:00.000Z", folder: "sales", file: "a.csv", msg: "all good", err: false },
@@ -303,9 +302,10 @@ window.__fin = mk("Finance Sync", "prompt", []);
 })();`;
 async function openSettings({ theme = "light", w = 1440, h = 900 } = {}) {
   const r = await launchFinance({ user: { role: "admin" }, tables: STABLES, seed: `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}\n${FEED_SEED}` });
-  await r.page.setViewportSize({ width: w, height: h });
+  await r.page.setViewportSize({ width: 1440, height: 900 });
   await gotoSettings(r.page);
   await r.page.waitForSelector("[data-feed=sales] [data-file]", { timeout: 10000 });
+  await r.page.setViewportSize({ width: w, height: h });
   return r;
 }
 const idxItems = page => page.$$eval("[data-settings-index] a", as => as.map(a => ({ label: a.querySelector(".st-index-label").textContent.trim(), tag: a.querySelector(".st-tag")?.textContent.trim() || "", href: a.getAttribute("href") })));
@@ -404,4 +404,111 @@ for (const theme of ["light", "dark"]) test(`stage7 settings: text contrast >= 4
     assert(r.seen.link === 11 && r.seen.cur === 1 && r.seen.tag === 4 && r.seen.pill === 2 && r.seen.ftag >= 3 && r.seen.logm === 2 && r.seen.dzb === 2 && r.seen.title >= 5, "targets " + JSON.stringify(r.seen));
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
   } finally { await browser.close(); }
+});
+
+// ---- Task 4: phone / print / forced-colors / zoom ----
+const LONG = "Northwind Traders International Holdings Group Limited Co.".padEnd(60, "x").slice(0, 60);
+const LONG_TABLES = { ...TABLES, accounts: [ACCT("a1", LONG), ACCT("a2", "Other Co")],
+  purchase_orders: POS.map(p => p.account_id === "a1" ? { ...p, account_name: LONG } : p) };
+const overflow = page => page.evaluate(() => {
+  const de = document.documentElement, w = de.clientWidth;
+  const worst = [...document.querySelectorAll("body *")].map(e => ({ e, r: e.getBoundingClientRect() })).filter(x => x.r.width > 0 && x.r.right > w + 1)
+    .filter(x => { for (let p = x.e.parentElement; p && p !== document.body; p = p.parentElement) { const o = getComputedStyle(p).overflowX; if (o === "auto" || o === "scroll" || o === "hidden") return false; } return true; })
+    .sort((a, b) => b.r.right - a.r.right)[0];
+  return { over: Math.max(de.scrollWidth, document.body.scrollWidth) - w, worst: worst ? worst.e.tagName + "." + String(worst.e.className).slice(0, 40) + " right=" + Math.round(worst.r.right) : "" };
+});
+const noHScroll = async (page, label) => {
+  try { await page.waitForFunction(() => Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) - document.documentElement.clientWidth <= 0, null, { timeout: 5000 }); }
+  catch (e) { throw new Error(label + " page scrolls sideways: " + JSON.stringify(await overflow(page))); }
+};
+const h44 = (page, sel) => page.$$eval(sel, es => es.filter(e => e.getClientRects().length).map(e => Math.round(e.getBoundingClientRect().height)));
+const missingBorder = (page, sels) => page.evaluate(ss => ss.filter(s => { const es = [...document.querySelectorAll(s)];
+  return !es.length || !es.every(e => { const c = getComputedStyle(e); return c.borderTopStyle !== "none" && parseFloat(c.borderTopWidth) >= 1; }); }), sels);
+
+test("stage7 phone 390: finance with a review open - no page h-scroll, period table scrolls in its box, 44px targets, 2x2 figures, long name truncates with title", async () => {
+  const { page, browser } = await open({ w: 390, tables: LONG_TABLES });
+  try {
+    await settled(page);
+    await page.click(rowOf("4500001") + " [data-po-review]");
+    await page.waitForSelector(rowOf("4500001") + " [data-po-inline-review]");
+    await noHScroll(page, "finance");
+    const box = await page.$eval("[data-po-inline-review] .fn-po-periods", e => ({ ov: getComputedStyle(e).overflowX, tw: e.querySelector("table").getBoundingClientRect().width }));
+    assert(box.ov === "auto" && box.tw >= 360, "period table min-width inside its own box " + JSON.stringify(box));
+    for (const [n, sel] of [["Review", "[data-po-review]"], ["Raise invoice", "[data-raise]"], ["filter fields", ".fn-filters .fn-field"], ["Export", "[data-fin-export]"], ["Approve", "[data-po-approve]"], ["Reject", "[data-po-reject]"]]) {
+      const hs = await h44(page, sel); assert(hs.length > 0 && hs.every(h => h >= 44), n + " heights " + hs);
+    }
+    const figs = await page.$$eval("[data-fin-summary-card]", cs => cs.map(c => ["paid", "pending", "overdue", "waived"].map(k => Math.round(c.querySelector(`[data-fin-summary-${c.dataset.finSummaryCard}-${k}]`).getBoundingClientRect().top))));
+    for (const t of figs) assert(new Set(t).size === 2 && t[0] === t[1] && t[2] === t[3], "figures not 2x2 " + t);
+    const tr = await page.$eval(rowOf("4500001") + " .fn-po-acct", e => ({ t: e.title, trunc: e.scrollWidth > e.clientWidth, fits: e.getBoundingClientRect().right <= document.documentElement.clientWidth }));
+    assert(tr.t === LONG && tr.trunc && tr.fits, "PO row name " + JSON.stringify(tr));
+    const due = await page.$$eval("[data-due-item] .fn-due-acct", es => es.map(e => ({ t: e.title, trunc: e.scrollWidth > e.clientWidth, fits: e.getBoundingClientRect().right <= document.documentElement.clientWidth })));
+    assert(due.length === 3 && due.every(d => d.t === LONG && d.trunc && d.fits), "due rows name " + JSON.stringify(due));
+  } finally { await browser.close(); }
+});
+
+test("stage7 phone 390: settings - no page h-scroll, index is a horizontal row scrolling inside itself, 44px targets", async () => {
+  const { page, browser } = await openSettings({ w: 390, h: 844 });
+  try {
+    await noHScroll(page, "settings");
+    const ix = await page.$eval("[data-settings-index]", e => { const s = getComputedStyle(e); return { ov: s.overflowX, pos: s.position, sw: e.scrollWidth, cw: e.clientWidth, rows: new Set([...e.querySelectorAll("a")].map(a => Math.round(a.getBoundingClientRect().top))).size }; });
+    assert(ix.ov === "auto" && ix.pos !== "sticky" && ix.sw > ix.cw && ix.rows === 1, "index row " + JSON.stringify(ix));
+    for (const [n, sel] of [["index links", "[data-settings-index] a"], ["Sync now", "[data-feed=sales] > .grad"], ["log filters", "[data-log-filter]"], ["CSV links", "[data-csv-template]"]]) {
+      const hs = await h44(page, sel); assert(hs.length > 0 && hs.every(h => h >= 44), n + " heights " + hs);
+    }
+  } finally { await browser.close(); }
+});
+
+test("stage7 print: finance hides filters, export, Review, Raise and the open inline review; settings hides the index and prints every section", async () => {
+  const f = await open();
+  try {
+    await settled(f.page);
+    await f.page.click(rowOf("4500001") + " [data-po-review]");
+    await f.page.waitForSelector("[data-po-inline-review]");
+    await f.page.emulateMedia({ media: "print" });
+    const shown = await f.page.evaluate(() => [".fn-filters", "[data-fin-export]", "[data-po-review]", "[data-raise]", "[data-po-inline-review]"].filter(s => [...document.querySelectorAll(s)].some(e => e.getClientRects().length > 0)));
+    assert(shown.length === 0, "visible in finance print: " + shown);
+  } finally { await f.browser.close(); }
+  const s = await openSettings();
+  try {
+    await s.page.emulateMedia({ media: "print" });
+    const d = await s.page.evaluate(() => ({ idx: document.querySelector("[data-settings-index]").getClientRects().length,
+      hidden: [...document.querySelectorAll("[id^=set-]")].filter(e => e.getClientRects().length === 0).map(e => e.id) }));
+    assert(d.idx === 0 && d.hidden.length === 0, "settings print " + JSON.stringify(d));
+  } finally { await s.browser.close(); }
+});
+
+test("stage7 forced-colors + reduced motion: cards and pills keep a border, index click scrolls instantly", async () => {
+  const f = await open();
+  try {
+    await settled(f.page);
+    await f.page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+    const miss = await missingBorder(f.page, [".fn-card", ".fn-table .ad-pill", ".fn-panel", ".fn-field"]);
+    assert(miss.length === 0, "finance forced-colors missing border: " + miss);
+  } finally { await f.browser.close(); }
+  const s = await openSettings();
+  try {
+    await s.page.emulateMedia({ forcedColors: "active", reducedMotion: "reduce" });
+    const miss = await missingBorder(s.page, [".st-card", ".st-index", ".st-file-tag", ".st-page .nm", "[data-status]"]);
+    assert(miss.length === 0, "settings forced-colors missing border: " + miss);
+    await s.page.evaluate(() => { window.__sc = []; const o = Element.prototype.scrollIntoView; Element.prototype.scrollIntoView = function (a) { window.__sc.push(a && a.behavior); return o.call(this, a); }; });
+    await s.page.click('[data-settings-index] a[href="#set-billing"]');
+    const sc = await s.page.evaluate(() => JSON.stringify(window.__sc));
+    assert(sc === '["auto"]', "scroll behaviour under reduce " + sc);
+  } finally { await s.browser.close(); }
+});
+
+test("stage7 200% zoom (720px wide): finance subtitle not clipped, no page h-scroll; settings index is the horizontal row", async () => {
+  const f = await open({ w: 720 });
+  try {
+    await settled(f.page);
+    await noHScroll(f.page, "finance 720");
+    const c = await f.page.$eval("[data-fin-subtitle]", e => ({ sw: e.scrollWidth, cw: e.clientWidth, ov: getComputedStyle(e).overflow }));
+    assert(c.sw <= c.cw + 1 && c.ov === "visible", "subtitle clipped " + JSON.stringify(c));
+  } finally { await f.browser.close(); }
+  const s = await openSettings({ w: 720, h: 900 });
+  try {
+    await noHScroll(s.page, "settings 720");
+    const ix = await s.page.$eval("[data-settings-index]", e => ({ pos: getComputedStyle(e).position, dir: getComputedStyle(e).flexDirection, ov: getComputedStyle(e).overflowX }));
+    assert(ix.pos !== "sticky" && ix.dir === "row" && ix.ov === "auto", "index at 720 " + JSON.stringify(ix));
+  } finally { await s.browser.close(); }
 });

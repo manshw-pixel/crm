@@ -325,4 +325,41 @@ ${runId}-NOPE,paid,${isoPlus(0)},x
       assert.equal(after.status, "paid", "invoice status after the feed");
       assert.equal(after.payment_ref, before.payment_ref, "payment_ref changed by the refused row");
     } },
+  // UI Stage 7: the Finance queue reviews a PO in the row (no dialog). Run-scoped PO on the run account; rejected, so it never piles up.
+  { id: `${F}/inline-review`, feature: F, title: "Review on a Finance queue row expands the review in place (no dialog); rejecting with a reason removes the row and the account shows it", role: "admin",
+    run: async ({ page, runId, thisRunId = runId }) => {
+      await nav(page, "Accounts").waitFor({ timeout: 20000 });
+      await waitForRunAccounts(page, runId);
+      const v = { po_number: `${thisRunId}-INLINE`, po_value: 40000, currency: "PHP", years: 1, billing_cycle: "quarterly", billing_start: isoPlus(200) };
+      const reason = `QA ${runId}`;
+      try {
+        await submitPO(page, PO_ACCT(runId), v);
+        assert.equal(await poStatus(page, v.po_number), "submitted", "PO should be awaiting approval");
+        await openFinance(page);
+        const row = page.locator(`[data-po-queue] [data-po-row="${v.po_number}"]`);
+        await row.waitFor({ timeout: 15000 });
+        await row.locator("[data-po-review]").click();
+        await row.locator("[data-po-inline-review]").waitFor({ timeout: 10000 });
+        assert.equal(await page.locator("[role=dialog]").count(), 0, "review must open in the row, not in a dialog");
+        assert.equal(await row.locator("[data-po-review]").getAttribute("aria-expanded"), "true");
+        await row.locator("[data-po-reject-reason]").fill(reason);
+        await row.locator("[data-po-reject]").click();
+        await row.waitFor({ state: "detached", timeout: 15000 });
+        assert.equal(await poStatus(page, v.po_number), "rejected", "server status after reject");
+        await openAccount(page, PO_ACCT(runId));
+        await page.locator('[data-account-tab="Purchase orders"]').click();
+        const st = page.locator(`[data-po-row="${v.po_number}"] [data-po-status]`);
+        await st.waitFor({ timeout: 15000 });
+        assert.equal((await st.textContent()).trim(), `Rejected — ${reason}`);
+      } finally {
+        if (await poStatus(page, v.po_number).catch(() => null) === "submitted") {   // a failure left it open: reject it so it does not pile up
+          await page.keyboard.press("Escape");
+          await openFinance(page);
+          const row = page.locator(`[data-po-queue] [data-po-row="${v.po_number}"]`);
+          await row.locator("[data-po-review]").click().catch(() => {});
+          await row.locator("[data-po-reject-reason]").fill(`QA ${runId} cleanup`).catch(() => {});
+          await row.locator("[data-po-reject]").click().catch(() => {});
+        }
+      }
+    } },
 ];

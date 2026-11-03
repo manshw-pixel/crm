@@ -790,7 +790,7 @@
   .fn-due-up { border-top: 1px solid var(--f-row); margin-top: 4px; padding-top: 10px; font-size: 12.5px; }
   .fn-due-upcoming { color: var(--f-meta); padding: 8px 0; } .fn-due-upcoming .fn-due-acct, .fn-due-upcoming .fn-due-amt { color: var(--f-label); font-weight: 600; }
   .fn-due-up .fn-link { min-height: 28px; }
-  @media (max-width: 640px) { .fn-po-btns .fn-mini, .fn-due-row [data-raise], .fn-po-actions button, .fn-due-up .fn-link { min-height: 44px; } .fn-po-btns { width: 100%; } .fn-po-btns .fn-mini { flex: 1; } .fn-due-row [data-raise] { width: 100%; } }
+  @media (max-width: 640px) { .fn-po-btns .fn-mini, .fn-due-row [data-raise], .fn-po-actions button, .fn-po-actions .fn-po-btn, .fn-po-actions [data-po-approve], .fn-due-up .fn-link { min-height: 44px; } .fn-po-btns { width: 100%; } .fn-po-btns .fn-mini { flex: 1; } .fn-due-row [data-raise] { width: 100%; } }
   @media print { .fn-po-row [data-po-review], .fn-po-review, .fn-due-row [data-raise], .fn-po-btns { display: none !important; } }
   @media (min-width: 640px) {
     .fn-table { border-collapse: collapse; font-size: 13.5px; } .fn-page .fn-table { min-width: 820px; }
@@ -798,7 +798,7 @@
     .fn-table td { padding: 12px 10px; vertical-align: middle; } .fn-row { border-top: 0; } .fn-row > td { border-top: 1px solid var(--f-row); } .fn-row:first-child > td { border-top: 0; }
     .fn-table th:first-child, .fn-table td:first-child { padding-left: 14px; } .fn-table th:last-child, .fn-table td:last-child { padding-right: 14px; }
   }
-  @media (max-width: 640px) { .fn-field, .fn-mini { min-height: 44px; } .fn-flabel { width: 100%; } .fn-flabel .fn-field { flex: 1 1 120px; } .fn-date-in { width: auto; flex: 1 1 120px; } .fn-ent { max-width: none; } }
+  @media (max-width: 640px) { .fn-field, .fn-mini, .fn-head .nm-btn { min-height: 44px; } .fn-flabel { width: 100%; } .fn-flabel .fn-field { flex: 1 1 120px; } .fn-date-in { width: auto; flex: 1 1 120px; } .fn-ent { max-width: none; } }
   @media (prefers-reduced-motion: reduce) { .fn-page *, .fn-page { transition: none !important; animation: none !important; } }
   @media (forced-colors: active) { .fn-card, .fn-panel, .fn-panel-count, .fn-field, .fn-mini { border: 1px solid CanvasText; } .fn-bar { border: 1px solid CanvasText; } .fn-bar > span { forced-color-adjust: none; background: CanvasText; }
     .fn-dot { forced-color-adjust: none; background: CanvasText; } .fn-table .ad-pill { border: 1px solid CanvasText; } .fn-field:focus-visible, .fn-mini:focus-visible { outline-color: Highlight; } }
@@ -858,7 +858,7 @@
   .st-log-body { flex: 1 1 260px; min-width: 0; } .st-log-body b { font-weight: 600; color: var(--s-fg); } .st-log-msg { color: var(--s-label); overflow-wrap: anywhere; }
   [data-log-err] .st-log-msg { color: var(--p-r-tx); } .st-log-when { white-space: nowrap; } .st-log-empty { padding: 6px 0; }
   @media (max-width: 1024px) { .st-layout { flex-direction: column; align-items: stretch; gap: 12px; } .st-index { position: static; flex: none; width: auto; flex-direction: row; overflow-x: auto; overflow-y: hidden; max-height: none; } .st-index a { flex: none; white-space: nowrap; } }
-  @media (max-width: 640px) { .st-index a, .st-link, .st-filters button, .st-page .st-feed [data-btn] { min-height: 44px; } }
+  @media (max-width: 640px) { .st-index a, .st-link, .st-filters button, .st-page .st-feed [data-btn], .st-page .st-feed > .grad { min-height: 44px; } }
   @media (prefers-reduced-motion: reduce) { .st-page *, .st-page { transition: none !important; animation: none !important; scroll-behavior: auto !important; } }
   @media (forced-colors: active) { .st-card, .st-index, .st-page .nm, .st-file-tag, .st-chip { border: 1px solid CanvasText; } .st-index a[aria-current=true] { outline: 2px solid Highlight; } .ad-dot { forced-color-adjust: none; } .st-index a:focus-visible, .st-link:focus-visible { outline-color: Highlight; } }
   @media print { .st-index { display: none !important; } .st-layout { display: block; } .st-card, .st-page .nm { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } .st-log-rows { max-height: none !important; overflow: visible !important; } }

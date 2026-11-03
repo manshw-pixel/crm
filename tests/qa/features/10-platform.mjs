@@ -121,4 +121,22 @@ export const scenarios = [
       await nav(page, "Dashboard").waitFor({ state: "attached", timeout: 5000 });
       assert.deepEqual(errors, [], `page errors: ${errors.join("; ")}`);
     } },
+  // UI Stage 7: the Settings page is one long page with a sticky index; the current entry follows the click.
+  { id: `${F}/settings-index`, feature: F, title: "Settings index: clicking Billing then Appearance marks that entry current and brings its section into view", role: "admin",
+    run: async ({ page }) => {
+      const errors = [];
+      page.on("pageerror", e => errors.push(String(e?.message || e)));
+      await page.locator(MAIN).waitFor({ timeout: 20000 });
+      await nav(page, "Settings").click();
+      await page.locator("[data-settings-index]").waitFor({ timeout: 15000 });
+      for (const [label, id] of [["Billing", "set-billing"], ["Appearance", "set-appearance"]]) {
+        await page.locator(`[data-settings-index] a[href="#${id}"]`).click();
+        await page.waitForFunction(h => document.querySelector(`[data-settings-index] a[aria-current="true"]`)?.getAttribute("href") === h, `#${id}`, { timeout: 10000 })
+          .catch(() => { throw new Error(`${label} never became aria-current`); });
+        await page.waitForFunction(i => { const r = document.getElementById(i)?.getBoundingClientRect(); return !!r && r.top < innerHeight && r.bottom > 0; }, id, { timeout: 10000 })
+          .catch(() => { throw new Error(`#${id} not in the viewport after clicking ${label}`); });
+        assert.equal(await page.locator('[data-settings-index] a[aria-current="true"]').count(), 1, "exactly one current entry");
+      }
+      assert.deepEqual(errors, [], `page errors: ${errors.join("; ")}`);
+    } },
 ];

@@ -134,7 +134,7 @@ function FeedCard({ feed, label, hint, handle, needsGrant, files, processed, bus
           <button type="button" data-csv-template={name} className="st-link" onClick={csv}>CSV</button></span>)}
       </div>
       {children && <div className="st-feed-row">{children}</div>}
-      {handle && !notice && <Btn kind="primary" className="st-sync" onClick={onSync}>{busy ? "Syncing…" : "Sync now"}</Btn>}
+      {handle && !notice && <Btn kind="primary" onClick={onSync}>{busy ? "Syncing…" : "Sync now"}</Btn>}
     </section>
   );
 }
@@ -152,7 +152,7 @@ function SyncLog({ log }) {
       <div className="max-h-48 overflow-y-auto st-log-rows">
         {rows.length === 0 && <div className="st-meta st-log-empty">{log.length === 0 ? "No activity yet" : filter === "Errors" ? "No errors" : "No entries"}</div>}
         {rows.map((l, i) => <div key={i} {...(l.err ? { "data-log-err": true } : {})} className="st-log-row">
-          <span className="st-file-tag" data-sev={l.err ? "red" : "green"}>{l.err ? "Error" : "OK"}</span>
+          <span data-file-tag className="st-file-tag" data-sev={l.err ? "red" : "green"}>{l.err ? "Error" : "OK"}</span>
           <div className="st-log-body"><b>{l.folder} · {l.file}{": "}</b><div className="st-log-msg">{l.msg}</div></div>
           <span className="st-meta st-log-when">{fmtDate(l.t)}</span></div>)}
       </div>

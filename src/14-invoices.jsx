@@ -119,7 +119,7 @@ function InvoiceTable({ invoices, entities, user, onChanged, showAccount, openAc
   const today = invToday();
   if (error) return <div className="p-4 text-sm text-rose-600" data-invoices-error>Could not load invoices: {error}</div>;
   if (!invoices.length) return <div className="p-4 text-sm text-slate-500" data-invoices-empty>No invoices yet.</div>;
-  return <div className="sm:overflow-x-auto"><table className="fn-table block w-full text-sm sm:table">
+  return <div className="relative sm:overflow-x-auto"><table className="fn-table block w-full text-sm sm:table">
     <thead className="hidden sm:table-header-group"><tr className="text-left text-xs">
       <th className="p-2 font-semibold">Number</th>{showAccount && <th className="p-2 font-semibold">Account</th>}
       <th className="p-2 font-semibold">Issued</th><th className="p-2 font-semibold">Due</th><th className="p-2 text-right font-semibold">Amount</th>
