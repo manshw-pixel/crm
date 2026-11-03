@@ -343,19 +343,20 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
     ...(admin ? [["Implementation", "set-implementation", true], ["Billing", "set-billing", true], ["Error log", "set-errors", true]] : []), ["Data", "set-data"]];
   const [cur, setCur] = useState(sections[0][1]);
   const idsKey = sections.map(s => s[1]).join();
+  const lockUntil = useRef(0); // after an index click, the smooth scroll passes other sections through the band; ignore them so the clicked entry stays current (bottom sections never reach the band)
   // The section in view = the first one inside the observer band (20%-30% down the viewport); in a gap between sections the last answer stands.
   useEffect(() => {
     const ids = idsKey.split(","), inBand = new Set();
     const io = new IntersectionObserver(entries => {
       entries.forEach(e => { if (e.isIntersecting) inBand.add(e.target.id); else inBand.delete(e.target.id); });
       const now = ids.find(id => inBand.has(id));
-      if (now) setCur(now);
+      if (now && Date.now() > lockUntil.current) setCur(now);
     }, { rootMargin: "-20% 0px -70% 0px" });
     ids.forEach(id => { const el = document.getElementById(id); if (el) io.observe(el); });
     return () => io.disconnect();
   }, [idsKey]);
   const go = (e, id) => {
-    e.preventDefault(); setCur(id);
+    e.preventDefault(); setCur(id); lockUntil.current = Date.now() + 1200;
     const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     document.getElementById(id)?.scrollIntoView({ behavior: calm ? "auto" : "smooth" });
   };

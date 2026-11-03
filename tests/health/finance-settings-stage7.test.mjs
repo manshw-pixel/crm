@@ -340,6 +340,10 @@ test("stage7 settings: aria-current follows the scroll in both directions, exact
     await curIs(page, "Appearance");
     await page.click('[data-settings-index] a[href="#set-users"]');
     await curIs(page, "Users");
+    // A bottom section never reaches the observer band; the click must win over sections the scroll passes.
+    await page.click('[data-settings-index] a[href="#set-data"]');
+    await page.waitForTimeout(2000);
+    const afterData = (await currents(page)).join(); assert(afterData === "Data", "Data stays current after its click, got " + afterData);
   } finally { await browser.close(); }
 });
 
