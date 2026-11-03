@@ -168,3 +168,113 @@ for (const w of [1280, 1440]) test(`stage7 finance: the four figures sit on one 
       assert((n === 1) || (n === 2 && per === 2 && tops[0] === tops[1] && tops[2] === tops[3]), `figures wrap badly at ${w}: ${tops}`); }
   } finally { await browser.close(); }
 });
+
+// ---- Task 2: inline PO review + Due to raise ----
+const rowOf = n => `[data-po-queue] [data-po-row="${n}"]`;
+const rpcOf = (page, fn) => page.evaluate(f => window.__rpcCalls.filter(c => c.fn === f), fn);
+const openQueue = async o => { const r = await open(o); await r.page.waitForSelector(rowOf("4500001") + " [data-po-review]"); return r; };
+const gone = n => page => page.waitForFunction(x => !document.querySelector(`[data-po-queue] [data-po-row="${x}"]`), n, { timeout: 8000 });
+const focusOnReview = (page, n) => page.evaluate(x => document.activeElement?.hasAttribute("data-po-review") && document.activeElement.closest(`[data-po-row="${x}"]`) !== null, n);
+
+test("stage7 po: Review expands the review inline (no dialog), focus on first amount, button says Close", async () => {
+  const { page, browser } = await openQueue();
+  try {
+    const btn = page.locator(rowOf("4500001") + " [data-po-review]");
+    assert(await btn.getAttribute("aria-expanded") === "false" && (await btn.innerText()).trim() === "Review", "starts collapsed");
+    await btn.click();
+    await page.waitForSelector(rowOf("4500001") + " [data-po-inline-review]");
+    assert(await btn.getAttribute("aria-expanded") === "true" && (await btn.innerText()).trim() === "Close", "expanded + Close");
+    const id = await page.locator(rowOf("4500001") + " [data-po-inline-review]").getAttribute("id");
+    assert(id && await btn.getAttribute("aria-controls") === id, "aria-controls points at the region");
+    assert(await page.locator("[role=dialog]").count() === 0, "no dialog");
+    assert(await page.locator(rowOf("4500001") + " [data-po-amount]").count() === 4, "4 quarterly periods");
+    assert(await page.evaluate(() => document.activeElement?.matches("[data-po-amount]") && document.activeElement.closest('[data-po-row="4500001"]') !== null), "focus on the first amount input");
+    assert(await page.locator("[data-po-inline-review][role=region]").getAttribute("aria-label") === "Review PO 4500001", "region label");
+  } finally { await browser.close(); }
+});
+
+test("stage7 po: one review open at a time; Close and Escape return focus to the Review button", async () => {
+  const { page, browser } = await openQueue();
+  try {
+    const b1 = page.locator(rowOf("4500001") + " [data-po-review]"), b2 = page.locator(rowOf("4500002") + " [data-po-review]");
+    await b1.click(); await page.waitForSelector(rowOf("4500001") + " [data-po-inline-review]");
+    await b2.click(); await page.waitForSelector(rowOf("4500002") + " [data-po-inline-review]");
+    assert(await page.locator("[data-po-inline-review]").count() === 1, "only one open");
+    assert(await b1.getAttribute("aria-expanded") === "false" && await b2.getAttribute("aria-expanded") === "true", "first collapsed");
+    await b2.click();                                                       // the Close button
+    await page.waitForFunction(() => !document.querySelector("[data-po-inline-review]"));
+    assert(await focusOnReview(page, "4500002"), "Close returns focus to its Review button");
+    await b1.click(); await page.waitForSelector(rowOf("4500001") + " [data-po-amount]");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(() => !document.querySelector("[data-po-inline-review]"));
+    assert(await focusOnReview(page, "4500001"), "Escape returns focus to its Review button");
+  } finally { await browser.close(); }
+});
+
+test("stage7 po: approve sends the same RPC args as the modal did; row leaves the queue; subtitle count drops", async () => {
+  const { page, browser } = await openQueue();
+  try {
+    await settled(page);
+    await page.click(rowOf("4500001") + " [data-po-review]");
+    await page.locator(rowOf("4500001") + " [data-po-amount]").first().fill("150000");
+    await page.waitForSelector("[data-po-mismatch]");
+    assert(await page.locator("[data-po-approve]").isDisabled(), "blocked until mismatch confirmed");
+    await page.check("[data-po-mismatch-ok]");
+    await page.click("[data-po-approve]");
+    await gone("4500001")(page);
+    const c = (await rpcOf(page, "approve_po"))[0];
+    // shape the old modal sent (POReview.act call, unchanged): { p_id, p_amounts: number[] | null, p_confirm_mismatch }
+    assert(JSON.stringify(c.args) === JSON.stringify({ p_id: "po-a", p_amounts: [150000, 100000, 100000, 100000], p_confirm_mismatch: true }), JSON.stringify(c.args));
+    await page.waitForFunction(() => /^1 PO awaiting approval/.test(document.querySelector("[data-fin-subtitle]")?.textContent.trim() || ""), null, { timeout: 8000 });
+  } finally { await browser.close(); }
+});
+
+test("stage7 po: Reject needs a reason and trims it; unedited approve sends null amounts", async () => {
+  const { page, browser } = await openQueue();
+  try {
+    await page.click(rowOf("4500002") + " [data-po-review]");
+    assert(await page.locator("[data-po-reject]").isDisabled(), "Reject disabled with no reason");
+    await page.fill("[data-po-reject-reason]", "   ");
+    assert(await page.locator("[data-po-reject]").isDisabled(), "whitespace is blank");
+    assert(await page.locator("[data-po-reject-reason]").evaluate(e => e.tagName === "TEXTAREA" && e.rows === 2), "textarea rows=2");
+    await page.fill("[data-po-reject-reason]", "  wrong entity  ");
+    await page.click("[data-po-reject]");
+    await gone("4500002")(page);
+    const c = (await rpcOf(page, "reject_po"))[0];
+    assert(JSON.stringify(c.args) === JSON.stringify({ p_id: "po-b", p_reason: "wrong entity" }), JSON.stringify(c.args));
+    await page.click(rowOf("4500001") + " [data-po-review]");
+    await page.click("[data-po-approve]");
+    await gone("4500001")(page);
+    const a = (await rpcOf(page, "approve_po"))[0];
+    assert(a.args.p_amounts === null && a.args.p_confirm_mismatch === false, JSON.stringify(a.args));
+  } finally { await browser.close(); }
+});
+
+test("stage7 po: the account page still reviews in a modal", async () => {
+  const { page, browser } = await open();
+  try {
+    await page.click('button[title="Accounts"]');
+    await page.click('[data-account-row]:has-text("Acme Ltd")');
+    await page.click('[data-account-tab="Purchase orders"]');
+    await page.locator('[data-po-row="4500003"] [data-po-review]').click();
+    await page.waitForSelector("[role=dialog]");
+    assert(await page.locator("[data-po-inline-review]").count() === 0, "modal, not inline");
+    assert(await page.locator("[data-po-cancel]").count() === 1, "Cancel PO flow lives in the modal");
+  } finally { await browser.close(); }
+});
+
+test("stage7 due: rows keep hooks, Raise invoice is primary, amount is CUR 1,234.00, upcoming toggle flips aria-expanded", async () => {
+  const up = { id: "s4", org_id: "org-a", po_id: "po-c", seq: 4, invoice_id: null, amount: 100000, period_start: day(30), period_end: day(120) };
+  const { page, browser } = await open({ tables: { ...TABLES, po_schedule: [...SCHED, up] } });
+  try {
+    await page.waitForSelector("[data-due-item]");
+    assert(await page.locator("[data-due-item]").count() === 3, "3 due");
+    assert(await page.locator("[data-due-item] [data-raise]").evaluateAll(b => b.length === 3 && b.every(x => x.classList.contains("grad"))), "primary buttons");
+    const row = await page.locator("[data-due-item]").first().innerText();
+    assert(/PO 4500003 · .+ · .+ – /.test(row) && /INR 100,000\.00/.test(row), row);
+    const t = page.locator("[data-upcoming-toggle]");
+    assert(await t.getAttribute("aria-expanded") === "false" && /^Show upcoming \(1\)$/.test((await t.innerText()).trim()), "collapsed");
+    await t.click();
+    assert(await t.getAttribute("aria-expanded") === "true" && await page.locator("[data-upcoming-item]").count() === 1, "expanded");
+  } finally { await browser.close(); }
+});

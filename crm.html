@@ -758,6 +758,40 @@
   .fn-acct { border: 0; background: transparent; padding: 0; font: inherit; font-weight: 600; color: var(--f-link); text-align: left; overflow-wrap: anywhere; cursor: pointer; } .fn-acct:hover { text-decoration: underline; }
   .fn-row { border-top: 1px solid var(--f-row); } .fn-row:first-child { border-top: 0; }
   .ad-pill.fn-po-pill { white-space: normal; text-align: left; }
+  .fn-link { border: 0; background: transparent; padding: 0; font: inherit; font-weight: 600; color: var(--f-link); cursor: pointer; text-align: left; } .fn-link:hover { text-decoration: underline; }
+  .fn-link:focus-visible, .fn-po-acct:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; border-radius: 4px; }
+  .fn-po-list, .fn-page [data-due-list] { padding: 0 18px 10px; }
+  .fn-po-row { border-top: 1px solid var(--f-row); padding: 12px 0; } .fn-po-row:first-child { border-top: 0; }
+  .fn-po-line, .fn-due-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+  .fn-po-main, .fn-due-main { flex: 1 1 200px; min-width: 0; }
+  .fn-po-acct { display: block; max-width: 100%; font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fn-po-meta { font-size: 12.5px; color: var(--f-meta); overflow-wrap: anywhere; }
+  .fn-po-amt, .fn-due-amt { font-size: 14px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--f-fg); }
+  .fn-po-btns { display: flex; gap: 6px; }
+  .fn-po-review { margin-top: 12px; display: flex; flex-direction: column; gap: 10px; }
+  .fn-po-sub { font-size: 12.5px; color: var(--f-meta); }
+  .fn-po-periods { border: 1px solid var(--f-line); border-radius: 12px; overflow-x: auto; }
+  .fn-po-periods table { width: 100%; min-width: 360px; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--f-fg); }
+  .fn-po-periods thead tr { background: var(--f-band); } .fn-po-periods th { padding: 8px 10px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--f-meta); font-weight: 700; }
+  .fn-po-periods td { padding: 6px 10px; border-top: 1px solid var(--f-row); } .fn-po-periods .fn-r { text-align: right; }
+  .fn-po-amt-in { width: 110px; min-height: 32px; text-align: right; padding: 0 8px; border-radius: 8px; font-variant-numeric: tabular-nums; }
+  .fn-po-total { font-size: 12.5px; color: var(--f-label); } .fn-po-total b { color: var(--f-fg); font-variant-numeric: tabular-nums; }
+  .fn-po-err { font-size: 12.5px; color: var(--p-r-tx); }
+  .fn-po-mismatch { display: flex; flex-direction: column; gap: 6px; font-size: 12.5px; padding: 8px 10px; border-radius: 10px; background: var(--p-y-bg); color: var(--p-y-tx); border: 1px solid var(--p-y-ln); }
+  .fn-po-mismatch span { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .fn-po-reason { flex-direction: column; align-items: stretch; gap: 4px; } .fn-po-reason-in { width: 100%; min-height: 36px; padding: 6px 10px; resize: vertical; }
+  .fn-po-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+  .fn-po-actions .fn-po-btn { min-height: 38px; padding: 0 14px; font-size: 13px; font-weight: 700; border-radius: 10px; border-color: var(--p-r-ln); }
+  .fn-po-actions .fn-po-btn:disabled { opacity: .6; cursor: not-allowed; }
+  .fn-po-actions [data-po-approve] { min-height: 38px; padding: 0 16px; font-size: 13px; font-weight: 700; border-radius: 10px; }
+  .fn-due-row { padding: 12px 0; border-top: 1px solid var(--f-row); } .fn-due-row:first-child { border-top: 0; }
+  .fn-due-acct { font-size: 14px; font-weight: 700; color: var(--f-fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .fn-due-amt { font-weight: 700; } .fn-due-row [data-raise] { min-height: 36px; padding: 0 14px; font-size: 13px; font-weight: 700; border-radius: 10px; }
+  .fn-due-up { border-top: 1px solid var(--f-row); margin-top: 4px; padding-top: 10px; font-size: 12.5px; }
+  .fn-due-upcoming { color: var(--f-meta); padding: 8px 0; } .fn-due-upcoming .fn-due-acct, .fn-due-upcoming .fn-due-amt { color: var(--f-label); font-weight: 600; }
+  .fn-due-up .fn-link { min-height: 28px; }
+  @media (max-width: 640px) { .fn-po-btns .fn-mini, .fn-due-row [data-raise], .fn-po-actions button, .fn-due-up .fn-link { min-height: 44px; } .fn-po-btns { width: 100%; } .fn-po-btns .fn-mini { flex: 1; } .fn-due-row [data-raise] { width: 100%; } }
+  @media print { .fn-po-row [data-po-review], .fn-po-review, .fn-due-row [data-raise], .fn-po-btns { display: none !important; } }
   @media (min-width: 640px) {
     .fn-table { border-collapse: collapse; font-size: 13.5px; } .fn-page .fn-table { min-width: 820px; }
     .fn-table thead tr { background: var(--f-band); } .fn-table th { padding: 10px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--f-meta); font-weight: 700; }

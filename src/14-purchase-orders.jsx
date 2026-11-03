@@ -102,7 +102,7 @@ function POForm({ account, user, existing, onClose, onSaved }) {
   );
 }
 
-function POReview({ po, user, schedule, onClose, onDone }) {
+function POReview({ po, user, schedule, onClose, onDone, inline }) {
   const fin = canFinance(user);
   const base = useMemo(() => buildSchedule(po), [po]);
   const [amounts, setAmounts] = useState(() => base.map(r => String(r.amount)));
@@ -122,6 +122,34 @@ function POReview({ po, user, schedule, onClose, onDone }) {
     invToast(msg, "success"); onDone && onDone(); onClose(); return true;
   };
   const mine = (schedule || []).filter(s => s.po_id === po.id), unraised = mine.filter(s => !s.invoice_id).length;
+  const box = useRef(null);
+  useEffect(() => { if (inline && box.current) { const f = box.current.querySelector("[data-po-amount]"); if (f) f.focus(); } }, []);
+  if (inline) return (
+    <div ref={box} id={`po-review-${po.id}`} data-po-inline-review role="region" aria-label={`Review PO ${po.po_number}`} className="fn-po-review"
+      onKeyDown={e => { if (e.key === "Escape") { e.stopPropagation(); onClose(); } }}>
+      {po.status === "submitted" && fin ? <>
+        <div className="fn-po-sub"><button type="button" data-po-view-file className="fn-link" onClick={() => viewPOFile(po)}>View PO file</button>
+          <span> · {po.years} yr · {PO_CYCLE_LABEL[po.billing_cycle]} from {po.billing_start}</span></div>
+        <div className="fn-po-periods"><table>
+          <thead><tr><th>Period</th><th>From</th><th>To</th><th className="fn-r">Amount</th></tr></thead>
+          <tbody>{base.map((r, i) => <tr key={r.seq}>
+            <td>{periodLabel(po, r)}</td><td>{r.period_start}</td><td>{r.period_end}</td>
+            <td className="fn-r"><input data-po-amount type="number" step="0.01" min="0" aria-label={`Amount ${periodLabel(po, r)}`} value={amounts[i]}
+              onChange={e => { const x = e.target.value; setAmounts(a => a.map((y, j) => j === i ? x : y)); setMismatchOk(false); }} className="fn-field fn-po-amt-in" /></td></tr>)}</tbody></table></div>
+        <div className="fn-po-total">Total <b data-po-amount-total>{poMoney(po.currency, total / 100)}</b> of {poMoney(po.currency, po.po_value)}</div>
+        {badDp && <div data-po-amount-error className="fn-po-err">Amounts can have at most 2 decimal places.</div>}
+        {mismatch && !badDp && <label data-po-mismatch className="fn-po-mismatch">
+          The amounts do not add up to the PO value ({poMoney(po.currency, (total - poCents(po.po_value)) / 100)} difference).
+          <span><input type="checkbox" data-po-mismatch-ok checked={mismatchOk} onChange={e => setMismatchOk(e.target.checked)} /> Approve anyway</span></label>}
+        <label className="fn-flabel fn-po-reason">Reason (needed to reject)
+          <textarea data-po-reject-reason rows={2} value={reason} onChange={e => setReason(e.target.value)} placeholder="e.g. wrong billing entity" className="fn-field fn-po-reason-in" /></label>
+        <div className="fn-po-actions">
+          <button type="button" data-po-reject className="fn-mini fn-mini-danger fn-po-btn" disabled={busy || !reason.trim()} onClick={() => act("reject_po", { p_id: po.id, p_reason: reason.trim() }, `PO ${po.po_number} rejected`)}>Reject</button>
+          <Btn kind="primary" data-po-approve disabled={busy || !valid || (mismatch && !mismatchOk)}
+            onClick={() => act("approve_po", { p_id: po.id, p_amounts: edited ? amounts.map(a => Number(String(a).trim())) : null, p_confirm_mismatch: mismatch && mismatchOk }, `PO ${po.po_number} approved`)}>Approve</Btn>
+        </div></> : <div className="fn-po-sub">{poStatusLabel(po)}</div>}
+    </div>
+  );
   return (
     <Modal label={`Review PO ${po.po_number}`} onClose={onClose}>
       <h3 className="mb-1 text-sm font-bold text-slate-800">PO {po.po_number} — {po.account_name}</h3>
@@ -217,9 +245,25 @@ function AccountPurchaseOrders({ account, user }) {
 function POQueue({ user, openAccount, onCount }) {
   const { pos, schedule, reload, error } = usePurchaseOrders({ status: "submitted" });
   useEffect(() => { onCount && onCount(pos.length); }, [pos.length]);
-  const [review, setReview] = useState(null);
-  return <div data-po-queue>
-    <POTable pos={pos} schedule={schedule} user={user} error={error} showAccount openAccount={openAccount} onReview={setReview} emptyText="No purchase orders awaiting approval." compact />
-    {review && <POReview po={review} user={user} schedule={schedule} onClose={() => setReview(null)} onDone={reload} />}
-  </div>;
+  const [openId, setOpenId] = useState(null);
+  const fin = canFinance(user);
+  const close = po => { setOpenId(null); const b = document.querySelector(`[data-po-queue] [data-po-row="${po.po_number}"] [data-po-review]`); if (b) b.focus(); };
+  if (error) return <div className="p-4 text-sm text-rose-600" data-po-load-error>Could not load purchase orders: {error}</div>;
+  if (!pos.length) return <div className="p-4 text-sm text-slate-500" data-po-empty>No purchase orders awaiting approval.</div>;
+  return <div data-po-queue className="fn-po-list">{pos.map(po => {
+    const open = openId === po.id;
+    return <div key={po.id} data-po-row={po.po_number} className="fn-po-row" data-open={open ? "true" : undefined}>
+      <div className="fn-po-line">
+        <div className="fn-po-main"><button type="button" className="fn-acct fn-po-acct" title={po.account_name} onClick={() => openAccount(po.account_id)}>{po.account_name}</button>
+          <div className="fn-po-meta">PO {po.po_number} · {po.years} yr · {PO_CYCLE_LABEL[po.billing_cycle]}</div>
+          <span className="sr-only"><span data-po-status data-sev={PO_PILL[po.status]}>{poStatusLabel(po)}</span><span data-po-invoiced></span></span></div>
+        <span className="fn-po-amt">{po.currency} {Number(po.po_value).toLocaleString("en-US", { minimumFractionDigits: 2 })}</span>
+        <div className="fn-po-btns">
+          <button type="button" className="fn-mini" data-po-file-link onClick={() => viewPOFile(po)}>File</button>
+          {fin && <button type="button" className="fn-mini" data-po-review aria-expanded={open ? "true" : "false"} aria-controls={`po-review-${po.id}`}
+            onClick={() => open ? close(po) : setOpenId(po.id)}>{open ? "Close" : "Review"}</button>}
+        </div>
+      </div>
+      {open && <POReview inline po={po} user={user} schedule={schedule} onClose={() => close(po)} onDone={reload} />}
+    </div>; })}</div>;
 }

@@ -11,23 +11,22 @@ function DueToRaise({ account, user, entities, onSent, onCount }) {
     .sort((a, b) => String(a.item.period_start).localeCompare(String(b.item.period_start)));
   useEffect(() => { onCount && onCount(due.length); }, [due.length]);
   if (error) return <div className="p-4 text-sm text-rose-600" data-due-error>Could not load purchase orders: {error}</div>;
-  const money = (po, item) => <><span className="mr-1 text-xs text-slate-400">{po.currency}</span>{Number(item.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}</>;
+  const money = (po, item) => `${po.currency} ${Number(item.amount).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
   return <div data-due-list>
     {due.length === 0 && <div className="p-4 text-sm text-slate-500" data-due-empty>Nothing to invoice right now.</div>}
-    {due.map(({ po, item }) => <div key={item.id} data-due-item={item.id} className="flex items-center gap-3 border-t border-slate-100 px-4 py-2.5 text-sm first:border-t-0">
-      <div className="min-w-0 flex-1"><div className="truncate font-medium text-slate-800">{po.account_name}</div>
-        <div className="text-xs text-slate-500">PO {po.po_number} · {periodLabel(po, item)} · {fmtDate(item.period_start)} – {fmtDate(item.period_end)}</div></div>
-      <div className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-3">
-        <span className="whitespace-nowrap tabular-nums">{money(po, item)}</span>
-        {canFinance(user) && <Btn kind="primary" data-raise disabled={!account(po.account_id)} onClick={() => setRaising({ po, item })}>Raise invoice</Btn>}</div>
+    {due.map(({ po, item }) => <div key={item.id} data-due-item={item.id} className="fn-due-row">
+      <div className="fn-due-main"><div className="fn-due-acct" title={po.account_name}>{po.account_name}</div>
+        <div className="fn-po-meta">PO {po.po_number} · {periodLabel(po, item)} · {fmtDate(item.period_start)} – {fmtDate(item.period_end)}</div></div>
+      <span className="fn-due-amt">{money(po, item)}</span>
+      {canFinance(user) && <Btn kind="primary" data-raise className="fn-due-btn" disabled={!account(po.account_id)} onClick={() => setRaising({ po, item })}>Raise invoice</Btn>}
     </div>)}
-    {upcoming.length > 0 && <div className="border-t border-slate-100 px-4 py-2">
-      <button data-upcoming-toggle className="text-xs text-indigo-600 hover:underline" onClick={() => setShowUpcoming(v => !v)}>
+    {upcoming.length > 0 && <div className="fn-due-up">
+      <button type="button" data-upcoming-toggle className="fn-link" aria-expanded={showUpcoming ? "true" : "false"} onClick={() => setShowUpcoming(v => !v)}>
         {showUpcoming ? "Hide" : "Show"} upcoming ({upcoming.length})</button>
-      {showUpcoming && upcoming.map(({ po, item }) => <div key={item.id} data-upcoming-item={item.id} className="flex items-center gap-3 py-2 text-sm text-slate-400">
-        <div className="min-w-0 flex-1"><div className="truncate">{po.account_name}</div>
-          <div className="text-xs">PO {po.po_number} · {periodLabel(po, item)} · starts {fmtDate(item.period_start)}</div></div>
-        <span className="shrink-0 whitespace-nowrap tabular-nums">{money(po, item)}</span></div>)}
+      {showUpcoming && upcoming.map(({ po, item }) => <div key={item.id} data-upcoming-item={item.id} className="fn-due-row fn-due-upcoming">
+        <div className="fn-due-main"><div className="fn-due-acct" title={po.account_name}>{po.account_name}</div>
+          <div className="fn-po-meta">PO {po.po_number} · {periodLabel(po, item)} · starts {fmtDate(item.period_start)}</div></div>
+        <span className="fn-due-amt">{money(po, item)}</span></div>)}
     </div>}
     {raising && <InvoiceForm po={raising.po} item={raising.item} account={account(raising.po.account_id)} entities={entities} user={user}
       onClose={() => setRaising(null)} onSent={inv => { reload(); onSent(); if (inv) setRaising(null); }} />}
@@ -99,7 +98,7 @@ function FinancePage({ st, user, openAccount }) {
     </div>
     <FinanceSummary invoices={scoped} />
     <div className="fn-two">
-      <FinPanel title="POs awaiting approval" count={poCount} tone="amber"><div className="px-4 sm:px-2"><POQueue user={user} openAccount={openAccount} onCount={setPoCount} /></div></FinPanel>
+      <FinPanel title="POs awaiting approval" count={poCount} tone="amber"><POQueue user={user} openAccount={openAccount} onCount={setPoCount} /></FinPanel>
       <FinPanel title="Due to raise" count={dueCount} tone="indigo"><DueToRaise account={account} user={user} entities={entities} onSent={reload} onCount={setDueCount} /></FinPanel>
     </div>
     <FinPanel title="Invoices" count={rows.length}>
