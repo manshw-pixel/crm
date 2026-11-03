@@ -157,3 +157,14 @@ for (const theme of ["light", "dark"]) test(`stage7 finance: text contrast >= 4.
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
   } finally { await browser.close(); }
 });
+
+for (const w of [1280, 1440]) test(`stage7 finance: the four figures sit on one row or exactly 2x2, never 3+1 (${w}px)`, async () => {
+  const { page, browser } = await open({ w });
+  try {
+    await settled(page);
+    const rows = await page.$$eval("[data-fin-summary-card]", cs => cs.map(c => ["paid", "pending", "overdue", "waived"].map(k => c.querySelector(`[data-fin-summary-${c.dataset.finSummaryCard}-${k}]`).offsetTop)));
+    assert(rows.length === 2, "two currency cards");
+    for (const tops of rows) { const n = new Set(tops).size; const per = tops.filter(t => t === tops[0]).length;
+      assert((n === 1) || (n === 2 && per === 2 && tops[0] === tops[1] && tops[2] === tops[3]), `figures wrap badly at ${w}: ${tops}`); }
+  } finally { await browser.close(); }
+});
