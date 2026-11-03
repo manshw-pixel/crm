@@ -71,7 +71,7 @@ test("sales .xlsx in the folder imports like a CSV", async () => {
     assert(goLive && goLive[0] === "2026-11-15", "go-live date kept its calendar day: " + JSON.stringify(s.projects[0]));
     const last = s.log[s.log.length - 1];
     assert(last.file === "sales.xlsx" && /projects queued 1/.test(last.msg), "log: " + JSON.stringify(last));
-    assert(/✓/.test(await fileRow(page, "sales.xlsx")), "file row: " + await fileRow(page, "sales.xlsx"));
+    assert(/Imported/.test(await fileRow(page, "sales.xlsx")), "file row: " + await fileRow(page, "sales.xlsx"));
     const n = s.log.length;
     await syncNow(page, "sales");
     s = await state(page);

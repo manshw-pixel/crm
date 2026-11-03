@@ -42,11 +42,11 @@ window.setInterval = (fn, ms, ...a) => { if (ms === 5 * 60 * 1000) window.__auto
 
 const openCard = async page => {
   await page.click('button[title="Settings"]', { timeout: 15000 });
-  await page.waitForFunction(() => [...document.querySelectorAll("h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelectorAll("h2, h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
   await page.waitForFunction(() => window.__autoScans.length > 0, null, { timeout: 10000 }); // folder restored, timer armed
 };
 const cardText = page => page.evaluate(() =>
-  [...document.querySelectorAll("h3")].find(h => /shared drive/i.test(h.textContent)).closest(".nm").textContent);
+  [...document.querySelectorAll("h2, h3")].find(h => /shared drive/i.test(h.textContent)).closest("[data-integrations]").textContent);
 
 test("drive sync: auto-scan after reload never asks for permission, and flags the folder instead", async () => {
   const { page, browser } = await launch(seed);

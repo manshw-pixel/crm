@@ -32,7 +32,7 @@ async function run(csv, fn) {
   const { page, browser } = await launch(seed);
   try {
     await page.click('button[title="Settings"]', { timeout: 15000 });
-    await page.waitForFunction(() => [...document.querySelectorAll("h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
+    await page.waitForFunction(() => [...document.querySelectorAll("h2, h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
     await page.waitForSelector("[data-files='sales']", { timeout: 10000 });
     const sync = async (text, mtime) => {
       await page.evaluate(([t, m]) => { window.__csv = t; window.__mtime = m; }, [text, mtime]);

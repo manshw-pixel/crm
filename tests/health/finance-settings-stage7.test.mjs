@@ -278,3 +278,130 @@ test("stage7 due: rows keep hooks, Raise invoice is primary, amount is CUR 1,234
     assert(await t.getAttribute("aria-expanded") === "true" && await page.locator("[data-upcoming-item]").count() === 1, "expanded");
   } finally { await browser.close(); }
 });
+
+// ---- Task 3: Settings long page, sticky index, Integrations + Activity ----
+import { gotoSettings, seedAccount } from "./harness.mjs";
+const SACCT = seedAccount({ id: "b1", name: "Billco", accountNo: "ACC-1" });
+const INTEG = { processed: { "a.csv|1000": "2026-10-28" }, log: [
+  { t: "2026-10-27T10:00:00.000Z", folder: "sales", file: "a.csv", msg: "all good", err: false },
+  { t: "2026-10-28T10:00:00.000Z", folder: "finance", file: "b.csv", msg: "boom", err: true }] };
+const STABLES = { accounts: [{ id: "b1", data: SACCT }], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [{ id: "1", data: { integrations: INTEG } }] };
+// Feed stub (pattern from integrations-ui.test.mjs): sales is granted with 3 files (imported / new / unreadable); finance has lapsed access.
+const FEED_SEED = `
+const mk = (name, perm, files) => ({ kind: "directory", name, async queryPermission() { return perm; }, async requestPermission() { return "granted"; },
+  async *entries() { for (const f of files) yield [f.name, { kind: "file", getFile: async () => { if (f.bad) throw new Error("offline"); return new File(["x"], f.name, { lastModified: 1000 }); } }]; } });
+window.__sales = mk("Sales Sync", "granted", [{ name: "a.csv" }, { name: "b.csv" }, { name: "c.csv", bad: true }]);
+window.__fin = mk("Finance Sync", "prompt", []);
+(() => {
+  const store = new Map([["sales", window.__sales], ["finance", window.__fin]]);
+  const later = f => setTimeout(f, 0);
+  const db = { createObjectStore() {}, transaction() { const tx = { objectStore: () => ({
+    put(v, k) { store.set(k, v); later(() => tx.oncomplete && tx.oncomplete()); }, delete(k) { store.delete(k); later(() => tx.oncomplete && tx.oncomplete()); },
+    get(k) { const rq = {}; later(() => { rq.result = store.get(k); rq.onsuccess && rq.onsuccess(); }); return rq; } }) }; return tx; } };
+  Object.defineProperty(window, "indexedDB", { value: { open() { const r = {}; later(() => { r.result = db; r.onsuccess && r.onsuccess(); }); return r; } } });
+  window.showDirectoryPicker = async () => window.__sales;
+})();`;
+async function openSettings({ theme = "light", w = 1440, h = 900 } = {}) {
+  const r = await launchFinance({ user: { role: "admin" }, tables: STABLES, seed: `try { localStorage.setItem("onevio.theme", "${theme}"); } catch (e) {}\n${FEED_SEED}` });
+  await r.page.setViewportSize({ width: w, height: h });
+  await gotoSettings(r.page);
+  await r.page.waitForSelector("[data-feed=sales] [data-file]", { timeout: 10000 });
+  return r;
+}
+const idxItems = page => page.$$eval("[data-settings-index] a", as => as.map(a => ({ label: a.querySelector(".st-index-label").textContent.trim(), tag: a.querySelector(".st-tag")?.textContent.trim() || "", href: a.getAttribute("href") })));
+const currents = page => page.$$eval("[data-settings-index] a[aria-current=true]", as => as.map(a => a.querySelector(".st-index-label").textContent.trim()));
+const curIs = (page, label) => page.waitForFunction(l => { const c = document.querySelectorAll("[data-settings-index] a[aria-current=true]"); return c.length === 1 && c[0].querySelector(".st-index-label").textContent === l; }, label, { timeout: 8000 });
+
+test("stage7 settings: index lists 12 entries in order, Admin tags, targets exist, sticky at 1440", async () => {
+  const { page, browser } = await openSettings();
+  try {
+    const items = await idxItems(page);
+    assert(items.map(i => i.label).join() === "Appearance,Scoring,Currency,Integrations,Renewal playbook,Health playbook,Account fields,Users,Implementation,Billing,Error log,Data", items.map(i => i.label).join());
+    assert(items.filter(i => i.tag).map(i => i.label).join() === "Users,Implementation,Billing,Error log" && items.every(i => !i.tag || i.tag === "Admin"), "Admin tags");
+    for (const i of items) assert(await page.locator(i.href).count() === 1, "target missing " + i.href);
+    const nav = page.locator('nav[data-settings-index][aria-label="Settings sections"]');
+    assert(await nav.evaluate(e => getComputedStyle(e).position) === "sticky", "index is sticky");
+    const w = await nav.evaluate(e => e.getBoundingClientRect().width);
+    assert(w >= 210 && w <= 240, "index width " + w);
+    // Settings renders for admins only in the app shell, so the non-admin (9-entry) index cannot be reached through the UI;
+    // the Implementation / Billing / Error log entries sit behind the same admin test as their sections.
+  } finally { await browser.close(); }
+});
+
+test("stage7 settings: aria-current follows the scroll in both directions, exactly one current", async () => {
+  const { page, browser } = await openSettings();
+  try {
+    assert((await currents(page)).join() === "Appearance", "first on load: " + await currents(page));
+    await page.evaluate(() => document.getElementById("set-billing").scrollIntoView());
+    await curIs(page, "Billing");
+    await page.evaluate(() => document.getElementById("set-integrations").scrollIntoView());
+    await curIs(page, "Integrations");
+    await page.evaluate(() => { window.scrollTo(0, 0); document.querySelectorAll("*").forEach(e => { if (e.scrollTop) e.scrollTop = 0; }); });
+    await curIs(page, "Appearance");
+    await page.click('[data-settings-index] a[href="#set-users"]');
+    await curIs(page, "Users");
+  } finally { await browser.close(); }
+});
+
+test("stage7 settings: one content column - every section shares the same left edge", async () => {
+  const { page, browser } = await openSettings();
+  try {
+    const lefts = await page.$$eval("[id^='set-']", els => els.map(e => e.offsetLeft + ":" + Math.round(e.getBoundingClientRect().left)));
+    assert(lefts.length === 12 && new Set(lefts).size === 1, "lefts " + lefts);
+    const idx = await page.$eval("[data-settings-index]", e => e.getBoundingClientRect().right);
+    assert(await page.$eval("#set-appearance", e => e.getBoundingClientRect().left) > idx, "content sits right of the index");
+  } finally { await browser.close(); }
+});
+
+test("stage7 settings: integrations intro, two feeds side by side, pills, file tags, Sync now", async () => {
+  const { page, browser } = await openSettings();
+  try {
+    assert((await page.locator("#set-integrations").innerText()).includes("Integrations — shared drive"), "intro text");
+    assert(await page.locator("#set-integrations h2").first().innerText() === "Integrations — shared drive", "intro is an h2");
+    const tops = await page.$$eval("[data-feed]", f => f.map(x => x.offsetTop));
+    assert(tops.length === 2 && tops[0] === tops[1], "feeds side by side " + tops);
+    const pills = await page.$$eval("[data-feed] [data-status]", s => s.map(x => ({ cls: x.classList.contains("ad-pill"), sev: x.dataset.sev, t: x.textContent.trim() })));
+    assert(pills[0].cls && pills[0].sev === "green" && pills[0].t === "Connected" && pills[1].sev === "amber" && pills[1].t === "Needs access", JSON.stringify(pills));
+    assert(await page.locator("[data-feed] [data-feed-tile][aria-hidden=true]").count() === 2, "letter tiles");
+    const tags = await page.$$eval("[data-feed=sales] [data-file]", f => f.map(x => [x.dataset.file, x.querySelector("[data-file-tag]")?.textContent.trim(), x.querySelector("[data-file-tag]")?.dataset.sev]));
+    assert(JSON.stringify(tags) === JSON.stringify([["a.csv", "Imported", "green"], ["b.csv", "Next sync", "amber"], ["c.csv", "Error", "red"]]), JSON.stringify(tags));
+    for (const f of ["sales", "finance"]) assert(await page.locator(`[data-feed=${f}] >> button:has-text("Sync now")`).count() === 1, "Sync now in " + f);
+    assert(await page.locator("[data-feed=finance] [data-grant] button").count() === 1 && await page.locator('[data-feed=sales] button:has-text("Disconnect")').count() === 1, "grant + disconnect kept");
+  } finally { await browser.close(); }
+});
+
+test("stage7 settings: activity filter group, aria-pressed follows clicks, Errors shows only error rows", async () => {
+  const { page, browser } = await openSettings();
+  try {
+    const g = page.locator('[role=group][aria-label="Filter activity"]');
+    assert(await g.locator("[data-log-filter]").count() === 4, "four filters in the group");
+    const pressed = () => page.$$eval("[data-log-filter]", b => b.filter(x => x.getAttribute("aria-pressed") === "true").map(x => x.dataset.logFilter).join());
+    assert(await pressed() === "All", "All pressed first");
+    await page.click('[data-log-filter="Errors"]');
+    assert(await pressed() === "Errors", "Errors pressed");
+    const rows = await page.$$eval("[data-synclog] .max-h-48 > div", r => r.map(x => x.hasAttribute("data-log-err")));
+    assert(rows.length === 1 && rows[0], "only the error row: " + rows);
+    assert(await page.locator("[data-log-err] .st-log-msg").evaluate(e => getComputedStyle(e).color) !== await page.locator("[data-synclog] h3").evaluate(e => getComputedStyle(e).color), "error ink differs");
+  } finally { await browser.close(); }
+});
+
+for (const theme of ["light", "dark"]) test(`stage7 settings: text contrast >= 4.5:1 (${theme})`, async () => {
+  const { page, browser } = await openSettings({ theme });
+  try {
+    await page.addScriptTag({ content: PAGE_FNS });
+    const r = await page.evaluate(() => {
+      const { textOn } = window.__c, low = [], seen = {};
+      const sels = { link: "[data-settings-index] a:not([aria-current])", cur: "[data-settings-index] a[aria-current=true]", tag: ".st-tag", title: ".st-page .nm > div.mb-3 > h3", intro: ".st-intro h2", introp: ".st-intro p",
+        feedh: ".st-feed h3", meta: ".st-feed .st-meta", pill: "[data-status]", ftag: "[data-file-tag]", fname: ".st-file-name", logh: ".st-log-head h3", filt: ".st-filters button", logb: ".st-log-body b", logm: ".st-log-msg", logt: ".st-log-when",
+        dz: "[data-danger-zone] > div:first-child", dzp: "[data-danger-zone] p", dzb: "[data-danger-zone] button" };
+      for (const [k, sel] of Object.entries(sels)) {
+        const els = document.querySelectorAll(sel); seen[k] = els.length;
+        for (const e of els) { const c = textOn(e); if (c === null || c < 4.5) low.push(k + " " + (c === null ? "no bg" : c.toFixed(2)) + " " + e.textContent.trim().slice(0, 24)); }
+      }
+      return { low, seen, dark: document.documentElement.classList.contains("dark") };
+    });
+    assert(r.dark === (theme === "dark"), "theme applied");
+    assert(r.seen.link === 11 && r.seen.cur === 1 && r.seen.tag === 4 && r.seen.pill === 2 && r.seen.ftag >= 3 && r.seen.logm === 2 && r.seen.dzb === 2 && r.seen.title >= 5, "targets " + JSON.stringify(r.seen));
+    assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
+  } finally { await browser.close(); }
+});

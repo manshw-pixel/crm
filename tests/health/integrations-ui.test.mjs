@@ -103,7 +103,7 @@ test("integrations ui: fits a phone", async () => {
   await page.waitForTimeout(300);
   // The Settings page as a whole is already wider than a phone (every card, not just this one), so assert on
   // this section: it must not overflow its own box, and nothing in it may poke out past the card's right edge.
-  const r = await page.evaluate(() => { const sec = document.querySelector("#set-integrations"); const card = sec.firstElementChild;
+  const r = await page.evaluate(() => { const sec = document.querySelector("#set-integrations"); const card = sec.querySelector("[data-integrations]");
     const edge = card.getBoundingClientRect().right;
     return { over: sec.scrollWidth - sec.clientWidth, out: [...sec.querySelectorAll("*")].filter(e => e.getBoundingClientRect().right > edge + 1).length }; });
   assert(r.over <= 1 && r.out === 0, "integrations section overflows: " + JSON.stringify(r));

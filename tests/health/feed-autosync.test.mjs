@@ -44,10 +44,10 @@ const fireAndCheck = async page => {
 test("feed auto-sync keeps running after leaving Settings", async () => {
   const { page, browser } = await launch(seed);
   await page.click('button[title="Settings"]', { timeout: 15000 });
-  await page.waitForFunction(() => [...document.querySelectorAll("h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelectorAll("h2, h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
   await page.waitForFunction(() => window.__autoScans.length > 0, null, { timeout: 10000 });
   await page.click('button[title="Accounts"]');
-  await page.waitForFunction(() => ![...document.querySelectorAll("h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
+  await page.waitForFunction(() => ![...document.querySelectorAll("h2, h3")].some(h => /shared drive/i.test(h.textContent)), null, { timeout: 10000 });
   await fireAndCheck(page);
   assert(await page.evaluate(() => window.__autoCleared) === 0, "leaving Settings must not clear the timer");
   await browser.close();
