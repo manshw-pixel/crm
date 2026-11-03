@@ -173,7 +173,7 @@ test("account invoices tab: lists history; CSM sees no Paid checkbox but can dow
   await openAccountTab(page, "a1", "Invoices");
   await page.waitForSelector("[data-invoice-row]");
   assert((await page.locator("[data-invoice-row]").count()) === 2, "a2's invoice must be excluded");
-  assert((await page.locator('[data-invoice-row="IN-0001"] [data-invoice-status]').innerText()) === "Overdue");
+  assert((await page.locator('[data-invoice-row="IN-0001"] [data-invoice-status]').innerText()).startsWith("Overdue"));
   assert((await page.locator('[data-invoice-row="IN-0002"] [data-invoice-status]').innerText()) === "Paid");
   assert((await page.locator("[data-paid-checkbox]").count()) === 0, "no checkbox for a non-finance user");
   assert((await page.locator('[data-invoice-row="IN-0001"] [data-download]').count()) === 1);

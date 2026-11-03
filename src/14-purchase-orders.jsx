@@ -3,8 +3,7 @@
 const poCents = n => { const x = Number(n); const c = Math.round(Number(x + "e2")); return Number.isFinite(c) ? c : Math.round((x || 0) * 100); };
 const PO_CYCLES = ["quarterly", "half_yearly", "annual"];
 const PO_CYCLE_LABEL = { quarterly: "Quarterly", half_yearly: "Half-yearly", annual: "Annual" };
-const PO_PILL = { submitted: "bg-amber-50 text-amber-700", approved: "bg-emerald-50 text-emerald-700",
-  rejected: "bg-rose-50 text-rose-700", cancelled: "bg-slate-100 text-slate-600" };
+const PO_PILL = { submitted: "amber", approved: "green", rejected: "red", cancelled: "grey" };
 const poStatusLabel = po => po.status === "submitted" ? "Awaiting approval" : po.status === "approved" ? "Approved"
   : po.status === "rejected" ? `Rejected — ${po.reject_reason || "no reason given"}` : "Cancelled";
 const poMoney = (cur, n) => `${cur} ${Number(n).toLocaleString(undefined, { minimumFractionDigits: 2 })}`;
@@ -172,7 +171,7 @@ function PORow({ po, schedule, user, account, showAccount, openAccount, onEdit, 
     {canEdit && onEdit && <MiniBtn data-po-edit onClick={() => onEdit(po)}>Edit</MiniBtn>}
     {fin && (po.status === "submitted" || po.status === "approved") && <MiniBtn data-po-review onClick={() => onReview(po)}>{po.status === "submitted" ? "Review" : "Manage"}</MiniBtn>}
   </div>;
-  const status = <span data-po-status className={`rounded px-1.5 py-0.5 text-xs font-semibold ${PO_PILL[po.status]}`}>{poStatusLabel(po)}</span>;
+  const status = <span data-po-status data-sev={PO_PILL[po.status]} className="ad-pill ad-pill-sm fn-po-pill"><span className="ad-dot" aria-hidden="true" />{poStatusLabel(po)}</span>;
   const invoiced = po.status === "approved" ? `${raised} of ${mine.length} raised` : "";
   if (compact) return <tr data-po-row={po.po_number} className="grid grid-cols-[1fr_auto] items-center gap-x-3 gap-y-1 border-t border-slate-100 py-2.5 first:border-t-0 sm:table-row sm:py-0">
     <td className={`${IT_CELL} col-span-2 min-w-0`}><div className="truncate font-medium">{showAccount ? acct : po.po_number}</div>
