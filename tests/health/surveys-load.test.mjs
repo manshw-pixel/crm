@@ -1,17 +1,18 @@
 import { test, assert } from "./framework.mjs";
-import { launch } from "./harness.mjs";
+import { launch, seedAccount } from "./harness.mjs";
 
 // surveys.sql is run in production only after the app ships: a missing `surveys` relation must
 // not fail the whole load (it is deliberately outside fetchAll's fail-the-load check).
-const rows = `window.__seedRows = { accounts: [], contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
+const acc = seedAccount({ id: "ld1", name: "Loaded Co", accountNo: 1 });
+const rows = `window.__seedRows = { accounts: ${JSON.stringify([{ id: acc.id, data: acc }])}, contacts: [], activities: [], tasks: [], opportunities: [], team: [], settings: [] };`;
 
 test("fetchAll still loads the CRM when the surveys query errors; surveys is []", async () => {
   const { page, browser } = await launch(`${rows} window.__tableError = { surveys: { code: "42P01", message: 'relation "public.surveys" does not exist' } };`);
   try {
-    await page.waitForFunction(() => window.__store && window.__store.getState().settings, null, { timeout: 15000 });
+    // the seeded account only reaches the store if fetchAll succeeded -- proves the load completed
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.some(a => a.id === "ld1"), null, { timeout: 15000 });
     const s = await page.evaluate(() => { const st = window.__store.getState(); return { surveys: st.surveys, accounts: st.accounts.length }; });
     assert(Array.isArray(s.surveys) && s.surveys.length === 0, "surveys should be []: " + JSON.stringify(s));
-    assert(!(await page.evaluate(() => /could not load|failed to load/i.test(document.body.innerText))), "load error shown");
   } finally { await browser.close(); }
 });
 

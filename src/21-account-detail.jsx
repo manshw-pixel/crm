@@ -113,7 +113,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
-  useEffect(() => { setTab("overview"); setHandoverOpen(false); }, [id]);
+  useEffect(() => { setTab("overview"); setHandoverOpen(false); setPicked(new Set()); setSurveyOnly(false); }, [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [importContacts, setImportContacts] = useState(false);
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
@@ -420,9 +420,10 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             <button type="button" data-survey-filter aria-pressed={surveyOnly} className="ad-toggle ad-toggle-chip" onClick={() => setSurveyOnly(v => !v)}>Survey recipients only</button>
             {!ro && <button type="button" data-open-contacts-import className="ad-toggle !ml-2" onClick={() => setImportContacts(true)}>Import contacts</button>}
           </>}>
-            {!ro && picked.size > 0 && (() => {
+            {!ro && (() => {
+              const chosen = contacts.filter(c => (!surveyOnly || c.surveyRecipient) && picked.has(c.id)); // only rows still visible
+              if (chosen.length === 0) return null;
               const run = value => {
-                const chosen = contacts.filter(c => picked.has(c.id));
                 const ok = chosen.filter(c => contactSurveyState(c).canToggle), skipped = chosen.length - ok.length;
                 if (ok.length) dispatch({ type: "SET_SURVEY_RECIPIENTS", ids: ok.map(c => c.id), value });
                 toast({ text: `${value ? "Flagged" : "Unflagged"} ${ok.length} contact${ok.length === 1 ? "" : "s"} for surveys.${skipped ? ` Skipped ${skipped} (opted out or no email).` : ""}`, tone: skipped ? "info" : "success" });
@@ -430,9 +431,9 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
               };
               return (
                 <div data-survey-bulk className="ad-row !gap-2 flex-wrap">
-                  <span aria-live="polite" className="ad-t-sm font-semibold">{picked.size} selected</span>
-                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(true)}>Flag for surveys ({picked.size})</button>
-                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(false)}>Unflag ({picked.size})</button>
+                  <span aria-live="polite" className="ad-t-sm font-semibold">{chosen.length} selected</span>
+                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(true)}>Flag for surveys ({chosen.length})</button>
+                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(false)}>Unflag ({chosen.length})</button>
                   <button type="button" className="ad-toggle" onClick={() => setPicked(new Set())}>Clear</button>
                 </div>); })()}
             {surveyOnly && contacts.filter(c => c.surveyRecipient).length === 0 && <div className="ad-empty">No contacts are flagged for surveys.</div>}
