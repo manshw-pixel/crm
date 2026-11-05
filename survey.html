@@ -189,17 +189,18 @@ button.ghost{background:var(--accent-soft);color:var(--accent)}
     message("thanks", "Thank you — your answers were sent.", extra);
   }
   function renderUnsubscribe() {
-    var org = survey.orgName;
+    // No get_survey here: unsubscribe must work for old (expired) links too, so this screen
+    // names no org and relies only on unsubscribe_survey's answer.
     var err = el("p", { class: "formerr", role: "alert", hidden: true });
     var btn = el("button", { type: "button", text: "Unsubscribe" });
     btn.addEventListener("click", function () {
       btn.disabled = true;
       rpc("unsubscribe_survey", { p_token: token }).then(function (res) {
-        if (res && res.ok) message("unsubscribed", "You won't receive more surveys from " + org + ".");
-        else throw new Error("rejected");
+        if (res && res.ok) message("unsubscribed", "You won't receive more surveys.");
+        else invalid();
       }).catch(function () { btn.disabled = false; err.textContent = "That didn't work. Please try again."; err.hidden = false; });
     });
-    show("unsubscribe", [el("h1", { text: "Unsubscribe from " + org + " surveys?" }), err, el("div", { class: "actions" }, [btn])]);
+    show("unsubscribe", [el("h1", { text: "Unsubscribe from these surveys?" }), err, el("div", { class: "actions" }, [btn])]);
   }
   function prefill() {
     var a = {};
@@ -215,12 +216,12 @@ button.ghost{background:var(--accent-soft);color:var(--accent)}
   function invalid() { message("invalid", "This survey link is no longer valid."); }
 
   if (!token) return invalid();
+  if (params.get("u") === "1") return renderUnsubscribe();
   rpc("get_survey", { p_token: token }).then(function (s) {
     if (!s || !Array.isArray(s.questions)) return invalid();
     survey = s;
     document.getElementById("org").textContent = s.orgName || "";
     if (s.orgName) document.title = "Feedback for " + s.orgName;
-    if (params.get("u") === "1") return renderUnsubscribe();
     if (s.submittedAt && s.editable === false) return message("locked", "This survey can no longer be changed.");
     var a = s.submittedAt ? (s.answers || {}) : prefill();
     renderForm(a);

@@ -249,9 +249,12 @@ console.log(`dist/crm.html  ${kb(Buffer.byteLength(out))}  (app ${kb(appJs.lengt
   const sbKey = (cfg.match(/const SUPABASE_ANON_KEY = "([^"]+)"/) || [])[1];
   if (!sbKey) throw new Error("build: SUPABASE_ANON_KEY not found in src/00-core-config.jsx (needed for survey.html)");
   const lib = read("src/lib/surveys.js");
-  if (/^\s*importb/m.test(lib)) throw new Error("build: src/lib/surveys.js must have no imports -- it is inlined into survey.html");
+  if (/^\s*import\b/m.test(lib)) throw new Error("build: src/lib/surveys.js must have no imports -- it is inlined into survey.html");
   const libInline = lib.replace(/^export (?=(?:const|function) )/gm, "");
-  if (/^exportb/m.test(libInline)) throw new Error("build: src/lib/surveys.js has an export form survey.html cannot inline");
+  if (/^\s*export\b/m.test(libInline)) throw new Error("build: src/lib/surveys.js has an export form survey.html cannot inline");
+  // Compile check: the inlined lib runs as a classic script, so a syntax it cannot carry must stop the build.
+  try { new vm.Script(libInline, { filename: "surveys.js (inlined)" }); }
+  catch (e) { throw new Error("build: src/lib/surveys.js does not compile as a classic script: " + e.message); }
   let sv = read("survey.html");
   const swap = (lit, val) => {
     if (!sv.includes(lit)) throw new Error(`build: ${lit} not found in survey.html`);
@@ -270,6 +273,8 @@ console.log(`dist/crm.html  ${kb(Buffer.byteLength(out))}  (app ${kb(appJs.lengt
     `style-src ${h(styles[0][1])}`,
     `connect-src ${sbOrigin}`,
     "img-src data:",
+    "base-uri 'none'",
+    "form-action 'none'",
   ].join("; ");
   if (!/<meta charset="UTF-8" \/>/.test(sv)) throw new Error("build: survey.html <meta charset> not found");
   sv = sv.replace(/<meta charset="UTF-8" \/>/, m => `${m}\n<meta http-equiv="Content-Security-Policy" content="${svCsp}" />`);

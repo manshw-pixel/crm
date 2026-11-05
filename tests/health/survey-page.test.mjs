@@ -15,7 +15,11 @@ const QUESTIONS = [
 ];
 const SURVEY = { orgName: "Acme Corp", csmName: "Priya", firstName: "Sam", accountName: "Globex",
   intro: "Thanks for working with us — this takes under a minute.", questions: QUESTIONS, editable: true };
+const XSS = "<img src=x onerror=window.__x=1>";
 const FIXTURES = {
+  xss: { ...SURVEY, orgName: XSS, csmName: XSS, questions: [
+    { id: "nps", type: "nps", text: "Q " + XSS, required: true },
+    { id: "pick", type: "single", text: "Pick", options: [XSS], required: false }] },
   fresh: SURVEY,
   done: { ...SURVEY, answers: { nps: 7, reason: "Good support" }, submittedAt: "2026-11-01T10:00:00Z", editable: true },
   locked: { ...SURVEY, answers: { nps: 7 }, submittedAt: "2026-10-01T10:00:00Z", editable: false },
@@ -39,7 +43,7 @@ async function open(query, fn, { width = 1024 } = {}) {
       calls.push({ fn, body, headers: req.headers() });
       let res = null;
       if (fn === "get_survey") res = FIXTURES[body.p_token] || null;
-      else res = { ok: !!FIXTURES[body.p_token] };
+      else res = { ok: !!FIXTURES[body.p_token] || (fn === "unsubscribe_survey" && body.p_token === "expired") };
       return r.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(res) });
     });
     await page.goto(BASE + query);
@@ -123,11 +127,39 @@ test("survey page: not editable message", async () => {
 
 test("survey page: unsubscribe flow", async () => {
   await open("?t=fresh&u=1", async (page, { calls }) => {
-    assert((await text(page)).includes("Unsubscribe from Acme Corp surveys?"), "prompt");
-    assert(!calls.some(c => c.fn === "unsubscribe_survey"), "not before click");
+    assert((await text(page)).includes("Unsubscribe from these surveys?"), "prompt");
+    assert(!calls.length, "no rpc before click: " + calls.map(c => c.fn));
     await page.click("button:has-text('Unsubscribe')");
     await page.waitForSelector('[data-state="unsubscribed"]');
-    assert((await text(page)).includes("You won't receive more surveys from Acme Corp."), "done msg");
+    assert((await text(page)).includes("You won't receive more surveys."), "done msg");
+    assert(!calls.some(c => c.fn === "get_survey"), "get_survey never called");
+  });
+});
+
+test("survey page: unsubscribe works for an expired token", async () => {
+  await open("?t=expired&u=1", async (page, { calls }) => {
+    await page.click("button:has-text('Unsubscribe')");
+    await page.waitForSelector('[data-state="unsubscribed"]');
+    assert(!calls.some(c => c.fn === "get_survey"), "get_survey never called");
+    assert(calls.some(c => c.fn === "unsubscribe_survey" && c.body.p_token === "expired"), "unsubscribe posted");
+  });
+});
+
+test("survey page: unsubscribe with unknown token says invalid", async () => {
+  await open("?t=nope&u=1", async page => {
+    await page.click("button:has-text('Unsubscribe')");
+    await page.waitForSelector('[data-state="invalid"]');
+    assert((await text(page)).includes("This survey link is no longer valid."), "invalid msg");
+  });
+});
+
+test("survey page: hostile text renders as literal text", async () => {
+  await open("?t=xss", async page => {
+    const t = await page.locator("body").innerText();
+    assert(t.includes(XSS), "literal text shown: " + t);
+    assert(await page.locator("main img, header img").count() === 0, "no img element");
+    await page.waitForTimeout(300);
+    assert(await page.evaluate(() => window.__x) === undefined, "onerror ran");
   });
 });
 
