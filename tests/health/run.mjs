@@ -78,6 +78,8 @@ import "./csv-import-safety.test.mjs";
 import "./reducer-actions.test.mjs";
 import "./arr-bridge.test.mjs";
 import "./accountno-backfill.test.mjs";
+import "./surveys-load.test.mjs";
+import "./surveys-contacts.test.mjs";
 import "./dark-mode.test.mjs";
 import "./account-limit.test.mjs";
 import "./licenses.test.mjs";

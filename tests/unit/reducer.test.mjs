@@ -73,6 +73,8 @@ const ACTIONS = {
   SET_SNAPSHOTS: { type: "SET_SNAPSHOTS", snapshots: [{ month: "2026-06" }] },
   SET_PLAYBOOK: { type: "SET_PLAYBOOK", playbook: [] },
   SET_SEGMENTS: { type: "SET_SEGMENTS", segments: [{ id: "g", name: "Big" }] },
+  SET_SURVEY_RECIPIENTS: { type: "SET_SURVEY_RECIPIENTS", ids: ["c1", "c2"], value: true },
+  SURVEYS_SENT: { type: "SURVEYS_SENT", items: [{ id: "sv1", accountId: "a1", contactId: "c1" }] },
   IMPORT_CONTACTS: { type: "IMPORT_CONTACTS", adds: [{ id: "c9", accountId: "a1", name: "New" }], patches: [{ id: "c1", patch: { surveyRecipient: true } }] },
   SET_CONTACT_IMPORTS: { type: "SET_CONTACT_IMPORTS", log: [{ at: TODAY, added: 1 }] },
   SET_CUSTOM_FIELDS: { type: "SET_CUSTOM_FIELDS", fields: [{ id: "cf_1", label: "Region", type: "text", archived: false }] },
@@ -300,6 +302,21 @@ test("IMPORT_CONTACTS adds and patches", () => {
   assert.deepEqual(next.contacts.map(c => c.id), ["c1", "c2", "c9"]);
   assert.equal(next.contacts.find(c => c.id === "c1").surveyRecipient, true);
   assert.deepEqual(ops.map(o => `${o.table}:${o.rowId}`).sort(), ["contacts:c1", "contacts:c9"]);
+});
+test("SET_SURVEY_RECIPIENTS persists only changed contacts", () => {
+  const st = base(); st.contacts[1] = { ...st.contacts[1], surveyRecipient: true };
+  const { next, ops } = run(ACTIONS.SET_SURVEY_RECIPIENTS, st);
+  assert.equal(next.contacts.find(c => c.id === "c1").surveyRecipient, true);
+  assert.equal(next.contacts.find(c => c.id === "c2").surveyRecipient, true);
+  assert.deepEqual(ops.map(o => `${o.table}:${o.rowId}`), ["contacts:c1"], "c2 was already flagged: no write");
+  const off = run({ type: "SET_SURVEY_RECIPIENTS", ids: ["c2", "zz"], value: false }, st);
+  assert.equal(off.next.contacts.find(c => c.id === "c2").surveyRecipient, false);
+  assert.deepEqual(off.ops.map(o => o.rowId), ["c2"]);
+});
+test("SURVEYS_SENT appends to surveys and writes nothing", () => {
+  const { next, ops } = run(ACTIONS.SURVEYS_SENT);
+  assert.deepEqual(next.surveys.map(s => s.id), ["sv1"]);
+  assert.deepEqual(ops, []);
 });
 test("IMPORT_CONTACTS ignores a patch for a missing id", () => {
   const { prev, next, ops } = run({ type: "IMPORT_CONTACTS", adds: [], patches: [{ id: "zz", patch: { name: "x" } }] });

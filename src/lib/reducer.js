@@ -76,6 +76,10 @@ export function persistOps(action, next, prev) {
       action.patches.forEach(({ id }) => { const c = next.contacts.find(x => x.id === id); if (c) up("contacts", c); });
       break;
     }
+    case "SET_SURVEY_RECIPIENTS": {
+      action.ids.forEach(id => { const c = next.contacts.find(x => x.id === id), p = prevOf("contacts", id); if (c && p && !!p.surveyRecipient !== !!c.surveyRecipient) up("contacts", c); });
+      break;
+    }
     case "EDIT_CONTACT": { const c = next.contacts.find(x => x.id === action.id); if (c) up("contacts", c); break; }
     case "DELETE_CONTACT": del("contacts", "id", action.id); break;
     case "ADD_OPP": up("opportunities", action.item); break;
@@ -261,6 +265,8 @@ export function reducer(state, action) {
       const patchOf = new Map(action.patches.map(p => [p.id, p.patch]));
       return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds] };
     }
+    case "SET_SURVEY_RECIPIENTS": { const ids = new Set(action.ids); return { ...state, contacts: state.contacts.map(c => ids.has(c.id) ? { ...c, surveyRecipient: !!action.value } : c) }; }
+    case "SURVEYS_SENT": return { ...state, surveys: [...(state.surveys || []), ...action.items] };
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
