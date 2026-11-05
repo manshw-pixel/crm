@@ -101,7 +101,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false); // a double click must never call send_survey twice
-  const blocked = r => r === "No email" || r === "Opted out" || /^Survey pending/.test(r);
+  const blocked = r => r === "No email" || r === "Opted out" || /^Survey pending/.test(r) || /^Surveyed /.test(r);
   const ordered = [...cand.ticked, ...cand.other.map(o => o.contact)];
   const first = ordered.find(c => ticked.has(c.id));
   const org = orgName || "Your company";
@@ -150,7 +150,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
           <span className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}</span>
           <span className="ad-xs block" style={{ overflowWrap: "anywhere" }}>{[c.role, c.email].filter(Boolean).join(" · ")}</span>
         </span>
-        {reason && reason !== "Not flagged for surveys" && <span data-send-reason className="ad-pill ad-pill-sm" data-sev="grey">{reason}</span>}
+        {reason && <span data-send-reason className="ad-pill ad-pill-sm" data-sev="grey">{reason}</span>}
       </label>);
   };
   return (
@@ -166,7 +166,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
         {cand.ticked.length === 0 && <div className="ad-empty">No flagged contacts can be sent to.</div>}
         {cand.ticked.map(c => row(c, null))}
         {cand.other.length > 0 && <>
-          <div className="ad-xs mt-2 mb-1 font-semibold">Not flagged for surveys</div>
+          <div className="ad-xs mt-2 mb-1 font-semibold">Other contacts</div>
           {cand.other.map(o => row(o.contact, o.reason))}
         </>}
       </fieldset>

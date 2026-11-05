@@ -197,5 +197,28 @@ test("surveys card: throttle reason shown", async () => {
     const t = await fay.innerText();
     assert(/Surveyed \d{1,2} \w{3} — wait until \d{1,2} \w{3}/.test(t), "throttle reason: " + t);
     assert(!(await fay.locator("input").isChecked()), "Fay not ticked by default");
+    assert(await fay.locator("input").isDisabled(), "throttled contact is greyed out (server would skip it)");
+    assert(/Other contacts/.test(await dlg.innerText()), "neutral heading");
+  } finally { await browser.close(); }
+});
+
+test("surveys card: template archived while the dialog is open is refused at Send", async () => {
+  const { page, browser } = await launch(seed("admin", tplSettings()) + `
+    window.__sendSurvey = a => ({ data: { sent: [], skipped: [] }, error: null });`);
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    const dlg = page.locator("[data-send-survey-dialog]");
+    await dlg.waitFor();
+    await dlg.locator("#sv-template").selectOption("t-onb");
+    await page.evaluate(() => {
+      const st = window.__store.getState();
+      window.__store.dispatch({ type: "SET_SURVEY_TEMPLATES", templates: st.settings.surveyTemplates.map(t => t.id === "t-onb" ? { ...t, archived: true } : t) });
+    });
+    await dlg.locator("[data-send-confirm]").click();
+    await page.waitForSelector("[data-send-error]");
+    assert((await page.locator("[data-send-error]").innerText()) === "This template was archived — pick another.", "archived message");
+    assert(await page.evaluate(() => window.__rpcCalls.filter(c => c.fn === "send_survey").length) === 0, "send_survey not called");
+    assert(await page.locator("[data-send-survey-dialog]").count() === 1, "dialog stays open");
   } finally { await browser.close(); }
 });
