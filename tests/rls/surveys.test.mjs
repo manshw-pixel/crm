@@ -355,6 +355,21 @@ test("surveys: throttle 0 disables", async () => {
   } finally { await clearSurveySettings(); }
 });
 
+test("surveys: non-integer throttleDays / dailyCap fall back to defaults", async () => {
+  await sql(`insert into settings (org_id, data) values ($1, jsonb_build_object('surveys', jsonb_build_object('throttleDays', 'abc', 'dailyCap', '7.5')))
+    on conflict (org_id) do update set data = settings.data || excluded.data`, [ORG_A]);
+  try {
+    await seedContact("sv-t7", C({ name: "Bad Setting", email: "t7@acme.invalid" }));
+    const a = await send(sessions.admin, "sv-a1", ["sv-t7"], T);
+    assert.ifError(a.error); assert.equal(a.data.sent.length, 1, "NPS send works with junk settings");
+    const b = await send(sessions.admin, "sv-a1", ["sv-t7"], STARTER["support-quality"]);
+    assert.ifError(b.error); assert.equal(b.data.sent.length, 1);
+    const c = await send(sessions.admin, "sv-a1", ["sv-t7"], STARTER["onboarding-review"]);
+    assert.ifError(c.error);
+    assert.match(c.data.skipped[0]?.reason || "", /^Surveyed /, "default 90-day throttle applies");
+  } finally { await clearSurveySettings(); }
+});
+
 test("surveys: rating/single/multi answers round-trip", async () => {
   await setThrottle(0);
   try {
