@@ -312,12 +312,12 @@ const idxItems = page => page.$$eval("[data-settings-index] a", as => as.map(a =
 const currents = page => page.$$eval("[data-settings-index] a[aria-current=true]", as => as.map(a => a.querySelector(".st-index-label").textContent.trim()));
 const curIs = (page, label) => page.waitForFunction(l => { const c = document.querySelectorAll("[data-settings-index] a[aria-current=true]"); return c.length === 1 && c[0].querySelector(".st-index-label").textContent === l; }, label, { timeout: 8000 });
 
-test("stage7 settings: index lists 12 entries in order, Admin tags, targets exist, sticky at 1440", async () => {
+test("stage7 settings: index lists 13 entries in order, Admin tags, targets exist, sticky at 1440", async () => {
   const { page, browser } = await openSettings();
   try {
     const items = await idxItems(page);
-    assert(items.map(i => i.label).join() === "Appearance,Scoring,Currency,Integrations,Renewal playbook,Health playbook,Account fields,Users,Implementation,Billing,Error log,Data", items.map(i => i.label).join());
-    assert(items.filter(i => i.tag).map(i => i.label).join() === "Users,Implementation,Billing,Error log" && items.every(i => !i.tag || i.tag === "Admin"), "Admin tags");
+    assert(items.map(i => i.label).join() === "Appearance,Scoring,Currency,Integrations,Surveys,Renewal playbook,Health playbook,Account fields,Users,Implementation,Billing,Error log,Data", items.map(i => i.label).join());
+    assert(items.filter(i => i.tag).map(i => i.label).join() === "Surveys,Users,Implementation,Billing,Error log" && items.every(i => !i.tag || i.tag === "Admin"), "Admin tags");
     for (const i of items) assert(await page.locator(i.href).count() === 1, "target missing " + i.href);
     const nav = page.locator('nav[data-settings-index][aria-label="Settings sections"]');
     assert(await nav.evaluate(e => getComputedStyle(e).position) === "sticky", "index is sticky");
@@ -351,7 +351,7 @@ test("stage7 settings: one content column - every section shares the same left e
   const { page, browser } = await openSettings();
   try {
     const lefts = await page.$$eval("[id^='set-']", els => els.map(e => e.offsetLeft + ":" + Math.round(e.getBoundingClientRect().left)));
-    assert(lefts.length === 12 && new Set(lefts).size === 1, "lefts " + lefts);
+    assert(lefts.length === 13 && new Set(lefts).size === 1, "lefts " + lefts);
     const idx = await page.$eval("[data-settings-index]", e => e.getBoundingClientRect().right);
     assert(await page.$eval("#set-appearance", e => e.getBoundingClientRect().left) > idx, "content sits right of the index");
   } finally { await browser.close(); }
@@ -405,7 +405,7 @@ for (const theme of ["light", "dark"]) test(`stage7 settings: text contrast >= 4
       return { low, seen, dark: document.documentElement.classList.contains("dark") };
     });
     assert(r.dark === (theme === "dark"), "theme applied");
-    assert(r.seen.link === 11 && r.seen.cur === 1 && r.seen.tag === 4 && r.seen.pill === 2 && r.seen.ftag >= 3 && r.seen.logm === 2 && r.seen.dzb === 2 && r.seen.title >= 5, "targets " + JSON.stringify(r.seen));
+    assert(r.seen.link === 12 && r.seen.cur === 1 && r.seen.tag === 6 && r.seen.pill === 2 && r.seen.ftag >= 3 && r.seen.logm === 2 && r.seen.dzb === 2 && r.seen.title >= 5, "targets " + JSON.stringify(r.seen));
     assert(r.low.length === 0, "low contrast: " + r.low.join(" | "));
   } finally { await browser.close(); }
 });

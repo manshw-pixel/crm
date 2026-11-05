@@ -55,9 +55,16 @@ test("contacts card: a long contact name keeps a readable width (survey pill no 
         await page.waitForSelector("[data-contact-row]");
       }
       const name = row(page, "Survey Contact 1").locator(".ad-t-sm:visible").first();
-      const w = (await name.boundingBox()).width;
       // Broken layout measured ~66px at 1440. Phone fonts differ between runners (98px on CI Linux, 122px here).
       const min = vp.width < 600 ? 80 : 110;
+      // Right after setViewportSize the row can still be mid-reflow (a transient ~57px at 390px on CI).
+      // Poll until the width has reached the floor, then re-measure; a genuinely squeezed name never gets there.
+      await page.waitForFunction(([txt, floor]) => {
+        const r = [...document.querySelectorAll("[data-contact-row]")].find(e => e.textContent.includes(txt));
+        const el = r && [...r.querySelectorAll(".ad-t-sm")].find(e => e.offsetParent !== null);
+        return !!el && el.getBoundingClientRect().width >= floor;
+      }, ["Survey Contact 1", min], { timeout: 3000 }).catch(() => {});
+      const w = (await name.boundingBox()).width;
       assert(w >= min, `${vp.width}px: name column is only ${Math.round(w)}px wide`);
       assert(await row(page, "Survey Contact 1").locator("[data-survey-state]:visible").count() > 0, `${vp.width}px: pill visible`);
     }

@@ -301,7 +301,7 @@ function CustomFieldsCard({ st, dispatch }) {
   );
 }
 
-function Settings({ st, dispatch, user, scored, theme, feed }) {
+function Settings({ st, dispatch, user, scored, theme, feed, orgName }) {
   const toast = useToast();
   const w = st.settings.weights;
   const rates = st.settings.rates;
@@ -323,6 +323,7 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
   const valueImpact = useMemo(() => !valueLive ? NO_IMPACT : bandImpact(st.accounts, st.activities,
     { ...st.settings, weights: { ...w, value: 0 } }, st.settings),
     [st.accounts, st.activities, st.settings, valueLive]);
+  const admin = user.role === "admin";
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));
     const el = Object.assign(document.createElement("a"), { href: url, download: "crm-data.json" });
@@ -338,8 +339,7 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
     r.onload = async () => { try { const s = JSON.parse(r.result); if (!s.accounts || !s.settings) throw 0; await bulkReplace(s); toast({ text: "Imported for the whole team.", tone: "success" }); } catch (ex) { toast({ text: ex && ex.message ? "Import failed: " + ex.message : "Invalid JSON file.", tone: "error" }); } };
     r.readAsText(f); e.target.value = "";
   };
-  const admin = user.role === "admin";
-  const sections = [["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users", true],
+  const sections = [["Appearance", "set-appearance"], ["Scoring", "set-scoring"], ["Currency", "set-currency"], ["Integrations", "set-integrations"], ...(admin ? [["Surveys", "set-surveys", true]] : []), ["Renewal playbook", "set-renewal-pb"], ["Health playbook", "set-health-pb"], ["Account fields", "set-custom-fields"], ["Users", "set-users", true],
     ...(admin ? [["Implementation", "set-implementation", true], ["Billing", "set-billing", true], ["Error log", "set-errors", true]] : []), ["Data", "set-data"]];
   const [cur, setCur] = useState(sections[0][1]);
   const idsKey = sections.map(s => s[1]).join();
@@ -436,6 +436,7 @@ function Settings({ st, dispatch, user, scored, theme, feed }) {
         <p className="mt-2 text-xs text-slate-500">Each account is billed in its own currency; the dashboard, renewal totals, ARR sorting and the CSV's <code>arrUSD</code> column convert with these rates. Account rows and detail pages keep the native amount.</p>
       </Card>
       <div id="set-integrations" className="scroll-mt-4"><IntegrationsCard st={st} dispatch={dispatch} user={user} feed={feed} /></div>
+      {admin && <div id="set-surveys" className="scroll-mt-4"><SurveysSettingsCard st={st} dispatch={dispatch} user={user} orgName={orgName} /></div>}
       <div id="set-renewal-pb" className="scroll-mt-4"><PlaybookCard st={st} dispatch={dispatch} /></div>
       <div id="set-health-pb" className="scroll-mt-4"><HealthPlaybookCard st={st} dispatch={dispatch} scored={scored} /></div>
       <div id="set-custom-fields" className="scroll-mt-4"><CustomFieldsCard st={st} dispatch={dispatch} /></div>

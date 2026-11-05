@@ -77,6 +77,8 @@ const ACTIONS = {
   SURVEYS_SENT: { type: "SURVEYS_SENT", items: [{ id: "sv1", accountId: "a1", contactId: "c1" }] },
   IMPORT_CONTACTS: { type: "IMPORT_CONTACTS", adds: [{ id: "c9", accountId: "a1", name: "New" }], patches: [{ id: "c1", patch: { surveyRecipient: true } }] },
   SET_CONTACT_IMPORTS: { type: "SET_CONTACT_IMPORTS", log: [{ at: TODAY, added: 1 }] },
+  SET_SURVEY_TEMPLATES: { type: "SET_SURVEY_TEMPLATES", templates: [{ id: "tp1", name: "T", questions: [] }] },
+  SET_SURVEY_SETTINGS: { type: "SET_SURVEY_SETTINGS", patch: { throttleDays: 30 } },
   SET_CUSTOM_FIELDS: { type: "SET_CUSTOM_FIELDS", fields: [{ id: "cf_1", label: "Region", type: "text", archived: false }] },
   SEED_PLAYBOOK: { type: "SEED_PLAYBOOK", id: "a1", seededFor: "2027-01-01", items: [{ id: "t6", accountId: "a1", title: "Kickoff" }] },
   SET_HEALTH_PLAYBOOK: { type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { Yellow: [], Red: [] } },
@@ -332,11 +334,19 @@ test("IMPORT_CONTACTS ignores a patch for a missing id", () => {
 
 test("settings actions update their key and always write the settings row", () => {
   for (const [type, key, val] of [["SET_WEIGHTS", "weights", ACTIONS.SET_WEIGHTS.weights], ["SET_RATES", "rates", ACTIONS.SET_RATES.rates],
-    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_CUSTOM_FIELDS", "customFields", ACTIONS.SET_CUSTOM_FIELDS.fields], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix], ["SET_CONTACT_IMPORTS", "contactImports", ACTIONS.SET_CONTACT_IMPORTS.log]]) {
+    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_CUSTOM_FIELDS", "customFields", ACTIONS.SET_CUSTOM_FIELDS.fields], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix], ["SET_CONTACT_IMPORTS", "contactImports", ACTIONS.SET_CONTACT_IMPORTS.log],
+    ["SET_SURVEY_TEMPLATES", "surveyTemplates", ACTIONS.SET_SURVEY_TEMPLATES.templates]]) {
     const { next, ops } = run(ACTIONS[type]);
     assert.deepEqual(next.settings[key], val, type);
     assert.deepEqual(ops.map(o => [o.table, o.rowId]), [["settings", "1"]], type);
   }
+});
+
+test("SET_SURVEY_SETTINGS merges into settings.surveys and writes the settings row", () => {
+  const st = base(); st.settings = { ...st.settings, surveys: { throttleDays: 90, dailyCap: 50, fromName: "X" } };
+  const { next, ops } = run(ACTIONS.SET_SURVEY_SETTINGS, st);
+  assert.deepEqual(next.settings.surveys, { throttleDays: 30, dailyCap: 50, fromName: "X" });
+  assert.deepEqual(ops.map(o => [o.table, o.rowId]), [["settings", "1"]]);
 });
 
 test("SET_INTEGRATIONS merges, keeping salesDefault", () => {

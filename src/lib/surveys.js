@@ -47,20 +47,50 @@ export function isOpenSurvey(s, today) {
   return !!s && !s.submittedAt && String(s.expiresAt || "").slice(0, 10) >= today;
 }
 
+function hasNpsQuestion(t) {
+  return !!t && Array.isArray(t.questions) && t.questions.some(q => q && q.type === "nps");
+}
+// A sent survey is NPS when its snapshot has an nps question (older rows without a snapshot: by id).
+function surveyIsNps(s) {
+  return s.template ? hasNpsQuestion(s.template) : s.templateId === "nps-checkin";
+}
+function dayNum(iso) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  return m ? Math.floor(Date.UTC(+m[1], +m[2] - 1, +m[3]) / 86400000) : NaN;
+}
+function isoOfDay(n) {
+  return new Date(n * 86400000).toISOString().slice(0, 10);
+}
+
 // Splits contacts into the default-ticked set and the rest (with a reason). "Not flagged" only
 // decides the default tick: an admin may still tick that contact for one send, and
 // send_survey accepts it. No email, opted out and a pending survey are hard skips there.
-export function sendCandidates(contacts, surveys, templateId, today) {
+// `template` is the template object (a bare id string still works). For a non-NPS template, a
+// contact sent any non-NPS survey within throttleDays days is held back (0/undefined = off).
+export function sendCandidates(contacts, surveys, template, today, throttleDays) {
+  const t = typeof template === "string" ? { id: template, questions: [] } : (template || {});
+  const throttled = !hasNpsQuestion(t) && Number(throttleDays) > 0;
+  const days = Number(throttleDays);
   const ticked = [];
   const other = [];
   for (const contact of contacts || []) {
-    const open = (surveys || []).find(s => s.templateId === templateId && s.contactId === contact.id && isOpenSurvey(s, today));
+    const open = (surveys || []).find(s => s.templateId === t.id && s.contactId === contact.id && isOpenSurvey(s, today));
+    let recent = null;
+    if (throttled) {
+      for (const s of surveys || []) {
+        if (s.contactId !== contact.id || surveyIsNps(s)) continue;
+        const d = dayNum(s.sentAt);
+        if (isNaN(d) || dayNum(today) - d >= days) continue;
+        if (!recent || d > recent) recent = d;
+      }
+    }
     let reason = null;
     if (!String(contact.email || "").trim()) reason = "No email";
     else if (contact.surveyOptOut) reason = "Opted out";
     // Pending before "not flagged": an unflagged contact can still hold an open survey (ticked
     // for a one-off send), and the server refuses a resend, so the dialog must disable it.
     else if (open) reason = `Survey pending since ${dMon(open.sentAt)}`;
+    else if (recent != null) reason = `Surveyed ${dMon(isoOfDay(recent))} — wait until ${dMon(isoOfDay(recent + days))}`;
     else if (!contact.surveyRecipient) reason = "Not flagged for surveys";
     if (reason) other.push({ contact, reason });
     else ticked.push(contact);
