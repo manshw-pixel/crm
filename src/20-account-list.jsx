@@ -74,8 +74,9 @@ function useWindowedRows(items, overscan = WINDOW_OVERSCAN) {
   return { scrollRef, rowRef, windowed: true, ...windowRange(total, rowHeight, metrics.scrollTop, metrics.viewportH, overscan) };
 }
 
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings }) {
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings, contacts = [] }) {
   const [adding, setAdding] = useState(false);
+  const [importContacts, setImportContacts] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
   const churnedCount = scored.filter(a => a.churn).length;
   const [q, setQ] = useState(""); const [tier, setTier] = useState("All"); const [risk, setRisk] = useState("All");
@@ -218,6 +219,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           {book.length} accounts · {fmtMoney(book.reduce((t, a) => t + (a.arrUSD || 0), 0))} ARR · {book.filter(a => a.risk === "Red").length} at risk
           {churnedCount > 0 && !showChurned ? ` · ${churnedCount} churned hidden` : ""}</p>
         {canEdit && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
+        {canEdit && <Btn data-open-contacts-import onClick={() => setImportContacts(true)}>Import contacts</Btn>}
         <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
         {canEdit && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
         <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
@@ -305,6 +307,8 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
               onClick={() => setSelected(new Set())}>Clear selection</button>
           </div>
         )}
+        {importContacts && <ImportContactsDialog accounts={allAccounts} contacts={contacts} settings={settings} user={user}
+          dispatch={dispatch} onClose={() => setImportContacts(false)} />}
         {bulkAction && <BulkDialog kind={bulkAction} ids={[...selected]} accounts={allAccounts}
           team={team} user={user} dispatch={dispatch}
           onClose={() => { setBulkAction(null); setSelected(new Set()); }} />}

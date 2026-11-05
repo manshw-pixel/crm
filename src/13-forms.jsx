@@ -374,8 +374,8 @@ function AccountForm({ dispatch, onDone, existing, team = [], accounts = [], use
 }
 function AddContactForm({ acct, existing, dispatch, onDone }) {
   const [v, setV] = useState(existing
-    ? { name: existing.name || "", role: existing.role || "", email: existing.email || "", isChampion: !!existing.isChampion, sentiment: existing.sentiment || "Neutral" }
-    : { name: "", role: "", email: "", isChampion: false, sentiment: "Neutral" });
+    ? { name: existing.name || "", role: existing.role || "", email: existing.email || "", isChampion: !!existing.isChampion, sentiment: existing.sentiment || "Neutral", surveyRecipient: !!existing.surveyRecipient }
+    : { name: "", role: "", email: "", isChampion: false, sentiment: "Neutral", surveyRecipient: false });
   const set = (k, val) => setV(s => ({ ...s, [k]: val }));
   return (
     <form data-contact-form className="flex flex-wrap items-center gap-2" onSubmit={e => { e.preventDefault(); if (!v.name.trim()) return;
@@ -388,6 +388,7 @@ function AddContactForm({ acct, existing, dispatch, onDone }) {
       <Input placeholder="Email" type="email" value={v.email} onChange={e => set("email", e.target.value)} className="w-44" />
       <Select value={v.sentiment} onChange={e => set("sentiment", e.target.value)} options={["Positive", "Neutral", "Negative"]} />
       <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" checked={v.isChampion} onChange={e => set("isChampion", e.target.checked)} />Champion</label>
+      <label className="flex items-center gap-1 text-xs text-slate-700"><input type="checkbox" data-survey-recipient checked={v.surveyRecipient} onChange={e => set("surveyRecipient", e.target.checked)} />Send surveys to this contact</label>
       <Btn kind="primary" type="submit">{existing ? "Save changes" : "Add"}</Btn><Btn onClick={onDone}>Cancel</Btn>
     </form>
   );
