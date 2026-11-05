@@ -15,6 +15,9 @@ const SV = [
   { id: "old1", account_id: "s1", contact_id: "k5", contact_name: "Pending Pia", contact_role: "CIO", template_id: "nps-checkin",
     template_snapshot: { id: "nps-checkin", name: "NPS check-in", questions: [{ id: "nps", type: "nps" }, { id: "reason", type: "text" }] },
     source: "sent", sent_at: new Date().toISOString(), expires_at: far, submitted_at: null, survey_answers: [] },
+  { id: "exp1", account_id: "s1", contact_id: "k2", contact_name: "Plain Pat", contact_role: "", template_id: "nps-checkin",
+    template_snapshot: { id: "nps-checkin", name: "NPS check-in", questions: [{ id: "nps", type: "nps" }] },
+    source: "sent", sent_at: "2026-03-01T00:00:00Z", expires_at: "2026-03-31T00:00:00Z", submitted_at: null, survey_answers: [] },
   { id: "done1", account_id: "s1", contact_id: "k1", contact_name: "Flagged Fay", contact_role: "VP", template_id: "nps-checkin",
     template_snapshot: { id: "nps-checkin", name: "NPS check-in", questions: [{ id: "nps", type: "nps" }, { id: "reason", type: "text" }] },
     source: "sent", sent_at: "2026-01-02T00:00:00Z", expires_at: "2026-02-01T00:00:00Z", submitted_at: "2026-01-03T00:00:00Z",
@@ -42,6 +45,9 @@ test("surveys card: admin dialog defaults, disabled reasons, send adds pending r
     assert(/NPS 100 from 1 answer/.test(txt), "nps line: " + txt);
     assert(/9\/10/.test(txt) && /“Great support”/.test(txt), "answers shown");
     assert(await card.locator('[data-survey-row="pending"]').count() === 1, "one pending row");
+    const exp = card.locator('[data-survey-row="expired"]');
+    assert(await exp.count() === 1 && /Sent 1 Mar · expired, no answer/.test(await exp.innerText()), "expired row");
+    assert(!/awaiting answer/.test(await exp.innerText()), "expired is not awaiting");
     assert(await card.locator("[data-surveys-readonly]").count() === 0, "admin: no read-only tag");
     await card.locator("[data-send-survey]").click();
     const dlg = page.locator("[data-send-survey-dialog]");
@@ -89,5 +95,18 @@ test("surveys card: CSM sees read-only tag and no Send button", async () => {
     const card = page.locator("[data-surveys-card]");
     assert(/Read only · sent by admins/.test(await card.innerText()), "tag");
     assert(await card.locator("[data-send-survey]").count() === 0, "no send button");
+  } finally { await browser.close(); }
+});
+
+test("surveys card: double-clicking Send calls send_survey once", async () => {
+  const { page, browser } = await launch(seed("admin") + `
+    window.__sendSurvey = a => new Promise(r => setTimeout(() => r({ data: { sent: a.p_contact_ids.map((id, i) => ({ contact_id: id, survey_id: "dc" + i })), skipped: [] }, error: null }), 300));`);
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    await page.locator("[data-send-confirm]").dblclick();
+    await page.waitForSelector("[data-send-survey-dialog]", { state: "detached" });
+    const n = await page.evaluate(() => window.__rpcCalls.filter(c => c.fn === "send_survey").length);
+    assert(n === 1, "send_survey calls: " + n);
   } finally { await browser.close(); }
 });

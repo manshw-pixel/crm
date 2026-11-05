@@ -19,6 +19,7 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
   const admin = !!user && user.role === "admin";
   const mine = (surveys || []).filter(s => s.accountId === account.id);
   const done = mine.filter(s => s.submittedAt).sort((x, y) => String(y.submittedAt).localeCompare(String(x.submittedAt)));
+  const today = iso(Date.now());
   const pending = mine.filter(s => !s.submittedAt).sort((x, y) => String(y.sentAt).localeCompare(String(x.sentAt)));
   // NPS: this account's submitted nps answers, grouped by the calendar year they were submitted.
   const byYear = {};
@@ -67,12 +68,14 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
             </div>);
         })}
         {pending.map(s => (
-          <div key={s.id} data-survey-row="pending" className="ad-row !gap-2.5">
+          <div key={s.id} data-survey-row={isOpenSurvey(s, today) ? "pending" : "expired"} className="ad-row !gap-2.5">
             <div className="min-w-0 flex-auto">
               <div className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{(s.template && s.template.name) || s.templateId}</div>
               <div className="ad-xs" style={{ overflowWrap: "anywhere" }}>{[s.contactName, s.contactRole].filter(Boolean).join(" · ")}</div>
             </div>
-            <span className="ad-pill ad-pill-sm" data-sev="amber">Sent {svDMon(s.sentAt)} · awaiting answer</span>
+            {isOpenSurvey(s, today)
+              ? <span className="ad-pill ad-pill-sm" data-sev="amber">Sent {svDMon(s.sentAt)} · awaiting answer</span>
+              : <span className="ad-pill ad-pill-sm" data-sev="grey">Sent {svDMon(s.sentAt)} · expired, no answer</span>}
           </div>))}
       </AdCard>
       {open && <SendSurveyDialog account={account} contacts={contacts} surveys={mine} settings={settings} orgName={orgName} user={user}
@@ -89,6 +92,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
   const [ticked, setTicked] = useState(() => new Set(cand.ticked.map(c => c.id)));
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false); // a double click must never call send_survey twice
   const blocked = r => r === "No email" || r === "Opted out" || /^Survey pending/.test(r);
   const ordered = [...cand.ticked, ...cand.other.map(o => o.contact)];
   const first = ordered.find(c => ticked.has(c.id));
@@ -97,13 +101,15 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
   const n = ticked.size;
   const toggle = (id, on) => setTicked(p => { const s = new Set(p); if (on) s.add(id); else s.delete(id); return s; });
   const send = async () => {
-    if (!n || busy) return;
+    if (!n || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true); setErr("");
     const ids = ordered.filter(c => ticked.has(c.id)).map(c => c.id);
     let res;
     try { res = await sb.rpc("send_survey", { p_account: account.id, p_contact_ids: ids, p_template: tpl }); }
     catch (e) { res = { error: e }; }
     setBusy(false);
+    inFlight.current = false;
     if (!res || res.error) { setErr((res && res.error && res.error.message) || "Couldn't send the survey."); return; }
     const out = res.data || {};
     const sent = out.sent || [], skipped = out.skipped || [];

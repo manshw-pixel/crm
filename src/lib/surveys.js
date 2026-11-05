@@ -42,13 +42,16 @@ export function contactSurveyState(contact) {
   return { key: "off", label: "Not flagged", sev: "grey", canToggle: true };
 }
 
+// An unanswered survey whose link has not expired yet (expiry compared by date, inclusive).
+export function isOpenSurvey(s, today) {
+  return !!s && !s.submittedAt && String(s.expiresAt || "").slice(0, 10) >= today;
+}
+
 export function sendCandidates(contacts, surveys, templateId, today) {
   const ticked = [];
   const other = [];
   for (const contact of contacts || []) {
-    const open = (surveys || []).find(s =>
-      s.templateId === templateId && s.contactId === contact.id && !s.submittedAt &&
-      String(s.expiresAt || "").slice(0, 10) >= today);
+    const open = (surveys || []).find(s => s.templateId === templateId && s.contactId === contact.id && isOpenSurvey(s, today));
     let reason = null;
     if (!String(contact.email || "").trim()) reason = "No email";
     else if (contact.surveyOptOut) reason = "Opted out";
