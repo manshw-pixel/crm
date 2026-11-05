@@ -165,6 +165,9 @@ declare
   q1 jsonb; v_btns text; i int; v_html text; v_invalid boolean; req bigint;
 begin
   if not public.is_admin() then raise exception 'not allowed'; end if;
+  -- Serialise sends per org: the pending check and the daily-cap count below are plain reads,
+  -- so two concurrent sends could otherwise double-send or overshoot the cap.
+  perform pg_advisory_xact_lock(hashtext('send_survey:' || v_org::text));
   if v_tpl is null or jsonb_typeof(p_template->'questions') is distinct from 'array' then
     raise exception 'template required';
   end if;
@@ -184,7 +187,8 @@ begin
       when c is null then 'Not found'
       when v_email = '' then 'No email'
       when coalesce(c->>'surveyOptOut', '') <> '' then 'Opted out'
-      when coalesce(c->>'surveyRecipient', 'false') <> 'true' then 'Not flagged for surveys'
+      -- surveyRecipient only decides the default tick in the UI; an explicitly passed
+      -- unflagged contact is sent.
       when open_sent is not null then 'Survey pending since ' || trim(to_char(open_sent, 'FMDD Mon'))
     end;
     if v_reason is not null then
@@ -283,7 +287,8 @@ returns jsonb language plpgsql stable security definer set search_path = public 
 declare s surveys; v_answers jsonb;
 begin
   if coalesce(p_token, '') = '' then return null; end if;
-  select * into s from surveys where token = p_token and expires_at > now();
+  select * into s from surveys where token = p_token
+     and (expires_at > now() or (submitted_at is not null and submitted_at > now() - interval '7 days'));
   if s is null then return null; end if;
   select jsonb_object_agg(question_id, coalesce(to_jsonb(value_num), to_jsonb(value_choices), to_jsonb(value_text)))
     into v_answers from survey_answers where survey_id = s.id;
@@ -307,7 +312,8 @@ returns jsonb language plpgsql security definer set search_path = public as $$
 declare s surveys; k text; v jsonb; typ text;
 begin
   if coalesce(p_token, '') = '' then return jsonb_build_object('ok', false); end if;
-  select * into s from surveys where token = p_token and expires_at > now() for update;
+  select * into s from surveys where token = p_token
+     and (expires_at > now() or (submitted_at is not null and submitted_at > now() - interval '7 days')) for update;
   if s is null then return jsonb_build_object('ok', false); end if;
   if s.submitted_at is not null and s.submitted_at <= now() - interval '7 days' then
     return jsonb_build_object('ok', false);
