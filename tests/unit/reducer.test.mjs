@@ -318,6 +318,11 @@ test("SURVEYS_SENT appends to surveys and writes nothing", () => {
   assert.deepEqual(next.surveys.map(s => s.id), ["sv1"]);
   assert.deepEqual(ops, []);
 });
+test("SURVEYS_SENT skips ids already present", () => {
+  const once = run(ACTIONS.SURVEYS_SENT).next;
+  const twice = reducer(once, { type: "SURVEYS_SENT", items: [{ id: "sv1", accountId: "a1" }, { id: "sv2", accountId: "a1" }] });
+  assert.deepEqual(twice.surveys.map(s => s.id), ["sv1", "sv2"]);
+});
 test("IMPORT_CONTACTS ignores a patch for a missing id", () => {
   const { prev, next, ops } = run({ type: "IMPORT_CONTACTS", adds: [], patches: [{ id: "zz", patch: { name: "x" } }] });
   assert.deepEqual(next.contacts, prev.contacts); assert.deepEqual(ops, []);

@@ -103,7 +103,7 @@ const statusSev = {
 const StatusPill = ({ sev, children, ...rest }) => (
   <span data-status-pill data-sev={sev} className="ad-pill" {...rest}><span className="ad-dot" aria-hidden="true" />{children}</span>
 );
-function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject, orgName }) {
   const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -454,6 +454,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} data-danger className="nm-btn ad-ico" onClick={() => setConfirmContact(c)}>🗑</button>}
               </div>); })}
           </AdCard>
+          <AccountSurveysCard account={a} contacts={contacts} surveys={st.surveys || []} user={user} dispatch={dispatch} orgName={orgName} settings={st.settings} />
         </div>
       </div>}
       {importContacts && <ImportContactsDialog accounts={st.accounts} contacts={st.contacts} lockAccount={a} settings={st.settings} user={user}

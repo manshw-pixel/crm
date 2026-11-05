@@ -151,10 +151,11 @@ class ViewBoundary extends React.Component {
 function App({ user, onBackToClients }) {
   const theme = useTheme();
   const toast = useToast();
-  // Platform admins can switch between workspaces, so they are shown which one they are in.
+  // Platform admins are shown which workspace they are in; every member also needs the org
+  // name for the survey email preview. orgs_select lets each member read their own org row.
   const [orgName, setOrgName] = useState("");
   useEffect(() => {
-    if (!user.platform_admin || !user.org_id) return;
+    if (!user.org_id) return;
     sb.from("orgs").select("name").eq("id", user.org_id).single().then(({ data }) => data && setOrgName(data.name));
   }, [user.org_id, user.platform_admin]);
   // Client limits: every member reads their own org row (orgs_select), not just platform admins.
@@ -560,7 +561,7 @@ function App({ user, onBackToClients }) {
         {view === "Dashboard" && !isImplRole(user) && <Dashboard st={st} scored={active} all={visible} allAccounts={scored} scope={scope} setScopeSel={setScopeSel} myCount={myCount} renewalsDue={renewalsDue} user={user} dispatch={dispatch} openAccount={openAccount} openAccounts={openAccounts} goFinance={() => setView("Finance")} goTasks={goTasks} openProject={openProject} goRenewals={() => setView("Renewals")} />}
         {view === "Tasks" && !isImplRole(user) && <TasksView st={st} scored={scored} dispatch={dispatch} user={user} openAccount={openAccount} initialFilter={taskFilter} />}
         {view === "Accounts" && (acctId
-          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={openProject} />
+          ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={openProject} orgName={orgName} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} contacts={st.contacts} />)}
         {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
         {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
