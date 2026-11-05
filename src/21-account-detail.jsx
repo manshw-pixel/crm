@@ -115,6 +115,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const [tab, setTab] = useState("overview");
   useEffect(() => { setTab("overview"); setHandoverOpen(false); }, [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
+  const [importContacts, setImportContacts] = useState(false);
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
   useEffect(() => { if (initialForm && !ro) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
@@ -413,13 +414,13 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 {t.attachments && t.attachments.length > 0 && <div className="mb-1 ml-[26px]"><AttachmentLinks items={t.attachments} /></div>}
               </div>); })}
           </AdCard>
-          <AdCard title="Contacts" n={`(${contacts.length})`}>
+          <AdCard title="Contacts" n={`(${contacts.length})`} right={!ro && <button type="button" data-open-contacts-import className="ad-toggle ml-auto" onClick={() => setImportContacts(true)}>Import contacts</button>}>
             {contacts.map(c => (
               <div key={c.id} data-contact-row className="ad-row !gap-2.5">
                 <span aria-hidden="true" data-contact-av className="ad-cav">{initialsOf(c.name)}</span>
                 <div className="min-w-0 flex-auto">
                   <div className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}{c.isChampion && <> <span className="ad-champ">★ Champion</span></>}</div>
-                  <div className="ad-xs truncate" title={[c.role, c.email].filter(Boolean).join(" · ")}>{[c.role, c.email].filter(Boolean).join(" · ")}</div>
+                  <div className="ad-xs truncate" title={[c.role, c.email, c.surveyRecipient && !c.surveyOptOut ? "Receives surveys" : ""].filter(Boolean).join(" · ")}>{[c.role, c.email, c.surveyRecipient && !c.surveyOptOut ? "Receives surveys" : ""].filter(Boolean).join(" · ")}</div>
                 </div>
                 {c.sentiment && <span data-sent={c.sentiment} className="ad-sent">{c.sentiment}</span>}
                 {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn ad-ico" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
@@ -429,6 +430,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           </AdCard>
         </div>
       </div>}
+      {importContacts && <ImportContactsDialog accounts={st.accounts} contacts={st.contacts} lockAccount={a} settings={st.settings} user={user}
+        dispatch={dispatch} onClose={() => setImportContacts(false)} />}
       {confirmContact && <ConfirmDialog
         title="Delete contact"
         body={`Delete ${confirmContact.name}${confirmContact.email ? ` (${confirmContact.email})` : ""}? This cannot be undone. Email touchpoints will stop matching this address.`}
