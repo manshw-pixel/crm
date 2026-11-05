@@ -66,6 +66,23 @@ test("validateAnswers", () => {
   assert.deepEqual(validateAnswers(qs, { nps: 5, t: "x".repeat(4001) }), { ok: false, error: "Invalid answer" });
   assert.deepEqual(validateAnswers(qs, { nps: 5, zzz: 1 }), { ok: false, error: "Invalid answer" });
 });
+test("validateAnswers: choice answers must be options", () => {
+  const qs = [
+    { id: "s", type: "single", text: "Pick", options: ["A", "B"] },
+    { id: "m", type: "multi", text: "Pick many", options: ["A", "B", "C"] },
+    { id: "n", type: "single", text: "No options" },
+  ];
+  const bad = { ok: false, error: "Invalid answer" };
+  assert.deepEqual(validateAnswers(qs, { s: "A", m: ["A", "C"] }), { ok: true });
+  assert.deepEqual(validateAnswers(qs, { s: "Z" }), bad);
+  assert.deepEqual(validateAnswers(qs, { s: ["A"] }), bad);
+  assert.deepEqual(validateAnswers(qs, { m: "A" }), bad);
+  assert.deepEqual(validateAnswers(qs, { m: ["A", "Z"] }), bad);
+  assert.deepEqual(validateAnswers(qs, { m: ["A", "A"] }), bad);
+  assert.deepEqual(validateAnswers(qs, { m: ["x".repeat(5000)] }), bad);
+  assert.deepEqual(validateAnswers(qs, { n: "anything" }), bad);
+  assert.deepEqual(validateAnswers([{ id: "w", type: "weird", text: "?" }], { w: "x" }), bad);
+});
 test("npsSummary", () => {
   assert.equal(npsSummary([]), null);
   assert.deepEqual(npsSummary([10, 9, 8, 3]), { nps: 25, n: 4, promoters: 2, passives: 1, detractors: 1 });

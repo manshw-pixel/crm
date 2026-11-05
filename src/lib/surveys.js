@@ -79,9 +79,17 @@ export function validateAnswers(questions, answers) {
       if (!Number.isInteger(v) || v < 1 || v > (q.scale || 5)) return bad;
     } else if (q.type === "text") {
       if (typeof v !== "string" || v.length > 4000) return bad;
-    } else if (Array.isArray(v)) {
-      if (!v.every(x => typeof x === "string")) return bad;
-    } else if (typeof v !== "string") return bad;
+    } else if (q.type === "single" || q.type === "multi") {
+      // Choice answers must be one of the question's options; no options means no valid answer.
+      const opts = Array.isArray(q.options) ? q.options : null;
+      if (!opts) return bad;
+      if (q.type === "single") {
+        if (typeof v !== "string" || !opts.includes(v)) return bad;
+      } else {
+        if (!Array.isArray(v) || new Set(v).size !== v.length) return bad;
+        if (!v.every(x => typeof x === "string" && opts.includes(x))) return bad;
+      }
+    } else return bad;
   }
   return { ok: true };
 }

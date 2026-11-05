@@ -114,8 +114,13 @@ test("surveys: get_survey returns snapshot; null for bad token", async () => {
   assert.equal(data.answers, undefined);
   const bad = await sessions.anon.rpc("get_survey", { p_token: "nope" });
   assert.ifError(bad.error); assert.equal(bad.data, null);
-  const [c2] = await sql(`select contact_id from surveys where id = $1`, [sid1]);
-  assert.equal(c2.contact_id, "sv-c1", "opening records nothing");
+  const [c2] = await sql(`select contact_id, submitted_at from surveys where id = $1`, [sid1]);
+  assert.equal(c2.contact_id, "sv-c1");
+  assert.equal(c2.submitted_at, null, "opening must not submit");
+  const ans = await sql(`select 1 from survey_answers where survey_id = $1`, [sid1]);
+  assert.equal(ans.length, 0, "opening must not store answers");
+  const act = await sql(`select 1 from activities where org_id = $1 and id = $2`, [ORG_A, "sv-ans-" + sid1]);
+  assert.equal(act.length, 0, "opening must not log a touchpoint");
 });
 
 test("surveys: submit validates", async () => {
@@ -187,12 +192,17 @@ test("surveys: email escapes names", async () => {
   await sql(`update alert_config set api_key = 'test-key', from_email = 'alerts@onevio.test' where id = 1`);
   try {
     await seedContact("sv-c8", C({ name: "<b>x</b>", email: "esc@acme.test" }));
-    const { data, error } = await send(sessions.admin, "sv-a1", ["sv-c8"]);
+    await seedContact("sv-c9", C({ name: "Nine", email: "nine@acme.invalid" }));
+    await sql(`delete from test_sent`);
+    const { data, error } = await send(sessions.admin, "sv-a1", ["sv-c8", "sv-c9"]);
     assert.ifError(error);
-    assert.equal(data.sent.length, 1);
-    assert.equal(data.sent[0].token, undefined, "real address never returns its token");
-    const posts = (await sql(`select body from test_sent`)).map(r => r.body)
-      .filter(b => (b.to || []).some(t => t.email === "esc@acme.test"));
+    assert.equal(data.sent.length, 2);
+    const byId = Object.fromEntries(data.sent.map(x => [x.contact_id, x]));
+    assert.equal(byId["sv-c8"].token, undefined, "real address never returns its token");
+    assert.match(byId["sv-c9"].token, /^[0-9a-f]{64}$/, ".invalid address returns its token");
+    const all = (await sql(`select body from test_sent`)).map(r => r.body);
+    assert.equal(all.length, 1, "exactly one post: the .invalid recipient is not posted");
+    const posts = all.filter(b => (b.to || []).some(t => t.email === "esc@acme.test"));
     assert.equal(posts.length, 1);
     const html = posts[0].htmlContent;
     assert.ok(html.includes("Hi &lt;b&gt;x&lt;/b&gt;"), html);
@@ -200,11 +210,30 @@ test("surveys: email escapes names", async () => {
     assert.ok(html.includes("Plain User from "));
     assert.ok(html.includes("Answer the survey") && html.includes("Unsubscribe"));
     assert.ok(html.includes("&amp;q=nps&amp;v=10"));
-    const [{ n }] = await sql(`select count(*)::int n from test_sent where body->'to'->0->>'email' like '%.invalid'`);
-    assert.equal(n, 0, ".invalid addresses are never posted");
   } finally {
     if (cfg) await sql(`update alert_config set api_key = $1, from_email = $2 where id = 1`, [cfg.api_key, cfg.from_email]);
   }
+});
+
+test("surveys: submit checks choice options", async () => {
+  const tpl = { id: "choice-t", name: "Choice", intro: "", questions: [
+    { id: "s", type: "single", text: "Pick", options: ["A", "B"] },
+    { id: "m", type: "multi", text: "Pick many", options: ["A", "B", "C"] },
+    { id: "n", type: "single", text: "No options" }] };
+  await seedContact("sv-c10", C({ name: "Ten", email: "ten@acme.invalid" }));
+  const s = await send(sessions.admin, "sv-a1", ["sv-c10"], tpl);
+  assert.ifError(s.error);
+  const tok = s.data.sent[0].token;
+  const sub = (a) => sessions.anon.rpc("submit_survey", { p_token: tok, p_answers: a });
+  for (const a of [{ s: "Z" }, { s: ["A"] }, { m: "A" }, { m: ["A", "Z"] }, { m: ["A", "A"] },
+                   { m: ["x".repeat(5000)] }, { n: "anything" }]) {
+    const r = await sub(a);
+    assert.ifError(r.error); assert.deepEqual(r.data, { ok: false }, JSON.stringify(a));
+  }
+  const ok = await sub({ s: "B", m: ["A", "C"] });
+  assert.deepEqual(ok.data, { ok: true });
+  const rows = await sql(`select question_id, value_text, value_choices from survey_answers where survey_id = $1 order by question_id`, [s.data.sent[0].survey_id]);
+  assert.deepEqual(rows.map(r => [r.question_id, r.value_text, r.value_choices]), [["m", null, ["A", "C"]], ["s", "B", null]]);
 });
 
 test("surveys: org B cannot read org A surveys", async () => {
