@@ -129,10 +129,21 @@ begin
       if n <> trunc(n) or n < 1 or n > coalesce((q->>'scale')::numeric, 5) then return false; end if;
     elsif q->>'type' = 'text' then
       if typ <> 'string' or length(v #>> '{}') > 4000 then return false; end if;
-    elsif typ = 'array' then
-      if exists (select 1 from jsonb_array_elements(v) e where jsonb_typeof(e) <> 'string') then return false; end if;
-    elsif typ <> 'string' then
-      return false;
+    elsif q->>'type' in ('single', 'multi') then
+      -- Choice answers must be one of the question's options; no options means no valid answer.
+      if jsonb_typeof(q->'options') is distinct from 'array' then return false; end if;
+      if q->>'type' = 'single' then
+        if typ <> 'string' or not (q->'options' @> jsonb_build_array(v)) then return false; end if;
+      else
+        if typ <> 'array' then return false; end if;
+        if exists (select 1 from jsonb_array_elements(v) e
+                    where jsonb_typeof(e) <> 'string' or not (q->'options' @> jsonb_build_array(e))) then
+          return false;
+        end if;
+        if (select count(distinct e) from jsonb_array_elements(v) e) <> jsonb_array_length(v) then return false; end if;
+      end if;
+    else
+      return false;   -- unknown question type
     end if;
   end loop;
   return true;
