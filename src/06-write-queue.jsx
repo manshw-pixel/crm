@@ -25,6 +25,17 @@ function implRows(r) {
   if (missingTable(r.error)) return [];
   throw r.error;
 }
+// Any failure (missing relation, RLS, network) yields [] -- the surveys feature must never stop the CRM loading.
+function surveyRows(r) {
+  if (!r || r.error || !Array.isArray(r.data)) return [];
+  return r.data.map(x => ({
+    id: x.id, accountId: x.account_id, contactId: x.contact_id, contactName: x.contact_name, contactRole: x.contact_role,
+    templateId: x.template_id, template: x.template_snapshot, source: x.source,
+    sentAt: x.sent_at, expiresAt: x.expires_at, submittedAt: x.submitted_at,
+    answers: Object.fromEntries((x.survey_answers || []).map(a => [a.question_id,
+      a.value_num != null ? a.value_num : a.value_choices != null ? a.value_choices : a.value_text])),
+  }));
+}
 const accountNoBackfilled = new Set();
 async function fetchAll() {
   const res = await Promise.all([
@@ -33,6 +44,8 @@ async function fetchAll() {
     sb.from("profiles").select("id,name,role,disabled,finance"),
     // implementation tables are read LAST so res[0..6] keep their indexes
     ...IMPL_TABLES.map(t => sb.from(t).select("data")),
+    // surveys are read after those and are best-effort: surveys.sql may not be run yet. Never select `token`.
+    Promise.resolve(sb.from("surveys").select("id,account_id,contact_id,contact_name,contact_role,template_id,template_snapshot,source,sent_at,expires_at,submitted_at,survey_answers(question_id,value_num,value_text,value_choices)")).catch(error => ({ error })),
   ]);
   // The implementation tables are tolerated missing: until supabase-setup.sql is re-run they
   // do not exist, and that must not stop the CRM itself from loading.
@@ -57,6 +70,7 @@ async function fetchAll() {
     team: res[6].data || [],
     projects: implRows(res[7]),
     projectTasks: implRows(res[8]),
+    surveys: surveyRows(res[res.length - 1]),
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
       segments: saved.segments || [], customFields: saved.customFields || [], contactImports: saved.contactImports || [],

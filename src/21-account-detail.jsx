@@ -103,7 +103,7 @@ const statusSev = {
 const StatusPill = ({ sev, children, ...rest }) => (
   <span data-status-pill data-sev={sev} className="ad-pill" {...rest}><span className="ad-dot" aria-hidden="true" />{children}</span>
 );
-function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject }) {
+function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount, initialForm, clearInitialForm, openProject, orgName }) {
   const toast = useToast();
   const a = scored.find(x => x.id === id);
   const subs = scored.filter(x => x.parentId === id);
@@ -113,10 +113,12 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
   const [tab, setTab] = useState("overview");
-  useEffect(() => { setTab("overview"); setHandoverOpen(false); }, [id]);
+  useEffect(() => { setTab("overview"); setHandoverOpen(false); setPicked(new Set()); setSurveyOnly(false); }, [id]);
   const [confirmOpp, setConfirmOpp] = useState(null); // { kind: "won" | "stage", opp, run }
   const [importContacts, setImportContacts] = useState(false);
   const [confirmContact, setConfirmContact] = useState(null); // the contact pending deletion
+  const [surveyOnly, setSurveyOnly] = useState(false); // Contacts card filter: only flagged survey recipients
+  const [picked, setPicked] = useState(() => new Set()); // Contacts card bulk selection (contact ids)
   useEffect(() => { if (initialForm && !ro) { setForm(initialForm); clearInitialForm && clearInitialForm(); } }, [initialForm]);
   useEffect(() => { const h = e => e.key === "Escape" && setForm(null); window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h); }, []);
   if (!a) return null;
@@ -414,20 +416,45 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 {t.attachments && t.attachments.length > 0 && <div className="mb-1 ml-[26px]"><AttachmentLinks items={t.attachments} /></div>}
               </div>); })}
           </AdCard>
-          <AdCard title="Contacts" n={`(${contacts.length})`} right={!ro && <button type="button" data-open-contacts-import className="ad-toggle ml-auto" onClick={() => setImportContacts(true)}>Import contacts</button>}>
-            {contacts.map(c => (
+          <AdCard title="Contacts" n={`(${contacts.length})`} right={<>
+            <button type="button" data-survey-filter aria-pressed={surveyOnly} className="ad-toggle ad-toggle-chip" onClick={() => setSurveyOnly(v => !v)}>Survey recipients only</button>
+            {!ro && <button type="button" data-open-contacts-import className="ad-toggle !ml-2" onClick={() => setImportContacts(true)}>Import contacts</button>}
+          </>}>
+            {!ro && (() => {
+              const chosen = contacts.filter(c => (!surveyOnly || c.surveyRecipient) && picked.has(c.id)); // only rows still visible
+              if (chosen.length === 0) return null;
+              const run = value => {
+                const ok = chosen.filter(c => contactSurveyState(c).canToggle), skipped = chosen.length - ok.length;
+                if (ok.length) dispatch({ type: "SET_SURVEY_RECIPIENTS", ids: ok.map(c => c.id), value });
+                toast({ text: `${value ? "Flagged" : "Unflagged"} ${ok.length} contact${ok.length === 1 ? "" : "s"} for surveys.${skipped ? ` Skipped ${skipped} (opted out or no email).` : ""}`, tone: skipped ? "info" : "success" });
+                setPicked(new Set());
+              };
+              return (
+                <div data-survey-bulk className="ad-row !gap-2 flex-wrap">
+                  <span aria-live="polite" className="ad-t-sm font-semibold">{chosen.length} selected</span>
+                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(true)}>Flag for surveys ({chosen.length})</button>
+                  <button type="button" className="ad-toggle ad-toggle-chip !ml-0" onClick={() => run(false)}>Unflag ({chosen.length})</button>
+                  <button type="button" className="ad-toggle" onClick={() => setPicked(new Set())}>Clear</button>
+                </div>); })()}
+            {surveyOnly && contacts.filter(c => c.surveyRecipient).length === 0 && <div className="ad-empty">No contacts are flagged for surveys.</div>}
+            {contacts.filter(c => !surveyOnly || c.surveyRecipient).map(c => { const ss = contactSurveyState(c); return (
               <div key={c.id} data-contact-row className="ad-row !gap-2.5">
+                {!ro && <input type="checkbox" aria-label={`Select ${c.name}`} checked={picked.has(c.id)}
+                  onChange={e => setPicked(p => { const n = new Set(p); if (e.target.checked) n.add(c.id); else n.delete(c.id); return n; })} />}
                 <span aria-hidden="true" data-contact-av className="ad-cav">{initialsOf(c.name)}</span>
                 <div className="min-w-0 flex-auto">
                   <div className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}{c.isChampion && <> <span className="ad-champ">★ Champion</span></>}</div>
-                  <div className="ad-xs truncate" title={[c.role, c.email, c.surveyRecipient && !c.surveyOptOut ? "Receives surveys" : ""].filter(Boolean).join(" · ")}>{[c.role, c.email, c.surveyRecipient && !c.surveyOptOut ? "Receives surveys" : ""].filter(Boolean).join(" · ")}</div>
+                  <div className="ad-xs truncate" title={[c.role, c.email].filter(Boolean).join(" · ")}>{[c.role, c.email].filter(Boolean).join(" · ")}</div>
                 </div>
+                <span data-survey-state={ss.key} data-sev={ss.sev} className="ad-pill ad-pill-sm">{ss.label}</span>
+                {!ro && ss.canToggle && <button type="button" data-survey-toggle aria-pressed={ss.key === "on"} aria-label={`Send surveys to ${c.name}`} title={`Send surveys to ${c.name}`}
+                  className="ad-toggle ad-toggle-chip !ml-0" onClick={() => dispatch({ type: "SET_SURVEY_RECIPIENTS", ids: [c.id], value: ss.key !== "on" })}>{ss.key === "on" ? "On" : "Off"}</button>}
                 {c.sentiment && <span data-sent={c.sentiment} className="ad-sent">{c.sentiment}</span>}
                 {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn ad-ico" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
                 {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} data-danger className="nm-btn ad-ico" onClick={() => setConfirmContact(c)}>🗑</button>}
-              </div>
-            ))}
+              </div>); })}
           </AdCard>
+          <AccountSurveysCard account={a} contacts={contacts} surveys={st.surveys || []} user={user} dispatch={dispatch} orgName={orgName} settings={st.settings} />
         </div>
       </div>}
       {importContacts && <ImportContactsDialog accounts={st.accounts} contacts={st.contacts} lockAccount={a} settings={st.settings} user={user}

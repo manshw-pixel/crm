@@ -48,8 +48,8 @@ export const scenarios = [
       const ann = contactRow(page, n.a), ben = contactRow(page, n.b);
       await ann.waitFor({ timeout: 15000 });
       await ben.waitFor({ timeout: 15000 });
-      assert.match(await ann.textContent(), /Receives surveys/, "flagged contact");
-      assert.doesNotMatch(await ben.textContent(), /Receives surveys/, "unflagged contact");
+      assert.equal(await ann.locator('[data-survey-state="on"]').count(), 1, "flagged contact");
+      assert.equal(await ben.locator('[data-survey-state="on"]').count(), 0, "unflagged contact");
     } },
 
   { id: `${F}/update-blank-keeps`, feature: F, title: "Re-importing with a blank Role and Send surveys = No clears the flag and keeps the Role", role: "admin",
@@ -67,7 +67,7 @@ export const scenarios = [
       await ann.waitFor({ timeout: 15000 });
       const t = await ann.textContent();
       assert.match(t, /Head of IT/, "Role unchanged by the blank cell");
-      assert.doesNotMatch(t, /Receives surveys/, "flag is off");
+      assert.equal(await ann.locator('[data-survey-state="on"]').count(), 0, "flag is off");
     } },
 
   { id: `${F}/errors-skipped`, feature: F, title: "Unknown-account and bad-email rows show as errors, are not counted and write nothing", role: "admin",
@@ -120,6 +120,6 @@ export const scenarios = [
       await openAccount(page, co);
       const row = contactRow(page, n.form);
       await row.waitFor({ timeout: 20000 });
-      assert.match(await row.textContent(), /Receives surveys/);
+      assert.equal(await row.locator('[data-survey-state="on"]').count(), 1);
     } },
 ];
