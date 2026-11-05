@@ -39,3 +39,27 @@ test("contacts card: state pills, toggle, bulk flag skips unflaggable, filter", 
     assert(/Skipped 1/.test(await page.locator("body").innerText()), "toast says skipped");
   } finally { await browser.close(); }
 });
+
+test("contacts card: a long contact name keeps a readable width (survey pill no longer squeezes it)", async () => {
+  // Live regression: pill + toggle on the main row left the name ~1 character wide in the right column.
+  const long = { id: "k9", accountId: "s1", name: "QA qa-20261105-1652 Survey Contact 1", email: "qa-1@qa.onevio.invalid" };
+  const s = seed.replace(rows(CT), rows([...CT, long]));
+  const { page, browser } = await launch(s);
+  try {
+    for (const vp of [{ width: 1440, height: 900 }, { width: 1280, height: 720 }, { width: 390, height: 844 }]) {
+      await page.setViewportSize(vp);
+      if (!(await page.locator("[data-contact-row]").count())) {
+        await page.click('button[title="Accounts"]').catch(() => {});
+        await page.waitForSelector("[data-account-row]");
+        await page.locator("[data-account-row]").first().click();
+        await page.waitForSelector("[data-contact-row]");
+      }
+      const name = row(page, "Survey Contact 1").locator(".ad-t-sm:visible").first();
+      const w = (await name.boundingBox()).width;
+      // Broken layout measured ~66px at 1440. Phone fonts differ between runners (98px on CI Linux, 122px here).
+      const min = vp.width < 600 ? 80 : 110;
+      assert(w >= min, `${vp.width}px: name column is only ${Math.round(w)}px wide`);
+      assert(await row(page, "Survey Contact 1").locator("[data-survey-state]:visible").count() > 0, `${vp.width}px: pill visible`);
+    }
+  } finally { await browser.close(); }
+});

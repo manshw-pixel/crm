@@ -445,10 +445,14 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                 <div className="min-w-0 flex-auto">
                   <div className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}{c.isChampion && <> <span className="ad-champ">★ Champion</span></>}</div>
                   <div className="ad-xs truncate" title={[c.role, c.email].filter(Boolean).join(" · ")}>{[c.role, c.email].filter(Boolean).join(" · ")}</div>
+                  {/* Survey state sits on its own line under the name: in the narrow right column a
+                      pill + toggle on the main row squeezed the name to one letter per line. */}
+                  <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                    <span data-survey-state={ss.key} data-sev={ss.sev} className="ad-pill ad-pill-sm">{ss.label}</span>
+                    {!ro && ss.canToggle && <button type="button" data-survey-toggle aria-pressed={ss.key === "on"} aria-label={`Send surveys to ${c.name}`} title={`Send surveys to ${c.name}`}
+                      className="ad-toggle ad-toggle-chip !ml-0" onClick={() => dispatch({ type: "SET_SURVEY_RECIPIENTS", ids: [c.id], value: ss.key !== "on" })}>{ss.key === "on" ? "On" : "Off"}</button>}
+                  </div>
                 </div>
-                <span data-survey-state={ss.key} data-sev={ss.sev} className="ad-pill ad-pill-sm">{ss.label}</span>
-                {!ro && ss.canToggle && <button type="button" data-survey-toggle aria-pressed={ss.key === "on"} aria-label={`Send surveys to ${c.name}`} title={`Send surveys to ${c.name}`}
-                  className="ad-toggle ad-toggle-chip !ml-0" onClick={() => dispatch({ type: "SET_SURVEY_RECIPIENTS", ids: [c.id], value: ss.key !== "on" })}>{ss.key === "on" ? "On" : "Off"}</button>}
                 {c.sentiment && <span data-sent={c.sentiment} className="ad-sent">{c.sentiment}</span>}
                 {!ro && <button title="Edit contact" aria-label="Edit contact" data-edit-contact={c.id} className="nm-btn ad-ico" onClick={() => setForm({ t: "editContact", item: c })}>✎</button>}
                 {!ro && <button title="Delete contact" aria-label="Delete contact" data-delete-contact={c.id} data-danger className="nm-btn ad-ico" onClick={() => setConfirmContact(c)}>🗑</button>}
