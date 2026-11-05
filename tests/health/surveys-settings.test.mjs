@@ -54,6 +54,8 @@ test("surveys settings: add starters, edit, reorder, save persists", async () =>
     assert(/What could we have done better\?[\s\S]*How was your onboarding/.test(prev), "preview reordered: " + prev);
     await ed.locator("[data-template-save]").click();
     await page.waitForSelector("[data-template-editor]", { state: "detached" });
+    // the write queue flushes asynchronously; reload only once the save reached the mock DB
+    await page.waitForFunction(() => JSON.stringify(window.__dump()).includes("Onboarding check"), null, { timeout: 10000 });
     await reload();
     await openSurveys(page);
     list = await stored(page);
