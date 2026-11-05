@@ -222,3 +222,21 @@ test("surveys card: template archived while the dialog is open is refused at Sen
     assert(await page.locator("[data-send-survey-dialog]").count() === 1, "dialog stays open");
   } finally { await browser.close(); }
 });
+
+test("surveys card: throttleDays 0 (off) leaves a recently surveyed contact tickable", async () => {
+  const recent = new Date(Date.now() - 10 * 86400000).toISOString();
+  const sv = [{ id: "r1", account_id: "s1", contact_id: "k1", contact_name: "Flagged Fay", contact_role: "VP", template_id: "t-onb",
+    template_snapshot: TPL[0], source: "sent", sent_at: recent, expires_at: recent, submitted_at: recent, survey_answers: [{ question_id: "q1", value_num: 4 }] }];
+  const { page, browser } = await launch(seed("admin", tplSettings({ surveys: { throttleDays: 0 } })).replace(/surveys: \[[\s\S]*?\], profiles/, () => "surveys: " + JSON.stringify(sv) + ", profiles"));
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    const dlg = page.locator("[data-send-survey-dialog]");
+    await dlg.waitFor();
+    await dlg.locator("#sv-template").selectOption("t-onb");
+    const fay = dlg.locator('[data-send-contact="k1"]');
+    const t = await fay.innerText();
+    assert(!/Surveyed/.test(t), "no throttle reason when throttleDays is 0: " + t);
+    assert(!(await fay.locator("input").isDisabled()), "contact is tickable when the throttle is off");
+  } finally { await browser.close(); }
+});

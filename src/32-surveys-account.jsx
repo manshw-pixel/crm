@@ -90,7 +90,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
   const [tplId, setTplId] = useState(NPS_CHECKIN.id);
   const tpl = templates.find(t => t.id === tplId) || null;
   const today = iso(Date.now());
-  const throttleDays = (settings.surveys && settings.surveys.throttleDays) || 90;
+  const throttleDays = (settings.surveys && settings.surveys.throttleDays) ?? 90;
   const cand = tpl ? sendCandidates(contacts, surveys, tpl, today, throttleDays) : { ticked: [], other: [] };
   const [ticked, setTicked] = useState(() => new Set(cand.ticked.map(c => c.id)));
   const pickTemplate = id => {

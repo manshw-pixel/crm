@@ -37,8 +37,20 @@ async function requirePr2Sql(page) {
       return { error: x.error && { code: x.error.code, message: x.error.message } };
     } catch (e) { return { thrown: String(e && e.message || e) }; }
   });
-  const msg = (r.error && r.error.message) || r.thrown || "";
+  if (r.thrown) assert.fail("survey probe failed: " + r.thrown);
+  const msg = (r.error && r.error.message) || "";
   if (!/invalid template/i.test(msg)) throw new SkipScenario("surveys.sql PR 2 not applied");
+}
+
+// Safety net: the one ticked contact must be a .invalid address, so a real address can never be sent to.
+async function assertOnlyInvalidTicked(dlg) {
+  let ticked = 0;
+  for (const lbl of await dlg.locator("[data-send-contact]").all()) {
+    if (!(await lbl.locator('input[type="checkbox"]').isChecked())) continue;
+    ticked++;
+    assert.ok((await lbl.textContent()).includes(".invalid"), "refusing to send: ticked contact is not a .invalid address");
+  }
+  assert.equal(ticked, 1, "exactly one contact is ticked");
 }
 
 // Removes the templates this file creates (see the header). `extra` are names to drop as well.
@@ -192,6 +204,7 @@ export const scenarios = [
       }
       const confirm = dlg.locator("[data-send-confirm]");
       assert.equal((await confirm.textContent()).trim(), "Send to 1 contact", "only the run's contact is ticked");
+      await assertOnlyInvalidTicked(dlg);
       // Promise.all so a failed click is one recorded failure, not an unhandled rejection that crashes the run.
       const [resp] = await Promise.all([
         page.waitForResponse(r => /\/rpc\/send_survey/.test(r.url()) && r.request().method() === "POST", { timeout: 30000 }),
@@ -225,6 +238,8 @@ export const scenarios = [
   { id: `${F}/throttle`, feature: F, title: "After a Support quality survey, Onboarding review greys the contact out with 'Surveyed ... wait until ...'; NPS check-in still ticks them", role: "admin",
     run: async ({ page, runId, thisRunId }) => {
       await requirePr2Sql(page);
+      const days = await page.evaluate(() => { const s = window.__store.getState().settings.surveys; return s && s.throttleDays != null ? s.throttleDays : 90; });
+      if (!(days > 0)) throw new SkipScenario("throttle is off in this org");
       const co = ACCT(runId), name = CONTACT(thisRunId);
       const dlg = await openSend(page, co, "Onboarding review");
       const label = dlg.locator("[data-send-contact]").filter({ hasText: name });
@@ -242,9 +257,9 @@ export const scenarios = [
   { id: `${F}/archive`, feature: F, title: "Archiving the copy removes it from the Send dialog's template list (then this run's templates are removed)", role: "admin",
     run: async ({ page, runId }) => {
       await requirePr2Sql(page);
-      assert.ok(S.copyId, "copy id from edit-and-copy");
       const co = ACCT(runId);
       try {
+        assert.ok(S.copyId, "copy id from edit-and-copy");
         await openSurveySettings(page);
         const copy = row(page, S.copyId);
         await copy.waitFor({ timeout: 15000 });
