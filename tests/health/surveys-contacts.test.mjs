@@ -56,7 +56,9 @@ test("contacts card: a long contact name keeps a readable width (survey pill no 
       }
       const name = row(page, "Survey Contact 1").locator(".ad-t-sm:visible").first();
       const w = (await name.boundingBox()).width;
-      assert(w >= 110, `${vp.width}px: name column is only ${Math.round(w)}px wide`);
+      // Broken layout measured ~66px at 1440. Phone fonts differ between runners (98px on CI Linux, 122px here).
+      const min = vp.width < 600 ? 80 : 110;
+      assert(w >= min, `${vp.width}px: name column is only ${Math.round(w)}px wide`);
       assert(await row(page, "Survey Contact 1").locator("[data-survey-state]:visible").count() > 0, `${vp.width}px: pill visible`);
     }
   } finally { await browser.close(); }
