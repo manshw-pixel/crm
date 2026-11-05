@@ -101,7 +101,9 @@ button.ghost{background:var(--accent-soft);color:var(--accent)}
     }
     var ends = q.type === "nps"
       ? el("div", { class: "ends", "aria-hidden": "true" }, [el("span", { text: "Not likely" }), el("span", { text: "Very likely" })])
-      : null;
+      : (q.type === "rating" && (q.lowLabel || q.highLabel)
+        ? el("div", { class: "ends", "aria-hidden": "true" }, [el("span", { text: q.lowLabel || "" }), el("span", { text: q.highLabel || "" })])
+        : null);
     return [wrap, ends];
   }
   function questionInput(q, cur) {

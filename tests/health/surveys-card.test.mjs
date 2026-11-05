@@ -23,8 +23,14 @@ const SV = [
     source: "sent", sent_at: "2026-01-02T00:00:00Z", expires_at: "2026-02-01T00:00:00Z", submitted_at: "2026-01-03T00:00:00Z",
     survey_answers: [{ question_id: "nps", value_num: 9 }, { question_id: "reason", value_text: "Great support" }] },
 ];
+const TPL = [
+  { id: "t-onb", name: "Onboarding pulse", intro: "How is onboarding going, {firstName}?", archived: false, createdAt: "2026-11-01", updatedAt: "2026-11-01",
+    questions: [{ id: "q1", type: "rating", text: "Rate your onboarding", required: true, scale: 5, lowLabel: "Poor", highLabel: "Great" }] },
+  { id: "t-old", name: "Retired survey", intro: "", archived: true, createdAt: "2026-10-01", updatedAt: "2026-10-01",
+    questions: [{ id: "q1", type: "text", text: "Old question", required: false }] },
+];
 const rows = l => JSON.stringify(l.map(d => ({ id: d.id, data: d })));
-const seed = role => `window.__seedRows = { accounts: ${rows([A])}, contacts: ${rows(CT)}, activities: [], tasks: [], opportunities: [], settings: [],
+const seed = (role, settingsRows = "[]") => `window.__seedRows = { accounts: ${rows([A])}, contacts: ${rows(CT)}, activities: [], tasks: [], opportunities: [], settings: ${settingsRows},
   surveys: ${JSON.stringify(SV)}, profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "${role}" }] };`;
 
 async function openAccount(page) {
@@ -136,5 +142,60 @@ test("surveys card: on a 1280x720 screen the Send button is reachable and works"
     assert(box.y + box.height <= 720, `dialog fits the viewport (bottom ${box.y + box.height})`);
     await page.locator("[data-send-confirm]").click({ timeout: 5000 });
     await page.waitForSelector("[data-send-error]", { timeout: 5000 });
+  } finally { await browser.close(); }
+});
+
+const tplSettings = (extra = {}) => JSON.stringify([{ id: "1", data: { surveyTemplates: TPL, ...extra } }]);
+
+test("surveys card: template picker changes candidates and preview", async () => {
+  const { page, browser } = await launch(seed("admin", tplSettings()) + `
+    window.__sendSurvey = a => ({ data: { sent: a.p_contact_ids.map((id, i) => ({ contact_id: id, survey_id: "tp" + i })), skipped: [] }, error: null });`);
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    const dlg = page.locator("[data-send-survey-dialog]");
+    await dlg.waitFor();
+    const sel = dlg.locator("#sv-template");
+    assert((await sel.inputValue()) === "nps-checkin", "defaults to NPS check-in");
+    assert(/How likely are you to recommend/.test(await dlg.locator("[data-send-preview]").innerText()), "nps preview");
+    await sel.selectOption("t-onb");
+    const prev = await dlg.locator("[data-send-preview]").innerText();
+    assert(/Rate your onboarding/.test(prev) && /How is onboarding going, Flagged\?/.test(prev), "template preview: " + prev);
+    assert(!/How likely are you to recommend/.test(prev), "nps question gone");
+    await dlg.locator("[data-send-confirm]").click();
+    await page.waitForSelector("[data-send-survey-dialog]", { state: "detached" });
+    const call = await page.evaluate(() => window.__rpcCalls.find(c => c.fn === "send_survey").args);
+    assert(call.p_template.id === "t-onb" && call.p_template.name === "Onboarding pulse", JSON.stringify(call.p_template));
+  } finally { await browser.close(); }
+});
+
+test("surveys card: archived template not offered", async () => {
+  const { page, browser } = await launch(seed("admin", tplSettings()));
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    const opts = await page.locator("#sv-template option").allInnerTexts();
+    assert(opts.includes("NPS check-in") && opts.includes("Onboarding pulse"), "active offered: " + opts);
+    assert(!opts.includes("Retired survey"), "archived hidden: " + opts);
+  } finally { await browser.close(); }
+});
+
+test("surveys card: throttle reason shown", async () => {
+  // Throttle only applies to non-NPS templates: Fay got a non-NPS survey 10 days ago (default window 90 days).
+  const recent = new Date(Date.now() - 10 * 86400000).toISOString();
+  const sv = [{ id: "r1", account_id: "s1", contact_id: "k1", contact_name: "Flagged Fay", contact_role: "VP", template_id: "t-onb",
+    template_snapshot: TPL[0], source: "sent", sent_at: recent, expires_at: recent, submitted_at: recent, survey_answers: [{ question_id: "q1", value_num: 4 }] }];
+  const { page, browser } = await launch(seed("admin", tplSettings()).replace(/surveys: \[[\s\S]*?\], profiles/, () => "surveys: " + JSON.stringify(sv) + ", profiles"));
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    const dlg = page.locator("[data-send-survey-dialog]");
+    await dlg.waitFor();
+    const fay = dlg.locator('[data-send-contact="k1"]');
+    assert(!/Surveyed/.test(await fay.innerText()), "NPS template is not throttled");
+    await dlg.locator("#sv-template").selectOption("t-onb");
+    const t = await fay.innerText();
+    assert(/Surveyed \d{1,2} \w{3} — wait until \d{1,2} \w{3}/.test(t), "throttle reason: " + t);
+    assert(!(await fay.locator("input").isChecked()), "Fay not ticked by default");
   } finally { await browser.close(); }
 });

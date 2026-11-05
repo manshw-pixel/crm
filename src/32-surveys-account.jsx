@@ -86,10 +86,18 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
 
 function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user, dispatch, onClose, onSent }) {
   const toast = useToast();
-  const tpl = NPS_CHECKIN;
+  const templates = activeTemplates(settings.surveyTemplates);
+  const [tplId, setTplId] = useState(NPS_CHECKIN.id);
+  const tpl = templates.find(t => t.id === tplId) || null;
   const today = iso(Date.now());
-  const cand = sendCandidates(contacts, surveys, tpl.id, today);
+  const throttleDays = (settings.surveys && settings.surveys.throttleDays) || 90;
+  const cand = tpl ? sendCandidates(contacts, surveys, tpl, today, throttleDays) : { ticked: [], other: [] };
   const [ticked, setTicked] = useState(() => new Set(cand.ticked.map(c => c.id)));
+  const pickTemplate = id => {
+    const t = templates.find(x => x.id === id);
+    setTplId(id); setErr("");
+    if (t) setTicked(new Set(sendCandidates(contacts, surveys, t, today, throttleDays).ticked.map(c => c.id)));
+  };
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false); // a double click must never call send_survey twice
@@ -102,6 +110,7 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
   const toggle = (id, on) => setTicked(p => { const s = new Set(p); if (on) s.add(id); else s.delete(id); return s; });
   const send = async () => {
     if (!n || inFlight.current) return;
+    if (!tpl) { setErr("This template was archived — pick another."); return; }
     inFlight.current = true;
     setBusy(true); setErr("");
     const ids = ordered.filter(c => ticked.has(c.id)).map(c => c.id);
@@ -141,15 +150,16 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
           <span className="ad-t-sm font-semibold" style={{ overflowWrap: "anywhere" }}>{c.name}</span>
           <span className="ad-xs block" style={{ overflowWrap: "anywhere" }}>{[c.role, c.email].filter(Boolean).join(" · ")}</span>
         </span>
-        {dis && <span data-send-reason className="ad-pill ad-pill-sm" data-sev="grey">{reason}</span>}
+        {reason && reason !== "Not flagged for surveys" && <span data-send-reason className="ad-pill ad-pill-sm" data-sev="grey">{reason}</span>}
       </label>);
   };
   return (
     <Modal label={`Send survey to ${account.name}`} onClose={onClose} data-send-survey-dialog style={{ maxWidth: 640 }}>
       <h2 className="ad-h2">Send survey · <span className="ad-n">{account.name}</span></h2>
       <label className="ad-xs block mb-1" htmlFor="sv-template">Template</label>
-      <select id="sv-template" className="nm-inset mb-3 w-full px-3 py-1.5 text-sm text-slate-800" value={tpl.id} onChange={() => {}}>
-        <option value={tpl.id}>{tpl.name}</option>
+      <select id="sv-template" className="nm-inset mb-3 w-full px-3 py-1.5 text-sm text-slate-800" value={tplId} onChange={e => pickTemplate(e.target.value)}>
+        {!tpl && <option value={tplId}>(archived template)</option>}
+        {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
       </select>
       <fieldset className="mb-3">
         <legend className="ad-xs mb-1">Contacts</legend>
@@ -165,11 +175,14 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
         <div className="ad-t-sm font-semibold mb-2">{org} would like your feedback</div>
         <p className="ad-body">{greeting(ctx)},</p>
         <p className="ad-body">{ctx.csmName ? `${ctx.csmName} from ${org}` : org} would like your feedback</p>
-        <p className="ad-body">{fillPlaceholders(tpl.intro, ctx)}</p>
-        <p className="ad-body font-semibold">{fillPlaceholders(tpl.questions[0].text, ctx)}</p>
-        <div aria-hidden="true" className="flex flex-wrap gap-1 mt-1">
-          {Array.from({ length: 11 }, (_, i) => <span key={i} className="ad-pill ad-pill-sm" data-sev="grey">{i}</span>)}
-        </div>
+        {tpl && <>
+          <p className="ad-body">{fillPlaceholders(tpl.intro, ctx)}</p>
+          <p className="ad-body font-semibold">{fillPlaceholders(tpl.questions[0].text, ctx)}</p>
+          {(tpl.questions[0].type === "nps" || tpl.questions[0].type === "rating") && <div aria-hidden="true" className="flex flex-wrap gap-1 mt-1">
+            {(tpl.questions[0].type === "nps" ? Array.from({ length: 11 }, (_, i) => i) : Array.from({ length: tpl.questions[0].scale || 5 }, (_, i) => i + 1))
+              .map(i => <span key={i} className="ad-pill ad-pill-sm" data-sev="grey">{i}</span>)}
+          </div>}
+        </>}
       </section>
       {err && <p role="alert" data-send-error className="ad-body mb-2" style={{ color: "var(--p-r-tx)" }}>{err}</p>}
       <div className="flex flex-wrap items-center justify-end gap-2">

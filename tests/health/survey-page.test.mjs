@@ -21,6 +21,12 @@ const FIXTURES = {
     { id: "nps", type: "nps", text: "Q " + XSS, required: true },
     { id: "pick", type: "single", text: "Pick", options: [XSS], required: false }] },
   fresh: SURVEY,
+  types: { ...SURVEY, questions: [
+    { id: "r1", type: "rating", text: "Rate onboarding", required: true, scale: 5, lowLabel: "Poor", highLabel: "Excellent" },
+    { id: "s1", type: "single", text: "Best feature?", required: false, options: ["Reports", "Alerts", "Tasks"] },
+    { id: "m1", type: "multi", text: "Which modules?", required: false, options: ["Accounts", "Renewals", "Finance"] }] },
+  multireq: { ...SURVEY, questions: [
+    { id: "m1", type: "multi", text: "Which modules?", required: true, options: ["Accounts", "Renewals", "Finance"] }] },
   done: { ...SURVEY, answers: { nps: 7, reason: "Good support" }, submittedAt: "2026-11-01T10:00:00Z", editable: true },
   locked: { ...SURVEY, answers: { nps: 7 }, submittedAt: "2026-10-01T10:00:00Z", editable: false },
 };
@@ -64,6 +70,41 @@ test("survey page: renders snapshot with greeting", async () => {
     assert(await page.locator('input[type=radio][name=nps]').count() === 11, "11 nps radios");
     assert(t.includes("Not likely") && t.includes("Very likely"), "end labels");
     assert(await page.locator("textarea").count() === 1, "textarea");
+  });
+});
+
+test("survey page: rating renders scale with labels", async () => {
+  await open("?t=types", async page => {
+    assert(await page.locator('input[type=radio][name=r1]').count() === 5, "5 rating radios");
+    const t = await text(page);
+    assert(t.includes("Poor") && t.includes("Excellent"), "end labels: " + t);
+    assert(!t.includes("Not likely"), "no nps labels on rating");
+  });
+});
+
+test("survey page: single and multi submit", async () => {
+  await open("?t=types", async (page, { calls }) => {
+    await page.check('input[name=r1][value="4"]');
+    await page.check('input[name=s1][value="Alerts"]');
+    await page.check('input[name=m1][value="Accounts"]');
+    await page.check('input[name=m1][value="Finance"]');
+    await page.click("button[type=submit]");
+    await page.waitForSelector('[data-state="thanks"]');
+    const sub = calls.find(c => c.fn === "submit_survey");
+    assert(JSON.stringify(sub.body.p_answers) === JSON.stringify({ r1: 4, s1: "Alerts", m1: ["Accounts", "Finance"] }), JSON.stringify(sub.body));
+  });
+});
+
+test("survey page: multi required error", async () => {
+  await open("?t=multireq", async (page, { calls }) => {
+    await page.click("button[type=submit]");
+    assert(await page.locator("#err-m1").isVisible(), "error visible");
+    assert(!calls.some(c => c.fn === "submit_survey"), "nothing posted");
+    await page.check('input[name=m1][value="Renewals"]');
+    await page.click("button[type=submit]");
+    await page.waitForSelector('[data-state="thanks"]');
+    const sub = calls.find(c => c.fn === "submit_survey");
+    assert(JSON.stringify(sub.body.p_answers) === JSON.stringify({ m1: ["Renewals"] }), JSON.stringify(sub.body));
   });
 });
 
