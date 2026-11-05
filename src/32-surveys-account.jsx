@@ -110,7 +110,12 @@ function SendSurveyDialog({ account, contacts, surveys, settings, orgName, user,
     catch (e) { res = { error: e }; }
     setBusy(false);
     inFlight.current = false;
-    if (!res || res.error) { setErr((res && res.error && res.error.message) || "Couldn't send the survey."); return; }
+    if (!res || res.error) {
+      const e = (res && res.error) || {};
+      const missing = e.code === "PGRST202" || /Could not find the function/i.test(e.message || "");
+      setErr(missing ? "Surveys aren't set up yet — an admin needs to run surveys.sql." : (e.message || "Couldn't send the survey."));
+      return;
+    }
     const out = res.data || {};
     const sent = out.sent || [], skipped = out.skipped || [];
     const now = new Date();

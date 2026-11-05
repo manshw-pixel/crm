@@ -63,14 +63,22 @@ test("surveys: send skips ineligible", async () => {
   await seedContact("sv-c2", C({ name: "No Mail", email: "  " }));
   await seedContact("sv-c3", C({ name: "Out", email: "out@acme.invalid", surveyOptOut: "2026-10-01" }));
   await seedContact("sv-c4", C({ name: "Unflagged", email: "un@acme.invalid", surveyRecipient: false }));
-  const { data, error } = await send(sessions.admin, "sv-a1", ["sv-c1", "sv-c2", "sv-c3", "sv-c4"]);
+  const { data, error } = await send(sessions.admin, "sv-a1", ["sv-c1", "sv-c2", "sv-c3"]);
   assert.ifError(error);
   assert.equal(data.sent.length, 0);
   const why = Object.fromEntries(data.skipped.map(s => [s.contact_id, s.reason]));
   assert.match(why["sv-c1"], /^Survey pending since /);
   assert.equal(why["sv-c2"], "No email");
   assert.equal(why["sv-c3"], "Opted out");
-  assert.equal(why["sv-c4"], "Not flagged for surveys");
+});
+
+test("surveys: unflagged contact passed explicitly is sent", async () => {
+  // The flag only decides the default tick; an admin may tick an unflagged contact for one send.
+  const { data, error } = await send(sessions.admin, "sv-a1", ["sv-c4"]);
+  assert.ifError(error);
+  assert.deepEqual(data.skipped, []);
+  assert.equal(data.sent.length, 1);
+  assert.equal(data.sent[0].contact_id, "sv-c4");
 });
 
 test("surveys: daily cap refuses whole send", async () => {
@@ -155,6 +163,33 @@ test("surveys: submit twice then after window", async () => {
   assert.equal(g2.data.editable, false);
   const [n] = await sql(`select value_num from survey_answers where survey_id = $1 and question_id = 'nps'`, [sid1]);
   assert.equal(Number(n.value_num), 7);
+});
+
+test("surveys: edit window outlives link expiry", async () => {
+  await seedContact("sv-c11", C({ name: "Eleven", email: "eleven@acme.invalid" }));
+  const s = await send(sessions.admin, "sv-a1", ["sv-c11"]);
+  assert.ifError(s.error);
+  const tok = s.data.sent[0].token;
+  const sub = (a) => sessions.anon.rpc("submit_survey", { p_token: tok, p_answers: a });
+  assert.deepEqual((await sub({ nps: 8 })).data, { ok: true });
+  await sql(`update surveys set expires_at = now() - interval '1 hour' where token = $1`, [tok]);
+  assert.deepEqual((await sub({ nps: 6 })).data, { ok: true }, "edit within 7 days of submit, link expired");
+  const g = await sessions.anon.rpc("get_survey", { p_token: tok });
+  assert.ifError(g.error);
+  assert.ok(g.data, "get_survey still returns the survey");
+  assert.equal(g.data.answers.nps, 6);
+  assert.equal(g.data.editable, true);
+});
+
+test("surveys: submit rejects an answer to an unknown question type", async () => {
+  const tpl = { id: "weird-t", name: "Weird", intro: "", questions: [{ id: "w", type: "weird", text: "?" }] };
+  await seedContact("sv-c12", C({ name: "Twelve", email: "twelve@acme.invalid" }));
+  const s = await send(sessions.admin, "sv-a1", ["sv-c12"], tpl);
+  assert.ifError(s.error);
+  const r = await sessions.anon.rpc("submit_survey", { p_token: s.data.sent[0].token, p_answers: { w: "x" } });
+  assert.deepEqual(r.data, { ok: false });
+  const blank = await sessions.anon.rpc("submit_survey", { p_token: s.data.sent[0].token, p_answers: {} });
+  assert.deepEqual(blank.data, { ok: true }, "control: the same survey accepts a blank answer");
 });
 
 test("surveys: submit writes touchpoint once", async () => {

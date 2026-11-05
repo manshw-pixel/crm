@@ -88,6 +88,19 @@ test("surveys card: send error shows inline and dialog stays open", async () => 
   } finally { await browser.close(); }
 });
 
+test("surveys card: missing send_survey function shows a setup message", async () => {
+  const { page, browser } = await launch(seed("admin") + `
+    window.__sendSurvey = () => ({ data: null, error: { code: "PGRST202", message: "Could not find the function public.send_survey(p_account, p_contact_ids, p_template) in the schema cache" } });`);
+  try {
+    await openAccount(page);
+    await page.locator("[data-send-survey]").click();
+    await page.locator("[data-send-confirm]").click();
+    await page.waitForSelector("[data-send-error]");
+    const t = await page.locator("[data-send-error]").innerText();
+    assert(t === "Surveys aren't set up yet — an admin needs to run surveys.sql.", "error text: " + t);
+  } finally { await browser.close(); }
+});
+
 test("surveys card: CSM sees read-only tag and no Send button", async () => {
   const { page, browser } = await launch(seed("user"));
   try {

@@ -47,6 +47,9 @@ export function isOpenSurvey(s, today) {
   return !!s && !s.submittedAt && String(s.expiresAt || "").slice(0, 10) >= today;
 }
 
+// Splits contacts into the default-ticked set and the rest (with a reason). "Not flagged" only
+// decides the default tick: an admin may still tick that contact for one send, and
+// send_survey accepts it. No email, opted out and a pending survey are hard skips there.
 export function sendCandidates(contacts, surveys, templateId, today) {
   const ticked = [];
   const other = [];
@@ -71,7 +74,7 @@ export function validateAnswers(questions, answers) {
   for (const k of Object.keys(a)) if (!ids.has(k)) return bad;
   for (const q of qs) {
     const v = a[q.id];
-    const blank = v == null || v === "" || (Array.isArray(v) && v.length === 0);
+    const blank = v == null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
     if (blank) {
       if (q.required) return { ok: false, error: `Answer "${q.text}"` };
       continue;

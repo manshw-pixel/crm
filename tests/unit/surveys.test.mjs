@@ -83,6 +83,12 @@ test("validateAnswers: choice answers must be options", () => {
   assert.deepEqual(validateAnswers(qs, { n: "anything" }), bad);
   assert.deepEqual(validateAnswers([{ id: "w", type: "weird", text: "?" }], { w: "x" }), bad);
 });
+test("validateAnswers: whitespace-only text is blank", () => {
+  const qs = [{ id: "t", type: "text", text: "Why?", required: true }];
+  assert.deepEqual(validateAnswers(qs, { t: "   " }), { ok: false, error: 'Answer "Why?"' });
+  assert.deepEqual(validateAnswers(qs, { t: " ok " }), { ok: true });
+  assert.deepEqual(validateAnswers([{ id: "t", type: "text", text: "Why?" }], { t: " 	 " }), { ok: true });
+});
 test("npsSummary", () => {
   assert.equal(npsSummary([]), null);
   assert.deepEqual(npsSummary([10, 9, 8, 3]), { nps: 25, n: 4, promoters: 2, passives: 1, detractors: 1 });
