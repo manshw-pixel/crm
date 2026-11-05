@@ -59,7 +59,7 @@ async function fetchAll() {
     projectTasks: implRows(res[8]),
     settings: { ...mergeSettings(saved), rates: { ...DEFAULT_RATES, ...(saved.rates || {}) },
       integrations: { processed: {}, log: [], ...(saved.integrations || {}) }, snapshots: saved.snapshots || [], playbook: saved.playbook, healthPlaybook: saved.healthPlaybook,
-      segments: saved.segments || [], customFields: saved.customFields || [],
+      segments: saved.segments || [], customFields: saved.customFields || [], contactImports: saved.contactImports || [],
       implChecklist: saved.implChecklist || DEFAULT_IMPL_CHECKLIST, implPlanTemplates: saved.implPlanTemplates || [], implCapacity: saved.implCapacity || {} },
   };
 }

@@ -71,6 +71,11 @@ export function persistOps(action, next, prev) {
   switch (action.type) {
     case "ADD_ACCOUNT": { const a = acct(action.item.id); up("accounts", a || action.item); break; }
     case "ADD_CONTACT": up("contacts", action.item); break;
+    case "IMPORT_CONTACTS": {
+      action.adds.forEach(c => up("contacts", c));
+      action.patches.forEach(({ id }) => { const c = next.contacts.find(x => x.id === id); if (c) up("contacts", c); });
+      break;
+    }
     case "EDIT_CONTACT": { const c = next.contacts.find(x => x.id === action.id); if (c) up("contacts", c); break; }
     case "DELETE_CONTACT": del("contacts", "id", action.id); break;
     case "ADD_OPP": up("opportunities", action.item); break;
@@ -131,7 +136,7 @@ export function persistOps(action, next, prev) {
     }
     case "DELETE_PROJECT_TASK": del("project_tasks", "id", action.id); break;
     case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
-    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS":
+    case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS": case "SET_CONTACT_IMPORTS":
     case "SET_IMPL_CHECKLIST": case "SET_IMPL_CAPACITY": {
       // settings always writes (even an empty diff), exactly as before the move
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
@@ -252,6 +257,11 @@ export function reducer(state, action) {
       opportunities: state.opportunities.filter(o => o.accountId !== action.id),
       ...implWithout(state, a => a.accountId === action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
+    case "IMPORT_CONTACTS": {
+      const have = new Set(state.contacts.map(c => c.id));
+      const patchOf = new Map(action.patches.map(p => [p.id, p.patch]));
+      return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds.filter(c => !have.has(c.id))] };
+    }
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
@@ -350,6 +360,7 @@ export function reducer(state, action) {
     case "SET_INTEGRATIONS": return { ...state, settings: { ...state.settings, integrations: { ...(state.settings.integrations || {}), ...action.integrations } } };
     case "SET_SNAPSHOTS": return { ...state, settings: { ...state.settings, snapshots: action.snapshots } };
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
+    case "SET_CONTACT_IMPORTS": return { ...state, settings: { ...state.settings, contactImports: action.log } };
     case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };
     case "ADD_PROJECT": return { ...state, projects: [...(state.projects || []), action.item] };
     case "EDIT_PROJECT": return { ...state, projects: (state.projects || []).map(p => p.id === action.id ? { ...p, ...action.patch } : p) };

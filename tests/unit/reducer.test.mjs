@@ -73,6 +73,8 @@ const ACTIONS = {
   SET_SNAPSHOTS: { type: "SET_SNAPSHOTS", snapshots: [{ month: "2026-06" }] },
   SET_PLAYBOOK: { type: "SET_PLAYBOOK", playbook: [] },
   SET_SEGMENTS: { type: "SET_SEGMENTS", segments: [{ id: "g", name: "Big" }] },
+  IMPORT_CONTACTS: { type: "IMPORT_CONTACTS", adds: [{ id: "c9", accountId: "a1", name: "New" }], patches: [{ id: "c1", patch: { surveyRecipient: true } }] },
+  SET_CONTACT_IMPORTS: { type: "SET_CONTACT_IMPORTS", log: [{ at: TODAY, added: 1 }] },
   SET_CUSTOM_FIELDS: { type: "SET_CUSTOM_FIELDS", fields: [{ id: "cf_1", label: "Region", type: "text", archived: false }] },
   SEED_PLAYBOOK: { type: "SEED_PLAYBOOK", id: "a1", seededFor: "2027-01-01", items: [{ id: "t6", accountId: "a1", title: "Kickoff" }] },
   SET_HEALTH_PLAYBOOK: { type: "SET_HEALTH_PLAYBOOK", healthPlaybook: { Yellow: [], Red: [] } },
@@ -291,11 +293,24 @@ test("RESTORE_SNAPSHOT replaces rows by id and re-adds missing ones", () => {
   assert.deepEqual(ops.map(o => o.rowId), ["a1"]);
 });
 
+// ---------- contacts import
+
+test("IMPORT_CONTACTS adds and patches", () => {
+  const { next, ops } = run(ACTIONS.IMPORT_CONTACTS);
+  assert.deepEqual(next.contacts.map(c => c.id), ["c1", "c2", "c9"]);
+  assert.equal(next.contacts.find(c => c.id === "c1").surveyRecipient, true);
+  assert.deepEqual(ops.map(o => `${o.table}:${o.rowId}`).sort(), ["contacts:c1", "contacts:c9"]);
+});
+test("IMPORT_CONTACTS ignores a patch for a missing id", () => {
+  const { prev, next, ops } = run({ type: "IMPORT_CONTACTS", adds: [], patches: [{ id: "zz", patch: { name: "x" } }] });
+  assert.deepEqual(next.contacts, prev.contacts); assert.deepEqual(ops, []);
+});
+
 // ---------- settings
 
 test("settings actions update their key and always write the settings row", () => {
   for (const [type, key, val] of [["SET_WEIGHTS", "weights", ACTIONS.SET_WEIGHTS.weights], ["SET_RATES", "rates", ACTIONS.SET_RATES.rates],
-    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_CUSTOM_FIELDS", "customFields", ACTIONS.SET_CUSTOM_FIELDS.fields], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix]]) {
+    ["SET_SEGMENTS", "segments", ACTIONS.SET_SEGMENTS.segments], ["SET_CUSTOM_FIELDS", "customFields", ACTIONS.SET_CUSTOM_FIELDS.fields], ["SET_VALUE_MIX", "valueMix", ACTIONS.SET_VALUE_MIX.mix], ["SET_CONTACT_IMPORTS", "contactImports", ACTIONS.SET_CONTACT_IMPORTS.log]]) {
     const { next, ops } = run(ACTIONS[type]);
     assert.deepEqual(next.settings[key], val, type);
     assert.deepEqual(ops.map(o => [o.table, o.rowId]), [["settings", "1"]], type);
