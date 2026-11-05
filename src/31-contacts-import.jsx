@@ -72,7 +72,7 @@ function ImportContactsDialog({ accounts, contacts, lockAccount, settings, user,
             aria-pressed={filter === k ? "true" : "false"} onClick={() => setFilter(k)}>
             {label}<span className="acct-quick-n">{k === "all" ? total : counts[k]}</span></button>)}
         </div>
-        <div className="mb-3 overflow-auto" style={{ maxHeight: "40vh", border: "1px solid var(--line, rgba(127,127,127,.25))", borderRadius: 8 }}>
+        <div className="mb-3 overflow-auto" style={{ maxHeight: "40vh", border: "1px solid rgb(var(--line-strong))", borderRadius: 8 }}>
           <table className="w-full text-left text-xs">
             <thead><tr>{["Row", "Account", "Name", "Role", "Email", "Send surveys", "Result"].map(h =>
               <th key={h} className="px-2 py-1.5 font-semibold">{h}</th>)}</tr></thead>

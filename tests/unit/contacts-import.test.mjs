@@ -105,3 +105,7 @@ test("contactTemplateRows", () => {
   assert.deepEqual(r[1], ["Lumen Retail", "", "", "", "", "", ""]);
   assert.equal(contactTemplateRows().length, 1);
 });
+test("update message uses column labels", () => {
+  const p = plan([["Lumen Retail", "", "Finance", "arjun@lumen.com", "Yes", "", "Yes"]]);
+  assert.equal(p.rows[0].msg, "Update: Role, Champion, Send surveys");
+});

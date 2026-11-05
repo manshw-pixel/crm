@@ -18,6 +18,7 @@ const HEADER_KEYS = {
   account: "account", name: "name", role: "role", email: "email",
   champion: "champion", sentiment: "sentiment", "send surveys": "send",
 };
+const PATCH_LABELS = { name: "Name", role: "Role", email: "Email", isChampion: "Champion", sentiment: "Sentiment", surveyRecipient: "Send surveys" };
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const normHeader = (h) => String(h == null ? "" : h).toLowerCase().replace(/\*/g, "").replace(/[^a-z0-9]+/g, " ").trim();
 const cell = (v) => (v == null ? "" : String(v).trim());
@@ -138,7 +139,7 @@ export function planContactImport({ rows, accounts, contacts, lockAccountId = nu
     if (!Object.keys(patch).length) { finish("same", "No change"); continue; }
     patches.push({ id: match.id, patch });
     const optedOut = send === "Yes" && match.surveyOptOut;
-    finish("update", optedOut ? "Opted out — flag kept, will not be emailed" : `Update: ${Object.keys(patch).join(", ")}`);
+    finish("update", optedOut ? "Opted out — flag kept, will not be emailed" : `Update: ${Object.keys(patch).map((k) => PATCH_LABELS[k] || k).join(", ")}`);
   }
   return { rows: out, counts, adds, patches };
 }
