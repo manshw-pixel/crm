@@ -222,7 +222,7 @@ begin
   end if;
   if not public.survey_template_valid(p_template) then raise exception 'invalid template'; end if;
   v_is_nps := exists (select 1 from jsonb_array_elements(p_template->'questions') x where x->>'type' = 'nps');
-  select coalesce(nullif(s.data->'surveys'->>'throttleDays', '')::int, 90) into v_throttle
+  select coalesce(case when s.data->'surveys'->>'throttleDays' ~ '^\d{1,6}$' then (s.data->'surveys'->>'throttleDays')::int end, 90) into v_throttle
     from settings s where s.org_id = v_org;
   v_throttle := coalesce(v_throttle, 90);
   select * into acct from accounts where org_id = v_org and id = p_account;
@@ -242,7 +242,7 @@ begin
     recent_sent := null;
     if not v_is_nps and v_throttle > 0 then
       select max(s.sent_at) into recent_sent from surveys s
-       where s.org_id = v_org and s.contact_id = cid and s.sent_at > now() - make_interval(days => v_throttle)
+       where s.org_id = v_org and s.contact_id = cid and (s.sent_at at time zone 'utc')::date > (now() at time zone 'utc')::date - v_throttle
          and not (case when jsonb_typeof(s.template_snapshot->'questions') = 'array'
                        then exists (select 1 from jsonb_array_elements(s.template_snapshot->'questions') x where x->>'type' = 'nps')
                        else s.template_id = 'nps-checkin' end);
@@ -265,7 +265,7 @@ begin
   end loop;
 
   -- daily cap: per org, per UTC day, refused as a whole
-  select coalesce(nullif(s.data->'surveys'->>'dailyCap', '')::int, 50),
+  select coalesce(case when s.data->'surveys'->>'dailyCap' ~ '^\d{1,6}$' then (s.data->'surveys'->>'dailyCap')::int end, 50),
          coalesce(s.data->'surveys'->>'fromName', '')
     into v_cap, v_from from settings s where s.org_id = v_org;
   v_cap := coalesce(v_cap, 50); v_from := coalesce(v_from, '');
