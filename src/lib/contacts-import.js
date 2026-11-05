@@ -56,7 +56,8 @@ export function planContactImport({ rows, accounts, contacts, lockAccountId = nu
     const raw = rows[r] || [];
     const g = (k) => (col[k] === undefined ? "" : cell(raw[col[k]]));
     const cells = { account: g("account"), name: g("name"), role: g("role"), email: g("email"), champion: g("champion"), sentiment: g("sentiment"), send: g("send") };
-    if (Object.values(cells).every((v) => v === "")) continue;
+    // The template prefills Account on every row, so an Account-only row is an unused row.
+    if (Object.entries(cells).every(([k, v]) => k === "account" || v === "")) continue;
     const it = { n: r + 1, cells, acct: null, err: "" };
     const x = cells.account;
     if (!x && lockAcct) it.acct = lockAcct;

@@ -85,6 +85,15 @@ test("bad values", () => {
   ]);
   assert.equal(p.rows[4].n, 7);
 });
+test("account-only rows are skipped, with and without a lock", () => {
+  const body = [["Lumen Retail", "", "", "", "", "", ""], ["Lumen Retail", "Pooja", "", "", "", "", ""], ["Lumen Retail", "", "", "", "", "", ""]];
+  for (const extra of [{}, { lockAccountId: "a1" }]) {
+    const p = plan(body, extra);
+    assert.equal(p.rows.length, 1);
+    assert.equal(p.rows[0].n, 3);
+    assert.equal(p.counts.error, 0);
+  }
+});
 test("missing header", () => {
   const p = planContactImport({ rows: [["Account", "Role"]], accounts, contacts: [], newId: () => "x" });
   assert.equal(p.err, 'The header row needs "Account" and "Name" columns — download the template.');
