@@ -141,6 +141,7 @@ export function persistOps(action, next, prev) {
     case "DELETE_PROJECT_TASK": del("project_tasks", "id", action.id); break;
     case "SET_WEIGHTS": case "SET_RECENCY_MIX": case "SET_VALUE_MIX": case "SET_RATES": case "SET_INTEGRATIONS": case "SET_SNAPSHOTS":
     case "SET_PLAYBOOK": case "SET_HEALTH_PLAYBOOK": case "SET_SEGMENTS": case "SET_CUSTOM_FIELDS": case "SET_CONTACT_IMPORTS":
+    case "SET_SURVEY_TEMPLATES": case "SET_SURVEY_SETTINGS":
     case "SET_IMPL_CHECKLIST": case "SET_IMPL_CAPACITY": {
       // settings always writes (even an empty diff), exactly as before the move
       const { patch, appends, sets } = diffRow(prev && prev.settings, next.settings);
@@ -367,6 +368,8 @@ export function reducer(state, action) {
     case "SET_PLAYBOOK": return { ...state, settings: { ...state.settings, playbook: action.playbook } };
     case "SET_CONTACT_IMPORTS": return { ...state, settings: { ...state.settings, contactImports: action.log } };
     case "SET_SEGMENTS": return { ...state, settings: { ...state.settings, segments: action.segments } };
+    case "SET_SURVEY_TEMPLATES": return { ...state, settings: { ...state.settings, surveyTemplates: action.templates } };
+    case "SET_SURVEY_SETTINGS": return { ...state, settings: { ...state.settings, surveys: { ...(state.settings.surveys || {}), ...action.patch } } };
     case "ADD_PROJECT": return { ...state, projects: [...(state.projects || []), action.item] };
     case "EDIT_PROJECT": return { ...state, projects: (state.projects || []).map(p => p.id === action.id ? { ...p, ...action.patch } : p) };
     case "SET_PROJECT_STAGE": {
