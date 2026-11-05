@@ -1,4 +1,5 @@
--- surveys.sql -- NPS / CSAT surveys, PR 1: send, answer, unsubscribe.
+-- surveys.sql -- NPS / CSAT surveys. PR 1: send, answer, unsubscribe. PR 2: template
+-- validation (survey_template_valid) and the non-NPS throttle in send_survey.
 --
 -- HOW TO RUN: paste this whole file into the Supabase SQL editor and run it AFTER
 -- supabase-setup.sql and email-alerts.sql (it reuses alert_config, alert_post and
@@ -8,7 +9,8 @@
 -- Writes happen ONLY through the security-definer functions below. Authenticated users can
 -- read surveys of their own org (leads: only accounts they own), and can never read the
 -- token column. The public survey page (anon) reaches a survey only by its token.
--- Validation mirrors src/lib/surveys.js (validateAnswers, sendCandidates); keep them in step.
+-- Validation mirrors src/lib/surveys.js (validateAnswers, sendCandidates) and
+-- src/lib/survey-templates.js (validateTemplate); keep them in step.
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -150,6 +152,52 @@ begin
 end $$;
 revoke execute on function public.survey_answers_valid(jsonb, jsonb) from public, anon, authenticated;
 
+-- validateTemplate (src/lib/survey-templates.js), plus: options must already be trimmed (the
+-- client normalises before saving, so an untrimmed option means a hand-made payload).
+create or replace function public.survey_template_valid(p jsonb)
+returns boolean language plpgsql immutable set search_path = public as $$
+declare q jsonb; o jsonb; typ text; ids text[] := '{}'; opts text[]; n_nps int := 0; v_scale numeric;
+begin
+  if p is null or jsonb_typeof(p) <> 'object' then return false; end if;
+  if jsonb_typeof(p->'name') is distinct from 'string' or trim(p->>'name') = ''
+     or length(trim(p->>'name')) > 80 then return false; end if;
+  if jsonb_typeof(p->'intro') not in ('string', 'null') then return false; end if;
+  if length(trim(coalesce(p->>'intro', ''))) > 300 then return false; end if;
+  if jsonb_typeof(p->'questions') is distinct from 'array' then return false; end if;
+  if jsonb_array_length(p->'questions') < 1 or jsonb_array_length(p->'questions') > 20 then return false; end if;
+  for q in select * from jsonb_array_elements(p->'questions') loop
+    if jsonb_typeof(q) <> 'object' then return false; end if;
+    typ := q->>'type';
+    if typ is null or typ not in ('nps', 'rating', 'single', 'multi', 'text') then return false; end if;
+    if typ = 'nps' then n_nps := n_nps + 1; end if;
+    if jsonb_typeof(q->'text') is distinct from 'string' or trim(q->>'text') = ''
+       or length(trim(q->>'text')) > 300 then return false; end if;
+    if coalesce(q->>'id', '') = any(ids) then return false; end if;
+    ids := ids || coalesce(q->>'id', '');
+    if typ = 'rating' then
+      if q->'scale' is null or jsonb_typeof(q->'scale') = 'null' then v_scale := 5;
+      elsif jsonb_typeof(q->'scale') = 'number' then v_scale := (q->>'scale')::numeric;
+      else return false; end if;
+      if v_scale not in (5, 7, 10) then return false; end if;
+      if length(trim(coalesce(q->>'lowLabel', ''))) > 40 or length(trim(coalesce(q->>'highLabel', ''))) > 40 then
+        return false;
+      end if;
+    elsif typ in ('single', 'multi') then
+      if jsonb_typeof(q->'options') is distinct from 'array' then return false; end if;
+      if jsonb_array_length(q->'options') < 2 or jsonb_array_length(q->'options') > 12 then return false; end if;
+      opts := '{}';
+      for o in select * from jsonb_array_elements(q->'options') loop
+        if jsonb_typeof(o) <> 'string' then return false; end if;
+        if (o #>> '{}') = '' or (o #>> '{}') <> trim(o #>> '{}') or length(o #>> '{}') > 80 then return false; end if;
+        if lower(o #>> '{}') = any(opts) then return false; end if;
+        opts := opts || lower(o #>> '{}');
+      end loop;
+    end if;
+  end loop;
+  return n_nps <= 1;
+end $$;
+revoke execute on function public.survey_template_valid(jsonb) from public, anon, authenticated;
+
 -- ---------- send (admin only) ----------
 create or replace function public.send_survey(p_account text, p_contact_ids text[], p_template jsonb)
 returns jsonb language plpgsql security definer set search_path = public as $$
@@ -163,6 +211,7 @@ declare
   eligible jsonb := '[]'::jsonb; skipped jsonb := '[]'::jsonb; sent jsonb := '[]'::jsonb;
   e jsonb; v_id uuid; v_token text; v_link text; v_first text; ctx jsonb;
   q1 jsonb; v_btns text; i int; v_html text; v_invalid boolean; req bigint;
+  v_throttle int; v_is_nps boolean; recent_sent timestamptz;
 begin
   if not public.is_admin() then raise exception 'not allowed'; end if;
   -- Serialise sends per org: the pending check and the daily-cap count below are plain reads,
@@ -171,6 +220,11 @@ begin
   if v_tpl is null or jsonb_typeof(p_template->'questions') is distinct from 'array' then
     raise exception 'template required';
   end if;
+  if not public.survey_template_valid(p_template) then raise exception 'invalid template'; end if;
+  v_is_nps := exists (select 1 from jsonb_array_elements(p_template->'questions') x where x->>'type' = 'nps');
+  select coalesce(nullif(s.data->'surveys'->>'throttleDays', '')::int, 90) into v_throttle
+    from settings s where s.org_id = v_org;
+  v_throttle := coalesce(v_throttle, 90);
   select * into acct from accounts where org_id = v_org and id = p_account;
   if acct is null then raise exception 'account not found'; end if;
 
@@ -183,6 +237,16 @@ begin
      where s.org_id = v_org and s.template_id = v_tpl and s.contact_id = cid
        and s.submitted_at is null and s.expires_at::date >= current_date
      order by s.sent_at limit 1;
+    -- Throttle (sendCandidates): a non-NPS send waits throttleDays after the contact's latest
+    -- non-NPS survey. A survey is NPS when its snapshot has an nps question (by id otherwise).
+    recent_sent := null;
+    if not v_is_nps and v_throttle > 0 then
+      select max(s.sent_at) into recent_sent from surveys s
+       where s.org_id = v_org and s.contact_id = cid and s.sent_at > now() - make_interval(days => v_throttle)
+         and not (case when jsonb_typeof(s.template_snapshot->'questions') = 'array'
+                       then exists (select 1 from jsonb_array_elements(s.template_snapshot->'questions') x where x->>'type' = 'nps')
+                       else s.template_id = 'nps-checkin' end);
+    end if;
     v_reason := case
       when c is null then 'Not found'
       when v_email = '' then 'No email'
@@ -190,6 +254,8 @@ begin
       -- surveyRecipient only decides the default tick in the UI; an explicitly passed
       -- unflagged contact is sent.
       when open_sent is not null then 'Survey pending since ' || trim(to_char(open_sent, 'FMDD Mon'))
+      when recent_sent is not null then 'Surveyed ' || to_char((recent_sent at time zone 'utc')::date, 'FMDD Mon')
+        || ' — wait until ' || to_char((recent_sent at time zone 'utc')::date + v_throttle, 'FMDD Mon')
     end;
     if v_reason is not null then
       skipped := skipped || jsonb_build_array(jsonb_build_object('contact_id', cid, 'reason', v_reason));
