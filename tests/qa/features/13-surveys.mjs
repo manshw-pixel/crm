@@ -100,9 +100,13 @@ export const scenarios = [
       const confirm = page.locator("[data-send-confirm]");
       await confirm.waitFor({ timeout: 15000 });
       assert.equal((await confirm.textContent()).trim(), "Send to 1 contact", "only contact 3 is flagged");
-      const resp = page.waitForResponse(r => /\/rpc\/send_survey/.test(r.url()) && r.request().method() === "POST", { timeout: 30000 });
-      await confirm.click();
-      const body = await (await resp).json();
+      // Promise.all so a failed click rejects both together; a bare waitForResponse left pending
+      // after a click timeout became an unhandled rejection that crashed the whole run.
+      const [resp] = await Promise.all([
+        page.waitForResponse(r => /\/rpc\/send_survey/.test(r.url()) && r.request().method() === "POST", { timeout: 30000 }),
+        confirm.click(),
+      ]);
+      const body = await resp.json();
       assert.equal(body.sent.length, 1, "one survey sent");
       assert.ok(body.sent[0].token, "an .invalid recipient gets its token back in the response");
       S.tokens.a = body.sent[0].token;

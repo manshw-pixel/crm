@@ -93,3 +93,10 @@ test("npsSummary", () => {
   assert.equal(npsSummary([]), null);
   assert.deepEqual(npsSummary([10, 9, 8, 3]), { nps: 25, n: 4, promoters: 2, passives: 1, detractors: 1 });
 });
+
+test("sendCandidates: an unflagged contact with an open survey reads pending, not 'Not flagged'", () => {
+  const cs = [{ id: "u1", email: "u@x.com", surveyRecipient: false }];
+  const sv = [{ templateId: "t", contactId: "u1", sentAt: "2026-11-05T10:00:00Z", expiresAt: "2026-12-05T10:00:00Z", submittedAt: null }];
+  const r = sendCandidates(cs, sv, "t", "2026-11-05");
+  assert.deepEqual(r.other.map(o => o.reason), ["Survey pending since 5 Nov"]);
+});
