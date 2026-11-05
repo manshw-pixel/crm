@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { test } from "../health/framework.mjs";
 import { sessions, sql, ORG_A, ORG_B, invitedFresh, seedAccount, seedContact } from "./fixtures.mjs";
 import { NPS_CHECKIN } from "../../src/lib/surveys.js";
+import { STARTER_TEMPLATES } from "../../src/lib/survey-templates.js";
+const STARTER = Object.fromEntries(STARTER_TEMPLATES.map(t => [t.id, t]));
 
 const T = NPS_CHECKIN;
 const send = (session, account, ids, tpl = T) =>
@@ -182,10 +184,13 @@ test("surveys: edit window outlives link expiry", async () => {
 });
 
 test("surveys: submit rejects an answer to an unknown question type", async () => {
-  const tpl = { id: "weird-t", name: "Weird", intro: "", questions: [{ id: "w", type: "weird", text: "?" }] };
+  // send_survey now refuses such a template, so the stored snapshot is planted directly.
+  const tpl = { id: "weird-t", name: "Weird", intro: "", questions: [{ id: "w", type: "text", text: "?" }] };
   await seedContact("sv-c12", C({ name: "Twelve", email: "twelve@acme.invalid" }));
   const s = await send(sessions.admin, "sv-a1", ["sv-c12"], tpl);
   assert.ifError(s.error);
+  await sql(`update surveys set template_snapshot = $2::jsonb where id = $1`,
+    [s.data.sent[0].survey_id, JSON.stringify({ ...tpl, questions: [{ id: "w", type: "weird", text: "?" }] })]);
   const r = await sessions.anon.rpc("submit_survey", { p_token: s.data.sent[0].token, p_answers: { w: "x" } });
   assert.deepEqual(r.data, { ok: false });
   const blank = await sessions.anon.rpc("submit_survey", { p_token: s.data.sent[0].token, p_answers: {} });
@@ -253,11 +258,13 @@ test("surveys: email escapes names", async () => {
 test("surveys: submit checks choice options", async () => {
   const tpl = { id: "choice-t", name: "Choice", intro: "", questions: [
     { id: "s", type: "single", text: "Pick", options: ["A", "B"] },
-    { id: "m", type: "multi", text: "Pick many", options: ["A", "B", "C"] },
-    { id: "n", type: "single", text: "No options" }] };
+    { id: "m", type: "multi", text: "Pick many", options: ["A", "B", "C"] }] };
   await seedContact("sv-c10", C({ name: "Ten", email: "ten@acme.invalid" }));
   const s = await send(sessions.admin, "sv-a1", ["sv-c10"], tpl);
   assert.ifError(s.error);
+  // A question without options cannot be sent any more; plant it in the snapshot.
+  await sql(`update surveys set template_snapshot = $2::jsonb where id = $1`, [s.data.sent[0].survey_id,
+    JSON.stringify({ ...tpl, questions: [...tpl.questions, { id: "n", type: "single", text: "No options" }] })]);
   const tok = s.data.sent[0].token;
   const sub = (a) => sessions.anon.rpc("submit_survey", { p_token: tok, p_answers: a });
   for (const a of [{ s: "Z" }, { s: ["A"] }, { m: "A" }, { m: ["A", "Z"] }, { m: ["A", "A"] },
@@ -269,6 +276,109 @@ test("surveys: submit checks choice options", async () => {
   assert.deepEqual(ok.data, { ok: true });
   const rows = await sql(`select question_id, value_text, value_choices from survey_answers where survey_id = $1 order by question_id`, [s.data.sent[0].survey_id]);
   assert.deepEqual(rows.map(r => [r.question_id, r.value_text, r.value_choices]), [["m", null, ["A", "C"]], ["s", "B", null]]);
+});
+
+const setThrottle = (days) => sql(`insert into settings (org_id, data) values ($1, jsonb_build_object('surveys', jsonb_build_object('throttleDays', $2::int)))
+  on conflict (org_id) do update set data = settings.data || excluded.data`, [ORG_A, days]);
+const clearSurveySettings = () => sql(`update settings set data = data - 'surveys' where org_id = $1`, [ORG_A]);
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dMon = (d) => `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
+
+test("surveys: send refuses invalid template", async () => {
+  await seedContact("sv-t0", C({ name: "Tpl Zero", email: "t0@acme.invalid" }));
+  const q = (o) => ({ id: "x", type: "text", text: "Q", required: false, ...o });
+  const bad = [
+    ["two NPS", [q({ id: "a", type: "nps" }), q({ id: "b", type: "nps" })]],
+    ["zero questions", []],
+    ["rating scale 6", [q({ type: "rating", scale: 6, lowLabel: "", highLabel: "" })]],
+    ["single with 1 option", [q({ type: "single", options: ["Only"] })]],
+    ["untrimmed option", [q({ type: "single", options: [" A ", "B"] })]],
+    ["duplicate options", [q({ type: "multi", options: ["A", "a"] })]],
+    ["unknown type", [q({ type: "weird" })]],
+    ["duplicate ids", [q({ id: "d" }), q({ id: "d" })]],
+    ["blank text", [q({ text: "  " })]],
+  ];
+  for (const [label, questions] of bad) {
+    const r = await send(sessions.admin, "sv-a1", ["sv-t0"], { id: "bad-t", name: "Bad", intro: "", questions });
+    assert.match(r.error?.message || "", /invalid template/, label);
+  }
+  const noName = await send(sessions.admin, "sv-a1", ["sv-t0"], { id: "bad-t", name: " ", intro: "", questions: [q({})] });
+  assert.match(noName.error?.message || "", /invalid template/, "blank name");
+  const rows = await sql(`select id from surveys where contact_id = 'sv-t0'`);
+  assert.equal(rows.length, 0, "nothing sent for an invalid template");
+  const ok = await send(sessions.admin, "sv-a1", ["sv-t0"], { id: "ok-t", name: "Ok", intro: "", questions: [q({})] });
+  assert.ifError(ok.error); assert.equal(ok.data.sent.length, 1, "control: a valid template sends");
+});
+
+test("surveys: throttle non-NPS only", async () => {
+  await seedContact("sv-t1", C({ name: "Throttle One", email: "t1@acme.invalid" }));
+  const a = await send(sessions.admin, "sv-a1", ["sv-t1"], STARTER["support-quality"]);
+  assert.ifError(a.error); assert.equal(a.data.sent.length, 1);
+  const b = await send(sessions.admin, "sv-a1", ["sv-t1"], STARTER["onboarding-review"]);
+  assert.ifError(b.error);
+  assert.equal(b.data.sent.length, 0);
+  const now = new Date();
+  const until = new Date(now.getTime() + 90 * 86400000);
+  assert.deepEqual(b.data.skipped, [{ contact_id: "sv-t1", reason: `Surveyed ${dMon(now)} — wait until ${dMon(until)}` }]);
+  const c = await send(sessions.admin, "sv-a1", ["sv-t1"], T);
+  assert.ifError(c.error);
+  assert.equal(c.data.sent.length, 1, "an NPS check-in is not throttled");
+  // An NPS survey never throttles a later non-NPS one.
+  await seedContact("sv-t3", C({ name: "Throttle Three", email: "t3@acme.invalid" }));
+  assert.equal((await send(sessions.admin, "sv-a1", ["sv-t3"], T)).data.sent.length, 1);
+  assert.equal((await send(sessions.admin, "sv-a1", ["sv-t3"], STARTER["onboarding-review"])).data.sent.length, 1);
+  // An old non-NPS survey (outside the window) does not throttle.
+  await seedContact("sv-t4", C({ name: "Throttle Four", email: "t4@acme.invalid" }));
+  const old = await send(sessions.admin, "sv-a1", ["sv-t4"], STARTER["support-quality"]);
+  await sql(`update surveys set sent_at = now() - interval '91 days' where id = $1`, [old.data.sent[0].survey_id]);
+  assert.equal((await send(sessions.admin, "sv-a1", ["sv-t4"], STARTER["onboarding-review"])).data.sent.length, 1);
+  // A configured window is used in the reason.
+  await setThrottle(10);
+  try {
+    await seedContact("sv-t5", C({ name: "Throttle Five", email: "t5@acme.invalid" }));
+    assert.equal((await send(sessions.admin, "sv-a1", ["sv-t5"], STARTER["support-quality"])).data.sent.length, 1);
+    const r = await send(sessions.admin, "sv-a1", ["sv-t5"], STARTER["product-usage"]);
+    assert.equal(r.data.skipped[0]?.reason, `Surveyed ${dMon(now)} — wait until ${dMon(new Date(now.getTime() + 10 * 86400000))}`);
+  } finally { await clearSurveySettings(); }
+});
+
+test("surveys: throttle 0 disables", async () => {
+  await setThrottle(0);
+  try {
+    await seedContact("sv-t2", C({ name: "Throttle Two", email: "t2@acme.invalid" }));
+    const a = await send(sessions.admin, "sv-a1", ["sv-t2"], STARTER["support-quality"]);
+    assert.ifError(a.error); assert.equal(a.data.sent.length, 1);
+    const b = await send(sessions.admin, "sv-a1", ["sv-t2"], STARTER["onboarding-review"]);
+    assert.ifError(b.error);
+    assert.deepEqual(b.data.skipped, []);
+    assert.equal(b.data.sent.length, 1);
+  } finally { await clearSurveySettings(); }
+});
+
+test("surveys: rating/single/multi answers round-trip", async () => {
+  await setThrottle(0);
+  try {
+    await seedContact("sv-t6", C({ name: "Round Trip", email: "t6@acme.invalid" }));
+    const pu = await send(sessions.admin, "sv-a1", ["sv-t6"], STARTER["product-usage"]);
+    assert.ifError(pu.error);
+    const sq = await send(sessions.admin, "sv-a1", ["sv-t6"], STARTER["support-quality"]);
+    assert.ifError(sq.error);
+    const sub = (r, a) => sessions.anon.rpc("submit_survey", { p_token: r.data.sent[0].token, p_answers: a });
+    for (const a of [{ q1: "weekly" }, { q1: " Weekly" }, { q1: "Weekly", q2: ["Reporting", "Nope"] }]) {
+      assert.deepEqual((await sub(pu, a)).data, { ok: false }, JSON.stringify(a));
+    }
+    assert.deepEqual((await sub(pu, { q1: "Weekly", q2: ["Reporting", "Mobile app"] })).data, { ok: true });
+    for (const a of [{ q1: 8 }, { q1: 0 }, { q1: 3.5 }]) {
+      assert.deepEqual((await sub(sq, a)).data, { ok: false }, JSON.stringify(a));
+    }
+    assert.deepEqual((await sub(sq, { q1: 7, q2: "Quick replies" })).data, { ok: true });
+    const rows = async (r) => (await sql(`select question_id, value_num, value_text, value_choices from survey_answers where survey_id = $1 order by question_id`,
+      [r.data.sent[0].survey_id])).map(x => [x.question_id, x.value_num == null ? null : Number(x.value_num), x.value_text, x.value_choices]);
+    assert.deepEqual(await rows(pu), [["q1", null, "Weekly", null], ["q2", null, null, ["Reporting", "Mobile app"]]]);
+    assert.deepEqual(await rows(sq), [["q1", 7, null, null], ["q2", null, "Quick replies", null]]);
+    const g = await sessions.anon.rpc("get_survey", { p_token: pu.data.sent[0].token });
+    assert.deepEqual(g.data.questions, STARTER["product-usage"].questions);
+  } finally { await clearSurveySettings(); }
 });
 
 test("surveys: org B cannot read org A surveys", async () => {

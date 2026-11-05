@@ -27,6 +27,8 @@ test("validation messages", () => {
   assert.equal(err(T({ questions: [{ id: "a", type: "single", text: "x", options: ["Daily", " daily"] }] })), "Question 1: options must be unique");
   assert.equal(err(T({ questions: [{ id: "a", type: "text", text: "x".repeat(301) }] })), "Question 1: too long");
   assert.equal(err(T({ questions: [{ id: "a", type: "rating", text: "x", scale: 5, lowLabel: "l".repeat(41) }] })), "Question 1: too long");
+  assert.equal(err(T({ questions: [{ id: "a", type: "text", text: "ok" }, { id: "b", type: "weird", text: "x" }] })), "Question 2: unknown type");
+  assert.equal(err(T({ questions: [{ id: "a", text: "x" }] })), "Question 1: unknown type");
   assert.equal(validateTemplate(T({ name: "n".repeat(81) })).ok, false);
   assert.equal(validateTemplate(T({ intro: "i".repeat(301) })).ok, false);
 });

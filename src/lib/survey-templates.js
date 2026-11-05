@@ -67,6 +67,7 @@ export function validateTemplate(t) {
   for (let i = 0; i < n.questions.length; i++) {
     const q = n.questions[i];
     const p = `Question ${i + 1}: `;
+    if (!["nps", "rating", "single", "multi", "text"].includes(q.type)) return bad(p + "unknown type");
     if (!q.text) return bad(p + "text is required");
     if (q.text.length > 300) return bad(p + "too long");
     if (ids.has(q.id)) return bad(p + "duplicate id");
