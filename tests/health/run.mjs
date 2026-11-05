@@ -91,6 +91,7 @@ import "./dashboard-stage2.test.mjs";
 import "./accounts-stage3.test.mjs";
 import "./account-detail-stage4.test.mjs";
 import "./implementation-stage5.test.mjs";
+import "./survey-page.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
@@ -105,8 +106,12 @@ execFileSync(process.execPath, [fileURLToPath(new URL("../../build.mjs", import.
   stdio: "inherit",
 });
 
+// Optional filter: `node tests/health/run.mjs survey-page` runs only cases whose name
+// contains the argument (dashes read as spaces).
+const only = process.argv[2] ? process.argv[2].replace(/-/g, " ").toLowerCase() : null;
 let pass = 0, fail = 0;
 for (const c of CASES) {
+  if (only && !c.name.toLowerCase().replace(/-/g, " ").includes(only)) continue;
   try { await c.fn(); console.log("PASS", c.name); pass++; }
   catch (e) { console.error("FAIL", c.name, "\n ", e.message); fail++; }
 }

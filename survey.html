@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex" />
+<title>Feedback survey</title>
+<style>
+:root{--bg:#f6f7fb;--card:#fff;--text:#0f172a;--muted:#64748b;--line:#e2e8f0;--accent:#4f46e5;--accent-ink:#fff;--accent-soft:#eef2ff;--danger:#dc2626;--ring:rgba(79,70,229,.45)}
+@media (prefers-color-scheme:dark){:root{--bg:#0b1020;--card:#141a2e;--text:#e5e7eb;--muted:#94a3b8;--line:#273049;--accent:#818cf8;--accent-ink:#0b1020;--accent-soft:#1e2442;--danger:#f87171;--ring:rgba(129,140,248,.55)}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+header{background:var(--card);border-bottom:1px solid var(--line);padding:14px 16px}
+header .org{max-width:640px;margin:0 auto;font-weight:700;font-size:17px;overflow-wrap:anywhere}
+main{max-width:640px;margin:0 auto;padding:20px 16px 48px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:20px 16px;box-shadow:0 1px 2px rgba(15,23,42,.05)}
+h1{font-size:22px;line-height:1.3;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 4px}
+.intro{color:var(--muted);margin:12px 0 0}
+fieldset{border:0;border-top:1px solid var(--line);margin:20px 0 0;padding:18px 0 0;min-width:0}
+legend{font-weight:600;padding:0;margin-bottom:10px;float:left;width:100%}
+legend+*{clear:both}
+.req{color:var(--danger)}
+.scale{display:grid;grid-template-columns:repeat(11,minmax(0,1fr));gap:4px}
+.scale.r{grid-template-columns:repeat(var(--n,5),minmax(0,1fr))}
+.scale label{position:relative;display:block}
+.scale input{position:absolute;opacity:0;inset:0;margin:0}
+.scale span{display:flex;align-items:center;justify-content:center;height:40px;border:1px solid var(--line);border-radius:8px;font-weight:600;font-size:14px;cursor:pointer;background:var(--card)}
+.scale input:checked+span{background:var(--accent);border-color:var(--accent);color:var(--accent-ink)}
+.scale input:focus-visible+span{outline:3px solid var(--ring);outline-offset:2px}
+.ends{display:flex;justify-content:space-between;color:var(--muted);font-size:13px;margin-top:6px}
+.opt{display:flex;gap:8px;align-items:center;margin:6px 0}
+.opt input{accent-color:var(--accent);width:18px;height:18px}
+textarea{width:100%;min-height:96px;border:1px solid var(--line);border-radius:10px;padding:10px 12px;font:inherit;color:inherit;background:var(--card);resize:vertical}
+textarea:focus-visible,button:focus-visible,.opt input:focus-visible{outline:3px solid var(--ring);outline-offset:2px}
+.err{color:var(--danger);font-size:14px;margin:8px 0 0}
+.err[hidden]{display:none}
+.actions{margin-top:24px}
+button{appearance:none;border:0;border-radius:10px;background:var(--accent);color:var(--accent-ink);font:inherit;font-weight:600;padding:11px 18px;cursor:pointer;min-height:44px}
+button:disabled{opacity:.6;cursor:default}
+button.ghost{background:var(--accent-soft);color:var(--accent)}
+.msg{margin:0;font-size:17px}
+.formerr{color:var(--danger);margin:12px 0 0}
+</style>
+</head>
+<body>
+<header><div class="org" id="org"></div></header>
+<main id="app" aria-live="polite"></main>
+<script>
+"use strict";
+/*__SURVEYS_LIB__*/
+(function () {
+  var URL_ = "__SUPABASE_URL__", KEY = "__SUPABASE_ANON_KEY__";
+  var params = new URLSearchParams(location.search);
+  var token = params.get("t") || "";
+  var app = document.getElementById("app");
+  var survey = null;
+
+  function el(tag, attrs, kids) {
+    var e = document.createElement(tag);
+    for (var k in attrs || {}) {
+      if (k === "text") e.textContent = attrs[k];
+      else if (k === "on") for (var ev in attrs.on) e.addEventListener(ev, attrs.on[ev]);
+      else if (attrs[k] === true) e.setAttribute(k, "");
+      else if (attrs[k] != null && attrs[k] !== false) e.setAttribute(k, attrs[k]);
+    }
+    (kids || []).forEach(function (c) { if (c) e.appendChild(typeof c === "string" ? document.createTextNode(c) : c); });
+    return e;
+  }
+  function rpc(fn, body) {
+    return fetch(URL_ + "/rest/v1/rpc/" + fn, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", apikey: KEY, Authorization: "Bearer " + KEY },
+      body: JSON.stringify(body),
+    }).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
+  }
+  function show(state, kids) {
+    app.replaceChildren(el("div", { class: "card", "data-state": state }, kids));
+  }
+  function message(state, text, extra) {
+    show(state, [el("p", { class: "msg", text: text })].concat(extra || []));
+  }
+  function ctx() {
+    return { firstName: survey.firstName, accountName: survey.accountName, csmName: survey.csmName, orgName: survey.orgName };
+  }
+  function heading() {
+    var c = ctx();
+    var line = c.csmName ? c.csmName + " from " + c.orgName + " would like your feedback" : c.orgName + " would like your feedback";
+    return [el("h1", { text: greeting(c) }), el("p", { class: "sub", text: line })];
+  }
+
+  function scaleQ(q, lo, hi, cur) {
+    var wrap = el("div", { class: hi - lo === 10 ? "scale" : "scale r" });
+    if (hi - lo !== 10) wrap.style.setProperty("--n", String(hi - lo + 1));
+    for (var n = lo; n <= hi; n++) {
+      wrap.appendChild(el("label", {}, [
+        el("input", { type: "radio", name: q.id, value: String(n), checked: cur === n, "aria-label": String(n) }),
+        el("span", { "aria-hidden": "true", text: String(n) }),
+      ]));
+    }
+    var ends = q.type === "nps"
+      ? el("div", { class: "ends", "aria-hidden": "true" }, [el("span", { text: "Not likely" }), el("span", { text: "Very likely" })])
+      : null;
+    return [wrap, ends];
+  }
+  function questionInput(q, cur) {
+    if (q.type === "nps") return scaleQ(q, 0, 10, cur);
+    if (q.type === "rating") return scaleQ(q, 1, q.scale || 5, cur);
+    if (q.type === "text") return [el("textarea", { name: q.id, id: "in-" + q.id, maxlength: "4000", "aria-labelledby": "lg-" + q.id, text: cur == null ? "" : String(cur) })];
+    if (q.type === "single" || q.type === "multi") {
+      return (q.options || []).map(function (o) {
+        var on = q.type === "single" ? cur === o : Array.isArray(cur) && cur.indexOf(o) >= 0;
+        return el("label", { class: "opt" }, [el("input", { type: q.type === "single" ? "radio" : "checkbox", name: q.id, value: o, checked: on }), o]);
+      });
+    }
+    return [];
+  }
+  function readAnswers(form) {
+    var a = {};
+    survey.questions.forEach(function (q) {
+      if (q.type === "nps" || q.type === "rating") {
+        var c = form.querySelector('input[name="' + q.id + '"]:checked');
+        if (c) a[q.id] = parseInt(c.value, 10);
+      } else if (q.type === "text") {
+        var v = form.querySelector('textarea[name="' + q.id + '"]').value.trim();
+        if (v) a[q.id] = v;
+      } else if (q.type === "single") {
+        var s = form.querySelector('input[name="' + q.id + '"]:checked');
+        if (s) a[q.id] = s.value;
+      } else if (q.type === "multi") {
+        var m = [].map.call(form.querySelectorAll('input[name="' + q.id + '"]:checked'), function (x) { return x.value; });
+        if (m.length) a[q.id] = m;
+      }
+    });
+    return a;
+  }
+
+  function renderForm(answers) {
+    var qs = survey.questions || [];
+    var update = !!survey.submittedAt;
+    var fields = qs.map(function (q) {
+      var errId = "err-" + q.id;
+      var legend = el("legend", { id: "lg-" + q.id }, [fillPlaceholders(q.text, ctx()), q.required ? el("span", { class: "req", "aria-hidden": "true", text: " *" }) : null]);
+      var err = el("p", { class: "err", id: errId, hidden: true });
+      var fs = el("fieldset", { "data-q": q.id }, [legend].concat(questionInput(q, answers[q.id]), [err]));
+      return fs;
+    });
+    var formErr = el("p", { class: "formerr", role: "alert", hidden: true });
+    var btn = el("button", { type: "submit", text: update ? "Update answers" : "Submit" });
+    var form = el("form", { novalidate: true }, fields.concat([formErr, el("div", { class: "actions" }, [btn])]));
+    form.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var a = readAnswers(form);
+      var bad = false;
+      fields.forEach(function (fs, i) {
+        var q = qs[i], err = fs.querySelector(".err");
+        var one = {}; if (a[q.id] !== undefined) one[q.id] = a[q.id];
+        var r = validateAnswers([q], one);
+        if (r.ok) { err.hidden = true; err.textContent = ""; fs.removeAttribute("aria-describedby"); fs.removeAttribute("aria-invalid"); }
+        else {
+          err.textContent = q.required && one[q.id] === undefined ? "Please answer this question." : "Please check this answer.";
+          err.hidden = false; fs.setAttribute("aria-describedby", err.id); fs.setAttribute("aria-invalid", "true");
+          if (!bad) { var f = fs.querySelector("input,textarea"); if (f) f.focus(); }
+          bad = true;
+        }
+      });
+      if (bad) return;
+      btn.disabled = true; formErr.hidden = true;
+      rpc("submit_survey", { p_token: token, p_answers: a }).then(function (res) {
+        if (res && res.ok) {
+          survey.answers = a;
+          survey.submittedAt = survey.submittedAt || new Date().toISOString();
+          renderThanks();
+        } else throw new Error("rejected");
+      }).catch(function () {
+        btn.disabled = false;
+        formErr.textContent = "Your answers could not be sent. Please try again.";
+        formErr.hidden = false;
+      });
+    });
+    var intro = survey.intro ? el("p", { class: "intro", text: fillPlaceholders(survey.intro, ctx()) }) : null;
+    show("form", heading().concat([intro, form]));
+  }
+  function renderThanks() {
+    var extra = survey.editable === false ? [] : [el("div", { class: "actions" }, [
+      el("button", { type: "button", class: "ghost", text: "Edit answers", on: { click: function () { renderForm(survey.answers || {}); } } }),
+    ])];
+    message("thanks", "Thank you — your answers were sent.", extra);
+  }
+  function renderUnsubscribe() {
+    var org = survey.orgName;
+    var err = el("p", { class: "formerr", role: "alert", hidden: true });
+    var btn = el("button", { type: "button", text: "Unsubscribe" });
+    btn.addEventListener("click", function () {
+      btn.disabled = true;
+      rpc("unsubscribe_survey", { p_token: token }).then(function (res) {
+        if (res && res.ok) message("unsubscribed", "You won't receive more surveys from " + org + ".");
+        else throw new Error("rejected");
+      }).catch(function () { btn.disabled = false; err.textContent = "That didn't work. Please try again."; err.hidden = false; });
+    });
+    show("unsubscribe", [el("h1", { text: "Unsubscribe from " + org + " surveys?" }), err, el("div", { class: "actions" }, [btn])]);
+  }
+  function prefill() {
+    var a = {};
+    var q = params.get("q"), v = params.get("v");
+    if (!q || v == null || !/^\d+$/.test(v)) return a;
+    var n = parseInt(v, 10);
+    var hit = (survey.questions || []).filter(function (x) { return x.id === q; })[0];
+    if (!hit) return a;
+    if (hit.type === "nps" && n >= 0 && n <= 10) a[q] = n;
+    else if (hit.type === "rating" && n >= 1 && n <= (hit.scale || 5)) a[q] = n;
+    return a;
+  }
+  function invalid() { message("invalid", "This survey link is no longer valid."); }
+
+  if (!token) return invalid();
+  rpc("get_survey", { p_token: token }).then(function (s) {
+    if (!s || !Array.isArray(s.questions)) return invalid();
+    survey = s;
+    document.getElementById("org").textContent = s.orgName || "";
+    if (s.orgName) document.title = "Feedback for " + s.orgName;
+    if (params.get("u") === "1") return renderUnsubscribe();
+    if (s.submittedAt && s.editable === false) return message("locked", "This survey can no longer be changed.");
+    var a = s.submittedAt ? (s.answers || {}) : prefill();
+    renderForm(a);
+  }).catch(function () {
+    message("error", "We couldn't load this survey. Please try again later.");
+  });
+})();
+</script>
+</body>
+</html>
