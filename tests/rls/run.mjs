@@ -20,6 +20,7 @@ import "./ownership.test.mjs";
 import "./leads.test.mjs";
 import "./implementation.test.mjs";
 import "./confirm-attach.test.mjs";
+import "./surveys.test.mjs";
 import "./migration.test.mjs";   // LAST: rebuilds the stack from the old schema
 
 try {
