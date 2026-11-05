@@ -58,8 +58,10 @@ export function sendCandidates(contacts, surveys, templateId, today) {
     let reason = null;
     if (!String(contact.email || "").trim()) reason = "No email";
     else if (contact.surveyOptOut) reason = "Opted out";
-    else if (!contact.surveyRecipient) reason = "Not flagged for surveys";
+    // Pending before "not flagged": an unflagged contact can still hold an open survey (ticked
+    // for a one-off send), and the server refuses a resend, so the dialog must disable it.
     else if (open) reason = `Survey pending since ${dMon(open.sentAt)}`;
+    else if (!contact.surveyRecipient) reason = "Not flagged for surveys";
     if (reason) other.push({ contact, reason });
     else ticked.push(contact);
   }

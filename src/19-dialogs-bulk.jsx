@@ -33,10 +33,12 @@ function Modal({ label, onClose, initialFocusRef, children, ...rest }) {
     window.addEventListener("keydown", h, true); // capture phase: runs before App's handler
     return () => window.removeEventListener("keydown", h, true);
   }, [onClose]);
+  // The box is capped at 80vh (15vh top offset + 80vh = 95vh) and scrolls, so a tall dialog's
+  // action buttons stay reachable on a 720px-high screen (the Send survey dialog did not).
   return (
     <div className="fixed inset-0 z-50 flex items-start justify-center bg-scrim/40 pt-[15vh]" onClick={onClose}>
       <div ref={dlgRef} role="dialog" aria-modal="true" aria-label={label}
-           className="nm w-full max-w-md p-4" onClick={e => e.stopPropagation()} {...rest}>
+           className="nm w-full max-w-md p-4 max-h-[80vh] overflow-y-auto" onClick={e => e.stopPropagation()} {...rest}>
         {children}
       </div>
     </div>

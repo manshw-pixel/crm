@@ -123,3 +123,18 @@ test("surveys card: double-clicking Send calls send_survey once", async () => {
     assert(n === 1, "send_survey calls: " + n);
   } finally { await browser.close(); }
 });
+
+test("surveys card: on a 1280x720 screen the Send button is reachable and works", async () => {
+  // Live regression: the dialog grew past the viewport and did not scroll, so Send could never be clicked.
+  const { page, browser } = await launch(seed("admin") + `
+    window.__sendSurvey = () => ({ data: null, error: { message: "Daily survey limit reached (50). Try again tomorrow." } });`);
+  try {
+    await openAccount(page);
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await page.locator("[data-send-survey]").click();
+    const box = await page.locator("[data-send-survey-dialog]").boundingBox();
+    assert(box.y + box.height <= 720, `dialog fits the viewport (bottom ${box.y + box.height})`);
+    await page.locator("[data-send-confirm]").click({ timeout: 5000 });
+    await page.waitForSelector("[data-send-error]", { timeout: 5000 });
+  } finally { await browser.close(); }
+});
