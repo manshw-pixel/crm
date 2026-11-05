@@ -258,9 +258,8 @@ export function reducer(state, action) {
       ...implWithout(state, a => a.accountId === action.id) };
     case "ADD_CONTACT": return { ...state, contacts: [...state.contacts, action.item] };
     case "IMPORT_CONTACTS": {
-      const have = new Set(state.contacts.map(c => c.id));
       const patchOf = new Map(action.patches.map(p => [p.id, p.patch]));
-      return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds.filter(c => !have.has(c.id))] };
+      return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds] };
     }
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
