@@ -72,8 +72,8 @@ function SurveysSettingsCard({ st, dispatch, user, orgName }) {
               <li key={t.id} data-template-row={t.id} className={`flex flex-wrap items-center gap-2 py-2 text-sm ${t.archived ? "opacity-60" : ""}`}>
                 <span className="min-w-0 break-words font-semibold text-slate-800">{t.name}</span>
                 <span className="text-xs text-slate-500">{(t.questions || []).length} questions</span>
-                {nps && <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-bold text-indigo-700">NPS</span>}
-                {t.archived && <span data-template-archived className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-600">Archived</span>}
+                {nps && <span data-template-nps data-sev="green" className="ad-pill ad-pill-sm">NPS</span>}
+                {t.archived && <span data-template-archived className="ad-pill ad-pill-sm">Archived</span>}
                 <span className="ml-auto flex gap-2">
                   <Btn data-template-edit aria-label={"Edit " + t.name} onClick={() => setEditing(t)}>Edit</Btn>
                   <Btn data-template-copy aria-label={"Copy " + t.name} onClick={() => copy(t)}>Copy</Btn>
@@ -163,7 +163,9 @@ function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
   const setQ = (i, patch) => setT(x => ({ ...x, questions: x.questions.map((q, j) => j === i ? { ...q, ...patch } : q) }));
   const changeType = (i, type) => setT(x => ({ ...x, questions: x.questions.map((q, j) => {
     if (j !== i) return q;
-    const fresh = newQuestion(type, () => q.id);
+    if (q.type === type) return q;
+    // A new type is a new question: past answers key on the id, so it must not be reused.
+    const fresh = newQuestion(type, uid);
     return { ...fresh, text: q.text || fresh.text, required: q.required };
   }) }));
   const add = type => { setT(x => ({ ...x, questions: [...x.questions, newQuestion(type, uid)] })); setAdding(false); };

@@ -15,12 +15,63 @@ async function openSurveys(page, w = 1440, h = 900) {
   await page.waitForSelector("[data-surveys-settings]");
 }
 
-test("surveys settings: non-admin sees no Surveys section", async () => {
+test("surveys settings: a CSM is not offered Settings, so no Surveys section", async () => {
   const { page, browser } = await launch(seed("user"));
   try {
     await page.waitForSelector('button[title="Accounts"]');
+    assert(await page.locator('button[title="Settings"]').count() === 0, "CSM has no Settings nav item");
     assert(await page.locator("[data-surveys-settings]").count() === 0, "no surveys card");
-    assert(await page.locator('a[href="#set-surveys"]').count() === 0, "no index entry");
+  } finally { await browser.close(); }
+  const admin = await launch(seed("admin"));
+  try {
+    await admin.page.waitForSelector('button[title="Accounts"]');
+    assert(await admin.page.locator('button[title="Settings"]').count() === 1, "admin does have the Settings nav item (selector is real)");
+  } finally { await admin.browser.close(); }
+});
+
+test("surveys settings: retyping a question gives a new id; other edits keep it", async () => {
+  const { page, browser } = await launch(seed("admin", { surveyTemplates: [{ id: "t1", name: "T", intro: "", archived: false, questions: [
+    { id: "qa", type: "rating", text: "Rate", required: true, scale: 5, lowLabel: "", highLabel: "" },
+    { id: "qb", type: "single", text: "Pick", required: false, options: ["A", "B"] },
+    { id: "qc", type: "text", text: "Say", required: false, long: false }] }] }));
+  try {
+    await openSurveys(page);
+    await page.locator('[data-template-row="t1"] [data-template-edit]').click();
+    const ed = page.locator("[data-template-editor]");
+    const rows = ed.locator("[data-q-row]");
+    await rows.nth(0).locator("[data-q-text]").fill("Rate us");
+    await rows.nth(0).locator("[data-q-scale]").selectOption("10");
+    await rows.nth(1).locator("[data-q-option]").first().fill("Alpha");
+    await rows.nth(2).locator("[data-q-type]").selectOption("multi");
+    const ids = await rows.evaluateAll(els => els.map(e => e.getAttribute("data-q-row")));
+    assert(ids[0] === "qa" && ids[1] === "qb", "edits keep ids: " + ids);
+    assert(ids[2] && ids[2] !== "qc", "retype gets new id: " + ids);
+    await rows.nth(2).locator("[data-q-option]").nth(0).fill("X");
+    await rows.nth(2).locator("[data-q-option]").nth(1).fill("Y");
+    await ed.locator("[data-template-save]").click();
+    await page.waitForSelector("[data-template-editor]", { state: "detached" });
+    const t = (await stored(page)).find(x => x.id === "t1");
+    assert(t.questions.map(q => q.id).join() === "qa,qb," + ids[2], "saved ids: " + t.questions.map(q => q.id));
+    assert(t.questions[0].scale === 10 && t.questions[1].options[0] === "Alpha" && t.questions[2].type === "multi", "edits saved");
+  } finally { await browser.close(); }
+});
+
+test("surveys settings: NPS and Archived pills are legible in dark mode", async () => {
+  const { page, browser } = await launch(seed("admin", { surveyTemplates: [
+    { id: "t-arch", name: "Old", intro: "", archived: true, questions: [{ id: "a", type: "nps", text: "x", required: true }] }] }));
+  try {
+    await page.evaluate(() => document.documentElement.classList.add("dark"));
+    await openSurveys(page);
+    const ratio = await page.evaluate(() => {
+      const rgb = s => s.match(/[\d.]+/g).slice(0, 3).map(Number);
+      const lum = c => { const [r, g, b] = c.map(v => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      return [...document.querySelectorAll("[data-template-nps], [data-template-archived]")].map(e => {
+        const cs = getComputedStyle(e), a = lum(rgb(cs.color)), b = lum(rgb(cs.backgroundColor));
+        return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+      });
+    });
+    assert(await page.evaluate(() => document.documentElement.classList.contains("dark")), "dark still applied");
+    assert(ratio.length >= 3 && ratio.every(r => r >= 4.5), "contrast " + ratio.map(r => r.toFixed(2)));
   } finally { await browser.close(); }
 });
 
