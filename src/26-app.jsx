@@ -424,11 +424,18 @@ function App({ user, onBackToClients }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const bellRef = useRef(null);
   const [bellBottom, setBellBottom] = useState(64);
+  const [bellOpensRight, setBellOpensRight] = useState(false);
   // measure where the bell sits each time the panel opens (the header wraps on phones), and
   // close on Escape
   useEffect(() => {
     if (!notifOpen) return;
-    if (bellRef.current) setBellBottom(Math.round(bellRef.current.getBoundingClientRect().bottom));
+    if (bellRef.current) {
+      const bell = bellRef.current.getBoundingClientRect();
+      const side = document.querySelector('nav[aria-label="Main"]');
+      setBellBottom(Math.round(bell.bottom));
+      // A short page title leaves the bell near the sidebar: 320px leftwards would slide under it.
+      setBellOpensRight(!!side && bell.right - 320 < side.getBoundingClientRect().right);
+    }
     const onKey = e => { if (e.key === "Escape") setNotifOpen(false); };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -547,7 +554,7 @@ function App({ user, onBackToClients }) {
           {notifOpen && <div data-notif-backdrop className="fixed inset-0 z-10" onClick={() => setNotifOpen(false)} />}
           {notifOpen && (
             <div data-notif-panel style={{ "--bell-bottom": `${bellBottom}px` }}
-              className="nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80">
+              className={`nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto ${bellOpensRight ? "sm:left-0" : "sm:right-0"} sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80`}>
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-slate-700">Alerts</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
