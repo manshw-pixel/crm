@@ -425,6 +425,11 @@
     main [data-dash] :is([data-view-all], [data-bridge-head] button, [data-week-task] > button) { min-height: 44px; padding-block: 12px; margin-block: -12px; }
     main [data-dash] .dash-check { min-width: 44px; min-height: 44px; margin: -13px -13px -13px -13px; }
     main button[data-bell].nm-btn { width: 44px; height: 44px; }
+    /* the global table padding and uppercase headers push On hold past the card at phone width */
+    main [data-impl-tier-table] > thead th { text-transform: none; letter-spacing: 0; font-size: 11px; }
+    main [data-impl-tier-table] :is(th, td) { padding-inline: 2px; }
+    main [data-impl-tier-table] :is(th, td):first-child { padding-left: 8px; }
+    main [data-impl-tier-table] :is(th, td):last-child { padding-right: 8px; }
   }
   @media (prefers-reduced-motion: reduce) {
     main [data-dash] :is(.nm, .dash-pill, [data-row], [data-impl-row], [data-kpi-trend], [role=progressbar], [role=progressbar] > span), main [data-dash] :is(.nm, .dash-pill, [data-row], [data-impl-row]):hover { transform: none !important; animation: none !important; transition: none !important; }

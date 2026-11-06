@@ -54,13 +54,13 @@ function ChurnAnalysis({ accounts, rates }) {
       </div>}>
       {rows.length === 0 && <div className="text-sm text-slate-500">No churn recorded. 🎉</div>}
       {rows.map(r => (
-        <div key={r.k} className="flex items-center gap-3 py-1 text-sm">
-          <span className="w-28 shrink-0 font-semibold text-slate-700">{r.k}</span>
-          <div className="h-3 flex-1 rounded bg-slate-100">
+        <div key={r.k} className="flex items-center gap-3 py-1 text-sm max-sm:flex-wrap max-sm:gap-x-3 max-sm:gap-y-1">
+          <span className="w-28 shrink-0 font-semibold text-slate-700 max-sm:w-auto max-sm:min-w-0 max-sm:flex-1">{r.k}</span>
+          <div className="h-3 flex-1 rounded bg-slate-100 max-sm:order-last max-sm:basis-full">
             <div className="h-3 rounded bg-rose-400" style={{ width: `${(100 * r.arr) / max}%` }} />
           </div>
-          <span className="w-24 shrink-0 text-right text-xs text-slate-600">{r.n ? `${r.n} acct${r.n > 1 ? "s" : ""}` : "—"}</span>
-          <span className="w-20 shrink-0 text-right text-xs font-bold text-rose-600">{r.arr ? fmtMoney(r.arr) : "—"}</span>
+          <span className="w-24 shrink-0 text-right text-xs text-slate-600 max-sm:w-auto">{r.n ? `${r.n} acct${r.n > 1 ? "s" : ""}` : "—"}</span>
+          <span className="w-20 shrink-0 text-right text-xs font-bold text-rose-600 max-sm:w-auto">{r.arr ? fmtMoney(r.arr) : "—"}</span>
         </div>
       ))}
     </Card>
@@ -117,7 +117,9 @@ const OPP_STAGE_WEIGHT = { Discovery: 0.2, Proposal: 0.5, Negotiation: 0.7, Stal
 function AmBookCard({ book, openAccount }) {
   const [open, setOpen] = useState(false);
   const money = n => fmtMoney(n);
-  const GRID = "grid grid-cols-[minmax(0,1fr)_repeat(4,minmax(5rem,7rem))] items-center gap-x-6";
+  // Phone: the label takes its own line above four equal figure columns. Wider: one line, and the
+  // label track needs a real minimum -- the figure tracks grow to their max before a 0-min 1fr gets anything.
+  const GRID = "grid grid-cols-4 items-center gap-x-2 sm:grid-cols-[minmax(10rem,1fr)_repeat(4,minmax(5rem,7rem))] sm:gap-x-6";
   const SECTIONS = [
     ["owned", `Owned before ${book.year}`],
     ["moved", `Moved to AM in ${book.year}`],
@@ -128,8 +130,8 @@ function AmBookCard({ book, openAccount }) {
   const Row = ({ label, r, pending, onClick, indent }) => (
     <div onClick={onClick} role={onClick ? "button" : undefined} tabIndex={onClick ? 0 : undefined} data-am-row={onClick ? "" : undefined}
       onKeyDown={onClick ? e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick(); } } : undefined}
-      className={`${GRID} py-1 text-sm ${indent ? "pl-4 text-slate-600" : "font-semibold text-slate-800"} ${onClick ? "cursor-pointer rounded hover:bg-slate-50" : ""}`}>
-      <span className="truncate" title={typeof label === "string" ? label : undefined}>{label}</span>
+      className={`${GRID} py-1 text-sm max-sm:text-xs ${indent ? "text-slate-600" : "font-semibold text-slate-800"} ${onClick ? "cursor-pointer rounded hover:bg-slate-50" : ""}`}>
+      <span className={`truncate max-sm:col-span-4 max-sm:text-sm ${indent ? "pl-4" : ""}`} title={typeof label === "string" ? label : undefined}>{label}</span>
       <span className="text-right tabular-nums">{pending ? "—" : money(r.opening)}</span>
       <span className="text-right tabular-nums text-emerald-700">{pending ? "—" : (r.expansion ? "+" + money(r.expansion) : "—")}</span>
       <span className="text-right tabular-nums text-rose-600">{pending ? "—" : (r.reduction ? "-" + money(r.reduction) : "—")}</span>
@@ -140,11 +142,11 @@ function AmBookCard({ book, openAccount }) {
     <Card title="AM book by handover" className="!p-3"
       right={<button data-am-book-toggle onClick={() => setOpen(o => !o)}
         className="text-xs text-slate-500 hover:text-slate-800">{open ? "▾ Hide accounts" : "▸ Show accounts"}</button>}>
-      {/* below lg the five-column table scrolls inside the card instead of crushing the labels */}
-      <div className="max-lg:-mx-1 max-lg:overflow-x-auto max-lg:px-1">
-      <div data-am-book className="max-lg:min-w-[36rem]">
-        <div className={`${GRID} border-b border-slate-200 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-500`}>
-          <span></span><span className="text-right">1 Jan</span><span className="text-right">Expansion</span>
+      {/* tablet widths scroll the five-column table inside the card; phones stack instead, so no scroll */}
+      <div className="sm:max-lg:-mx-1 sm:max-lg:overflow-x-auto sm:max-lg:px-1">
+      <div data-am-book className="sm:max-lg:min-w-[36rem]">
+        <div className={`${GRID} border-b border-slate-200 pb-1 text-[11px] font-bold uppercase tracking-widest text-slate-500 max-sm:text-[10px] max-sm:tracking-normal`}>
+          <span className="max-sm:hidden"></span><span className="text-right">1 Jan</span><span className="text-right">Expansion</span>
           <span className="text-right">Reduction</span><span className="text-right">Today</span>
         </div>
         {SECTIONS.map(([key, label]) => {

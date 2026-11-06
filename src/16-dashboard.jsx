@@ -128,14 +128,14 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
             {ren90.length === 0 && <div className="text-sm text-slate-500">No renewals in the next 90 days.</div>}
             {[...ren90].sort((x, y) => daysUntil(x.renewalDate) - daysUntil(y.renewalDate)).map(a => (
               <button key={a.id} data-row data-renewal-row={a.id} onClick={() => openAccount(a.id)}
-                className="flex w-full items-center gap-3.5 border-t border-slate-100 px-1 py-2.5 text-start first:border-0 hover:bg-slate-50">
+                className="flex w-full items-center gap-3.5 border-t border-slate-100 px-1 py-2.5 text-start first:border-0 hover:bg-slate-50 max-sm:flex-wrap max-sm:gap-x-2 max-sm:gap-y-1.5">
                 <span aria-hidden="true" className="dash-av"><span>{initialsOf(a.name)}</span></span>
-                <span className="min-w-0 flex-1"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
+                <span className="min-w-0 flex-1 max-sm:basis-[calc(100%-44px)]"><span className="block truncate text-sm font-semibold text-slate-900" title={a.name}>{a.name}</span>
                   <span className="block truncate text-[12.5px] text-slate-500" title={`${a.tier || "—"} · CSM ${a.csm || "—"}`}>{a.tier || "—"} · CSM {a.csm || "—"}</span></span>
-                <span className="w-[70px] shrink-0 truncate whitespace-nowrap text-end text-sm font-semibold tabular-nums text-slate-900" title={fmtMoney(a.arrUSD)}>{fmtMoney(a.arrUSD)}</span>
+                <span className="w-[70px] shrink-0 truncate whitespace-nowrap text-end text-sm max-sm:ms-11 max-sm:w-auto font-semibold tabular-nums text-slate-900" title={fmtMoney(a.arrUSD)}>{fmtMoney(a.arrUSD)}</span>
                 <span className="min-w-0 shrink-0" title={`Health ${a.score} · ${RISK_WORD[riskOf(a.score)]}`}><Chip risk={riskOf(a.score)}><span data-health-word className="max-w-[110px] truncate whitespace-nowrap">{a.score} · {RISK_WORD[riskOf(a.score)]}</span></Chip></span>
                 <span className="hidden w-[110px] shrink-0 whitespace-nowrap text-end text-[13px] text-slate-600 sm:inline">{fmtDate(a.renewalDate)}</span>
-                <span className="shrink-0"><DaysChip days={daysUntil(a.renewalDate)} /></span>
+                <span className="shrink-0 max-sm:ms-auto"><DaysChip days={daysUntil(a.renewalDate)} /></span>
               </button>
             ))}
           </ScrollList>
@@ -428,9 +428,9 @@ function ImplProjectsCard({ projects, accounts }) {
         </svg>
         <div>
         <div className="mt-2 text-xs text-slate-500">By tier · <span data-impl-tier-period className="font-bold text-slate-700">{periods[sel]}</span> {year} (click a bar to change)</div>
-        <table data-impl-tier-table className="mt-1 w-full max-w-2xl text-sm">
+        <table data-impl-tier-table className="mt-1 w-full max-w-2xl text-sm max-sm:table-fixed">
           <thead><tr className="border-b border-slate-200 text-left text-xs font-bold uppercase text-slate-500">
-            <th className="py-1">Tier</th>{IMPL_STATUSES.map(([k, l]) => <th key={k} className="py-1 text-right">{l}</th>)}</tr></thead>
+            <th className="py-1 max-sm:w-[30%]">Tier</th>{IMPL_STATUSES.map(([k, l]) => <th key={k} className="py-1 text-right">{l}</th>)}</tr></thead>
           <tbody>{shownTiers.length === 0
             ? <tr><td colSpan="4" className="py-1.5 text-slate-500">No implementation projects yet.</td></tr>
             : shownTiers.map(t => { const b = data.byTier[t];
