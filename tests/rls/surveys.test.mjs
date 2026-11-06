@@ -396,6 +396,203 @@ test("surveys: rating/single/multi answers round-trip", async () => {
   } finally { await clearSurveySettings(); }
 });
 
+// ---------- follow-up tasks (PR 3) ----------
+let fuN = 0;
+const fuSend = async (tpl = T, account = "sv-fa") => {
+  const n = ++fuN, cid = `sv-fc${n}`;
+  await seedContact(cid, { accountId: account, surveyRecipient: true, name: `Fay ${n}`, email: `fay${n}@acme.invalid` });
+  const r = await send(sessions.admin, account, [cid], tpl);
+  assert.ifError(r.error);
+  assert.equal(r.data.sent.length, 1);
+  const { token, survey_id: id } = r.data.sent[0];
+  return { id, name: `Fay ${n}`, sub: async (a) => {
+    const x = await sessions.anon.rpc("submit_survey", { p_token: token, p_answers: a });
+    assert.ifError(x.error);
+    assert.deepEqual(x.data, { ok: true }, "submit returns only { ok: true }");
+  } };
+};
+const fuTasks = (surveyId) => sql(
+  `select id, data from tasks where org_id = $1 and data->>'surveyId' = $2 order by id`, [ORG_A, surveyId]);
+
+test("survey follow-up: NPS 6 creates one task for the CSM, NPS 7 none", async () => {
+  await seedAccount("sv-fa", { name: "Follow Co", csm: "Plain User" });
+  const s = await fuSend();
+  await s.sub({ nps: 6, reason: "  Slow support " });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1);
+  const [{ name: org }] = await sql(`select name from orgs where id = $1`, [ORG_A]);
+  const text = T.questions[0].text.replace("{orgName}", org).slice(0, 60);
+  const d = rows[0].data;
+  assert.equal(rows[0].id, `sv-fu-${s.id}-nps`);
+  assert.equal(d.id, rows[0].id);
+  assert.equal(d.accountId, "sv-fa");
+  assert.equal(d.title, `Follow up: ${s.name} — ${text}: 6/10`);
+  assert.equal(d.details, "Slow support");
+  assert.equal(d.due, new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10));
+  assert.equal(d.priority, "High");
+  assert.equal(d.status, "Open");
+  assert.equal(d.owner, "Plain User");
+  assert.equal(d.source, "survey");
+  assert.equal(d.surveyId, s.id);
+  assert.equal(d.questionId, "nps");
+  assert.ok(!Number.isNaN(Date.parse(d.createdAt)), "createdAt is a timestamp");
+  const none = await fuSend();
+  await none.sub({ nps: 7 });
+  assert.equal((await fuTasks(none.id)).length, 0, "NPS 7 is above the default rule");
+});
+
+test("survey follow-up: two matching questions create two tasks", async () => {
+  const tpl = { id: "fu-two", name: "Two", intro: "", questions: [
+    { id: "n", type: "nps", text: "Score?", required: true },
+    { id: "r", type: "rating", text: "Support?", scale: 7, followUp: { op: "lte", value: 2 } },
+    { id: "m", type: "multi", text: "Issues?", options: ["Bugs", "Speed", "Price"], followUp: { op: "in", value: ["Bugs", "Speed"] } },
+    { id: "c", type: "single", text: "Stay?", options: ["Yes", "No"], followUp: { op: "in", value: ["No"] } }] };
+  const s = await fuSend(tpl);
+  await s.sub({ n: 3, r: 3, m: ["Price", "Speed"], c: "Yes" });
+  const rows = await fuTasks(s.id);
+  assert.deepEqual(rows.map(r => r.data.questionId), ["m", "n"]);
+  assert.equal(rows[0].data.title, `Follow up: ${s.name} — Issues?: Price, Speed`);
+  const s2 = await fuSend(tpl);
+  await s2.sub({ n: 9, r: 2, c: "No" });
+  const rows2 = await fuTasks(s2.id);
+  assert.deepEqual(rows2.map(r => r.data.questionId), ["c", "r"]);
+  assert.equal(rows2[1].data.title, `Follow up: ${s2.name} — Support?: 2/7`);
+});
+
+test("survey follow-up: account without a CSM gets an unassigned task", async () => {
+  await seedAccount("sv-fb", { name: "No CSM Co" });
+  const s = await fuSend(T, "sv-fb");
+  await s.sub({ nps: 2 });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].data.owner, "");
+});
+
+test("survey follow-up: edit 6 to 3 updates the same task", async () => {
+  const s = await fuSend();
+  await s.sub({ nps: 6, reason: "First" });
+  const [before] = await fuTasks(s.id);
+  // The CSM's own note must survive an edit.
+  await sql(`update tasks set data = data || $3::jsonb where org_id = $1 and id = $2`,
+    [ORG_A, before.id, JSON.stringify({ details: "First\nCSM note", due: "2030-01-01" })]);
+  await s.sub({ nps: 3, reason: "Second" });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1, "no second task");
+  assert.equal(rows[0].id, before.id);
+  assert.match(rows[0].data.title, /: 3\/10$/);
+  assert.equal(rows[0].data.details, "First\nCSM note\nSecond");
+  assert.equal(rows[0].data.due, "2030-01-01", "an edit leaves the due date alone");
+});
+
+test("survey follow-up: edit 6 to 9 keeps the task open with a note", async () => {
+  const s = await fuSend();
+  await s.sub({ nps: 6, reason: "Meh" });
+  await s.sub({ nps: 9, reason: "Meh" });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].data.status, "Open");
+  assert.match(rows[0].data.title, /: 6\/10$/, "the title keeps the answer that raised the task");
+  assert.equal(rows[0].data.details, "Meh\nAnswer changed to 9/10");
+  await s.sub({ nps: 9, reason: "Meh" });
+  assert.equal((await fuTasks(s.id))[0].data.details, "Meh\nAnswer changed to 9/10", "a repeat save adds no second note");
+});
+
+test("survey follow-up: edit on a Done task keeps status and outcome", async () => {
+  const s = await fuSend();
+  await s.sub({ nps: 5 });
+  const [t] = await fuTasks(s.id);
+  const outcome = { result: "Called", note: "Sorted", by: "Plain User", at: "2026-11-06" };
+  await sql(`update tasks set data = data || $3::jsonb where org_id = $1 and id = $2`,
+    [ORG_A, t.id, JSON.stringify({ status: "Done", doneAt: "2026-11-06", surveyOutcome: outcome })]);
+  await s.sub({ nps: 4 });
+  await s.sub({ nps: 8 });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].data.status, "Done");
+  assert.equal(rows[0].data.doneAt, "2026-11-06");
+  assert.deepEqual(rows[0].data.surveyOutcome, outcome);
+});
+
+test("survey follow-up: edit 9 to 5 creates a task", async () => {
+  const s = await fuSend();
+  await s.sub({ nps: 9 });
+  assert.equal((await fuTasks(s.id)).length, 0);
+  await s.sub({ nps: 5 });
+  const rows = await fuTasks(s.id);
+  assert.equal(rows.length, 1);
+  assert.match(rows[0].data.title, /: 5\/10$/);
+});
+
+test("survey follow-up: followUp null on the NPS question creates none", async () => {
+  const off = { ...T, id: "fu-off", questions: T.questions.map(q => q.type === "nps" ? { ...q, followUp: null } : q) };
+  const s = await fuSend(off);
+  await s.sub({ nps: 0 });
+  assert.equal((await fuTasks(s.id)).length, 0);
+});
+
+test("survey follow-up: survey_template_valid refuses the same bad rules as validateTemplate", async () => {
+  const valid = async (q) => (await sql(`select public.survey_template_valid($1::jsonb) ok`,
+    [JSON.stringify({ id: "t", name: "T", intro: "", questions: [q] })]))[0].ok;
+  const nps = (followUp) => ({ id: "a", type: "nps", text: "x", followUp });
+  const rating = (followUp) => ({ id: "a", type: "rating", text: "x", scale: 5, followUp });
+  const single = (followUp) => ({ id: "a", type: "single", text: "x", options: ["a", "b"], followUp });
+  for (const [label, q] of [
+    ["nps above 10", nps({ op: "lte", value: 11 })],
+    ["nps below 0", nps({ op: "lte", value: -1 })],
+    ["nps not whole", nps({ op: "lte", value: 6.5 })],
+    ["nps string value", nps({ op: "lte", value: "6" })],
+    ["nps with in", nps({ op: "in", value: ["a"] })],
+    ["rating above scale", rating({ op: "lte", value: 8 })],
+    ["rating below 1", rating({ op: "lte", value: 0 })],
+    ["single with lte", single({ op: "lte", value: 1 })],
+    ["option not listed", single({ op: "in", value: ["c"] })],
+    ["empty in", single({ op: "in", value: [] })],
+    ["in not a list", single({ op: "in", value: "a" })],
+    ["unknown op", single({ op: "gte", value: 1 })],
+    ["rule not an object", single("a")],
+    ["text question", { id: "a", type: "text", text: "x", followUp: { op: "lte", value: 1 } }],
+  ]) assert.equal(await valid(q), false, label);
+  for (const [label, q] of [
+    ["nps 0", nps({ op: "lte", value: 0 })],
+    ["nps null", nps(null)],
+    ["rating at scale", rating({ op: "lte", value: 5 })],
+    ["single in", single({ op: "in", value: ["b"] })],
+    ["text null", { id: "a", type: "text", text: "x", followUp: null }],
+  ]) assert.equal(await valid(q), true, label);
+});
+
+test("survey follow-up: a failed task insert still saves the answers", async () => {
+  await seedAccount("sv-fboom", { name: "Boom Co", csm: "Plain User" });
+  const s = await fuSend(T, "sv-fboom");
+  await sql(`
+    create or replace function public.test_fail_task() returns trigger language plpgsql as $$
+    begin
+      if new.data->>'accountId' = 'sv-fboom' then raise exception 'forced task failure'; end if;
+      return new;
+    end $$;
+    drop trigger if exists test_fail_task on public.tasks;
+    create trigger test_fail_task before insert on public.tasks
+      for each row execute function public.test_fail_task();`);
+  try {
+    await s.sub({ nps: 2, reason: "Broken" });
+  } finally {
+    await sql(`drop trigger if exists test_fail_task on public.tasks; drop function if exists public.test_fail_task();`);
+  }
+  const ans = await sql(`select question_id from survey_answers where survey_id = $1 order by question_id`, [s.id]);
+  assert.deepEqual(ans.map(a => a.question_id), ["nps", "reason"]);
+  const [row] = await sql(`select submitted_at from surveys where id = $1`, [s.id]);
+  assert.ok(row.submitted_at, "the survey is marked submitted");
+  assert.equal((await sql(`select 1 from activities where org_id = $1 and id = $2`, [ORG_A, "sv-ans-" + s.id])).length, 1);
+  assert.equal((await fuTasks(s.id)).length, 0, "control: the trigger really did refuse the task");
+  await s.sub({ nps: 2, reason: "Broken" });
+  assert.equal((await fuTasks(s.id)).length, 1, "a later edit creates the missed task");
+});
+
+test("survey follow-up: clean up", async () => {
+  await sql(`delete from tasks where org_id = $1 and id like 'sv-fu-%'`, [ORG_A]);
+  await sql(`delete from accounts where org_id = $1 and id in ('sv-fa', 'sv-fb', 'sv-fboom')`, [ORG_A]);
+});
+
 test("surveys: org B cannot read org A surveys", async () => {
   const { data, error } = await sessions.adminB.from("surveys").select("id, org_id");
   assert.ifError(error);
