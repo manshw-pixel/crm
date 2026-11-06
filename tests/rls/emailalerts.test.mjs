@@ -486,6 +486,32 @@ test("send_alerts will not double-send the same kind to the same person today", 
     `expected exactly 1 email_log row for admin@test.local after two runs, got ${loggedAfterSecond.length}`);
 });
 
+// A sequence behind max(id) stopped every digest for two weeks after the Mumbai move: the primary
+// key clash was read as "already sent", so nothing was mailed, logged or reported.
+test("send_alerts reports a primary key clash instead of treating it as already sent", async () => {
+  await stubSend();
+  await sql(`delete from email_log`);
+  await sql(`delete from test_sent`);
+  await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+  await seedAccount("s-pk", { name: "Clash Co", csm: "Admin User", contractStatus: "Active",
+                              renewalDate: new Date(Date.now() + 6 * 864e5).toISOString().slice(0, 10) });
+  // Every id the run could draw is already taken, on rows that cannot match (kind, recipient, day).
+  await sql(`insert into email_log (id, kind, recipient, row_count, day)
+             select g, 'renewals', 'blocker-' || g || '@test.local', 1, current_date - 1 from generate_series(900001, 900020) g`);
+  await sql(`select setval('email_log_id_seq', 900000)`);
+  try {
+    const [{ send_alerts: result }] = await sql(`select send_alerts('renewals')`);
+    assert(/failed/.test(result), `the clash was swallowed: ${result}`);
+    const errs = await sql(`select * from error_log where fingerprint = 'email-digest-build-failed'`);
+    assert(errs.length === 1 && /duplicate key/.test(errs[0].message), `expected a logged duplicate key: ${JSON.stringify(errs)}`);
+    assert((await sentTo("admin@test.local")).length === 0, "nothing can be mailed without its log row");
+  } finally {
+    await sql(`delete from email_log`);
+    await sql(`delete from error_log where fingerprint = 'email-digest-build-failed'`);
+    await sql(`select setval('email_log_id_seq', 1000000)`);
+  }
+});
+
 // Regression test for Task 3 (Finding 3, MEDIUM): free-text account names and task titles
 // were spliced unescaped into digest HTML. An account/task named with HTML markup could
 // inject a link or break the table structure in every recipient's inbox. Both directions
