@@ -60,9 +60,9 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
     <div data-surveys-card>
       <AdCard title="Surveys" right={right}>
         {cur && <div data-surveys-nps className="ad-row !gap-2 flex-wrap">
-          <span className="ad-t-sm font-semibold">NPS {cur.nps} from {svPlural(cur.n, "answer")}</span>
+          <span className="ad-t-sm font-semibold">NPS {svSigned(cur.nps)} from {svPlural(cur.n, "answer")}</span>
           <span className="ad-xs">{latest} campaign</span>
-          <span className="ad-xs w-full">{prevY} campaign: {prev ? `NPS ${prev.nps} from ${svPlural(prev.n, "answer")}` : "—"}</span>
+          <span className="ad-xs w-full">{prevY} campaign: {prev ? `NPS ${svSigned(prev.nps)} from ${svPlural(prev.n, "answer")}` : "—"}</span>
         </div>}
         {!flagged && mine.length === 0 && <div className="ad-empty">No contacts flagged for surveys{" "}
           <button type="button" data-surveys-goto-contacts className="st-link" onClick={focusContacts}>Go to Contacts</button></div>}

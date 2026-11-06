@@ -29,7 +29,8 @@ const S = { low: null, high: null, third: null, typedNps: undefined }; // shared
 
 // Skips unless PR 3's SQL is applied. A followUp with an unknown op is refused only by PR 3's
 // survey_template_valid ('invalid template'); PR 2 ignores followUp and goes on to 'account not
-// found'. Either way send_survey raises before it writes anything.
+// found'. Either way send_survey raises before it writes anything. Admin only: send_survey says
+// 'not allowed' to anyone else, so CSM scenarios rely on needLow() instead.
 async function requirePr3Sql(page) {
   const bad = { ...NPS_TPL, id: "qa-probe", questions: [{ ...NPS_TPL.questions[0], followUp: { op: "qa-probe" } }] };
   const r = await page.evaluate(async tpl => {
@@ -78,7 +79,7 @@ async function answer(context, env, token, value, reason) {
     await box.waitFor({ state: "attached", timeout: 20000 });
     await box.check({ force: true });
     if (reason) await p.locator('textarea[name="reason"]').fill(reason);
-    await p.getByRole("button", { name: "Submit", exact: true }).click();
+    await p.locator("form button[type=submit]").click(); // reads "Update answers" on a revisit
     await p.locator('[data-state="thanks"]').waitFor({ timeout: 20000 });
   } finally { await fresh.close(); }
 }
@@ -91,7 +92,8 @@ async function reloadUntilSurvey(page, surveyId) {
 const surveyTasks = (page, surveyId) => page.evaluate(id => window.__store.getState().tasks.filter(t => t.surveyId === id), surveyId);
 const taskCount = page => page.evaluate(() => window.__store.getState().tasks.length);
 const waitForTask = (page, surveyId) => page.waitForFunction(id => (window.__store?.getState?.().tasks || []).some(t => t.surveyId === id), surveyId, { timeout: 20000, polling: 250 });
-const needLow = () => assert.ok(S.low, "survey from low-answer-makes-task");
+// An earlier scenario skipped (no PR 3 SQL, say), so there is nothing here to check.
+const needLow = () => { if (!S.low) throw new SkipScenario("low-answer-makes-task did not run"); };
 
 export const scenarios = [
   { id: `${F}/low-answer-makes-task`, feature: F, title: "An NPS answer of 6 creates one High priority Survey task owned by the account's CSM, with the reason in its details", role: "admin",
@@ -101,7 +103,7 @@ export const scenarios = [
       await openAccount(page, co);
       const pre = await page.evaluate(n => { const st = window.__store.getState(), a = st.accounts.find(x => x.name === n);
         return { id: a.id, typed: a.inputs && a.inputs.nps, surveys: st.surveys.filter(s => s.accountId === a.id).length, min: st.settings.surveys.minNpsResponses }; }, co);
-      if (pre.min > 3) throw new SkipScenario(`this org needs ${pre.min} answers; the scenarios give 3`);
+      if (pre.min !== 3) throw new SkipScenario(`this org needs ${pre.min} answers; the scenarios assume 3`);
       if (!S.low) {
         if (pre.surveys) throw new SkipScenario("the account already has surveys; run without --skip-reset");
         S.typedNps = pre.typed;
@@ -124,7 +126,6 @@ export const scenarios = [
 
   { id: `${F}/csm-sees-task-and-bell`, feature: F, title: "The CSM sees the task under Mine with the Survey tag, and a bell alert for it", role: "csm",
     run: async ({ page, thisRunId }) => {
-      await requirePr3Sql(page);
       needLow();
       await waitForTask(page, S.low.surveyId);
       await openTasks(page, { scope: "Mine", q: NAME(thisRunId, "low") });
@@ -156,7 +157,6 @@ export const scenarios = [
 
   { id: `${F}/complete-with-outcome`, feature: F, title: "Completing the task through the outcome dialog stores the result and note after a reload, and clears the bell", role: "csm",
     run: async ({ page, thisRunId, csmName }) => {
-      await requirePr3Sql(page);
       needLow();
       await waitForTask(page, S.low.surveyId);
       await openTasks(page, { scope: "Mine", q: NAME(thisRunId, "low") });
@@ -197,7 +197,7 @@ export const scenarios = [
   { id: `${F}/three-answers-use-survey-nps`, feature: F, title: "A third answer puts the account on survey NPS: 'NPS from surveys (n=3)', score +33, typed value unchanged", role: "admin",
     run: async ({ page, context, env, runId, thisRunId }) => {
       await requirePr3Sql(page);
-      assert.ok(S.high, "survey from high-answer-no-task");
+      if (!S.high) throw new SkipScenario("high-answer-no-task did not run");
       const co = ACCT(runId);
       await openAccount(page, co);
       const line = page.locator("[data-nps-source]");

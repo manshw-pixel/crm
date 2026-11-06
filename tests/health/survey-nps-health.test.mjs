@@ -140,6 +140,19 @@ test("nps source: the threshold comes from settings, and no answers means no lin
   } finally { await browser.close(); }
 });
 
+test("nps source: a negative score keeps its sign and a zero score has none", async () => {
+  const accounts = [seedAccount({ id: "p5", name: "Negative Co", inputs: TYPED20 }), seedAccount({ id: "p6", name: "Zero Co", inputs: TYPED20 })];
+  const { page, browser } = await launch(seed(accounts, [...dated("p5", [[2, NOW], [3, NOW]]), ...dated("p6", [[10, NOW], [2, NOW]])]));
+  try {
+    await ready(page);
+    await openDetail(page, "Negative Co");
+    const pill = page.locator("[data-nps-source] .ad-pill");
+    assert((await pill.innerText()).trim() === "Survey NPS -100 (n=2, needs 3)", "negative: " + await pill.innerText());
+    await openDetail(page, "Zero Co");
+    assert((await pill.innerText()).trim() === "Survey NPS 0 (n=2, needs 3)", "zero: " + await pill.innerText());
+  } finally { await browser.close(); }
+});
+
 // A February answer belongs to the campaign that began the March before it.
 const CAMPAIGN = [[10, "2026-02-10T10:00:00Z"], [0, "2025-04-10T10:00:00Z"], [10, "2025-02-10T10:00:00Z"]];
 test("surveys card: March campaign puts a February 2026 answer in the 2025 campaign", async () => {
@@ -149,7 +162,7 @@ test("surveys card: March campaign puts a February 2026 answer in the 2025 campa
     await openDetail(page, "Window Co");
     const t = await page.locator("[data-surveys-nps]").innerText();
     assert(/NPS 0 from 2 answers/.test(t) && /2025 campaign/.test(t), "latest: " + t);
-    assert(/2024 campaign: NPS 100 from 1 answer/.test(t), "previous: " + t);
+    assert(/2024 campaign: NPS \+100 from 1 answer/.test(t), "previous: " + t);
   } finally { await browser.close(); }
 });
 
@@ -159,7 +172,7 @@ test("surveys card: a January campaign month regroups the same answers", async (
     await ready(page);
     await openDetail(page, "January Co");
     const t = await page.locator("[data-surveys-nps]").innerText();
-    assert(/NPS 100 from 1 answer/.test(t) && /2026 campaign/.test(t), "latest: " + t);
+    assert(/NPS \+100 from 1 answer/.test(t) && /2026 campaign/.test(t), "latest: " + t);
     assert(/2025 campaign: NPS 0 from 2 answers/.test(t), "previous: " + t);
   } finally { await browser.close(); }
 });
