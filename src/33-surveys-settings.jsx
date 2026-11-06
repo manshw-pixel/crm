@@ -255,7 +255,7 @@ function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
                   {(q.options || []).map((o, k) => (
                     <div key={k} className="mb-1 flex items-center gap-2">
                       <Input aria-label={`Question ${i + 1} option ${k + 1}`} data-q-option maxLength={80} value={o}
-                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).map(v => v === o ? e.target.value : v).filter(v => v.trim() !== "") } } : {}) })} />
+                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).map(v => v === o ? e.target.value : v) } } : {}) })} />
                       <button type="button" aria-label={`Remove option ${k + 1}`} className="px-1 text-xs text-rose-600" onClick={() => setQ(i, { options: q.options.filter((_, m) => m !== k), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).filter(v => v !== o) } } : {}) })}>✕</button>
                     </div>
                   ))}

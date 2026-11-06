@@ -118,12 +118,30 @@ test("followup editor: blank rename drops the value; emptying shows a hint", asy
     assert(await row.locator("[data-q-followup-hint]").count() === 0, "no hint while ticked");
     await row.locator("[data-q-option]").nth(0).fill("");
     assert(await row.locator("[data-q-followup-option]").count() === 2, "blank option has no checkbox");
-    assert(await row.locator("[data-q-followup-option]:checked").count() === 1, "only B still ticked");
+    // blank options block save (validator), so the "" in the rule can never be saved
+    await save(page);
+    assert(/Question 1: add 2 to 12 options/.test(await page.locator("[data-template-error]").innerText()), "blank option blocks save");
+    assert((await stored(page)).find(t => t.id === "t1").questions[0].followUp.value.join() === "A,B", "nothing saved, stored rule intact");
     await row.locator("[data-q-option]").nth(0).fill("A");
+    assert(await row.locator("[data-q-followup-option]:checked").count() === 2, "retype restores the tick");
     await row.getByRole("button", { name: "Remove option 2" }).click();
+    await row.locator("[data-q-followup-option]:checked").first().uncheck();
     assert(await row.locator("[data-q-followup]").isChecked(), "box still checked");
     assert(/Tick at least one option/.test(await row.innerText()), "hint shown");
     await row.locator("[data-q-followup-option]").first().check();
     assert(await row.locator("[data-q-followup-hint]").count() === 0, "hint gone after ticking");
+  } finally { await browser.close(); }
+});
+
+test("followup editor: an 'in' rule with no options ticked blocks save", async () => {
+  const tpl = { ...TPL, questions: [{ id: "qs", type: "single", text: "Pick", required: false, options: ["A", "B"], followUp: { op: "in", value: ["A"] } }] };
+  const { page, browser } = await launch(seed({ surveyTemplates: [tpl] }));
+  try {
+    await open(page);
+    const row = page.locator("[data-template-editor] [data-q-row]").first();
+    await row.locator("[data-q-followup-option]").first().uncheck();
+    await save(page);
+    assert(/follow-up options must be some of the question's options/.test(await page.locator("[data-template-error]").innerText()), "empty rule blocked");
+    assert((await stored(page)).find(t => t.id === "t1").questions[0].followUp.value.join() === "A", "nothing saved");
   } finally { await browser.close(); }
 });
