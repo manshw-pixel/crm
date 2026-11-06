@@ -386,7 +386,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             return (
             <AdCard title="Health breakdown" right={<span data-sev={sev} className="ad-stale ml-auto text-right">
               Inputs last updated {iu === 0 ? "today" : iu + "d ago"}{iu >= 30 ? (ro ? " — inputs are stale" : " — refresh via ✎ Update health") : ""}</span>}>
-              <div className="ad-spark mt-2"><Sparkline points={pts} w={260} h={44} /></div>
+              {pts.length > 1 && <div className="ad-spark mt-2"><Sparkline points={pts} w={260} h={44} /></div>}
               <div className="mt-1 flex flex-col gap-[11px]">
                 {Object.keys(comps).filter(k => k !== "value" || st.settings.weights?.value > 0).map(k => { const rk = riskOf(comps[k]); return <React.Fragment key={k}>
                   <div className="flex flex-col gap-1">
