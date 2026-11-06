@@ -393,6 +393,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                     <div className="flex text-[13px]"><span style={{ color: "var(--d-label)" }}>{WEIGHT_LABELS[k]}</span><b data-risk={rk} className="ad-bar-n ml-auto tabular-nums">{comps[k]}</b></div>
                     <span data-input-bar data-risk={rk} aria-hidden="true" className="ad-bar"><span style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%` }} /></span>
                   </div>
+                  {k === "nps" && a.surveyNps && <NpsSourceLine result={a.surveyNps} typed={a.inputs?.nps} min={{ ...SURVEY_DEFAULTS, ...st.settings.surveys }.minNpsResponses} />}
                   {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="ml-4 space-y-0.5 text-[11px]" style={{ color: "var(--d-meta)" }}>
                     {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
                       <div key={b.type} data-recency-type={b.type} className="flex justify-between">

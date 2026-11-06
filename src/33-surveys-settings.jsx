@@ -39,6 +39,16 @@ function SurveysSettingsCard({ st, dispatch, user, orgName }) {
     if (v == null) { e.target.value = cfg[key]; return; }
     e.target.value = v; setCfg(key, v);
   };
+  // These two move every account's score, so a value outside the range is refused, not clamped.
+  const blurStrictInt = (key, lo, hi) => e => {
+    const raw = e.target.value.trim(), n = Number(raw);
+    if (raw === "" || !Number.isInteger(n) || n < lo || n > hi) {
+      e.target.value = cfg[key];
+      if (raw !== "") toast({ text: `Enter a whole number from ${lo} to ${hi}.`, tone: "info" });
+      return;
+    }
+    e.target.value = n; setCfg(key, n);
+  };
   const copy = t => {
     const now = surveyNow();
     const c = copyTemplate(t, uid, now);
@@ -62,6 +72,16 @@ function SurveysSettingsCard({ st, dispatch, user, orgName }) {
           <label className="block text-xs font-semibold text-slate-600">From name
             <Input key={"fn" + cfg.fromName} maxLength={60} defaultValue={cfg.fromName} placeholder={orgName || ""}
               data-survey-fromname onBlur={e => { const v = e.target.value.trim().slice(0, 60); e.target.value = v; setCfg("fromName", v); }} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">Answers needed for survey NPS
+            <Input key={"mn" + cfg.minNpsResponses} type="number" min="1" max="50" step="1" defaultValue={cfg.minNpsResponses}
+              data-survey-min-nps aria-describedby="survey-min-nps-help" onBlur={blurStrictInt("minNpsResponses", 1, 50)} />
+            <span id="survey-min-nps-help" className="mt-1 block font-normal text-slate-500">1 to 50. Below this, the typed NPS scores.</span>
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">NPS campaign start month
+            <Input key={"cm" + cfg.npsCampaignMonth} type="number" min="1" max="12" step="1" defaultValue={cfg.npsCampaignMonth}
+              data-survey-campaign-month aria-describedby="survey-campaign-help" onBlur={blurStrictInt("npsCampaignMonth", 1, 12)} />
+            <span id="survey-campaign-help" className="mt-1 block font-normal text-slate-500">1 = January, 12 = December.</span>
           </label>
         </div>
         <ul className="mb-3 divide-y divide-slate-200">

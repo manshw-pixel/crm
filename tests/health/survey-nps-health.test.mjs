@@ -81,3 +81,135 @@ test("survey nps: a refetch whose surveys read fails keeps the score and adds no
     assert(s.band === "Green" && s.tasks === 0, "score moved: " + JSON.stringify(s));
   } finally { await browser.close(); }
 });
+
+// ---- Task 6: NPS source on the account, Surveys card campaign window, Settings fields ----
+const dated = (accountId, list) => list.map(([value, at], i) => ({ ...answers(accountId, 1, value)[0], id: `${accountId}-d${i}`, contact_id: `${accountId}-dc${i}`, submitted_at: at }));
+const seedWith = (accounts, surveys, settings, role = "admin") => `window.__seedRows = { accounts: ${JSON.stringify(accounts.map(d => ({ id: d.id, data: d })))}, contacts: [], activities: [], tasks: [], opportunities: [],
+  settings: ${JSON.stringify([{ id: "1", data: settings }])}, surveys: ${JSON.stringify(surveys)},
+  profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "${role}" }] };`;
+const TYPED20 = { usage: 100, sentiment: 100, tickets: 0, nps: 20 };
+const FIVE = [10, 10, 10, 8, 2].map(v => [v, NOW]); // 3 promoters, 1 detractor of 5: +40
+const noOverflow = page => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+
+test("nps source: enough answers show the green pill and the typed value as fallback", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "p1", name: "Source Co", inputs: TYPED20 })], dated("p1", FIVE)));
+  try {
+    await ready(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openDetail(page, "Source Co");
+    const pill = page.locator("[data-nps-source] .ad-pill");
+    assert((await pill.innerText()).trim() === "NPS from surveys (n=5)", "pill: " + await pill.innerText());
+    assert(await pill.getAttribute("data-sev") === "green", "enough is green");
+    assert((await page.locator("[data-nps-source-note]").innerText()).trim() === "Score +40 · typed value +20 kept as fallback", "note: " + await page.locator("[data-nps-source-note]").innerText());
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(200);
+    assert(await noOverflow(page), "page overflows at 390px");
+    const box = await pill.boundingBox();
+    assert(box.x >= 0 && box.x + box.width <= 390, "pill leaves the screen: " + JSON.stringify(box));
+    assert(await page.evaluate(() => window.__store.getState().accounts[0].inputs.nps) === 20, "typed value changed");
+  } finally { await browser.close(); }
+});
+
+test("nps source: too few answers show the grey pill with the threshold", async () => {
+  const { page, browser } = await launch(seed([seedAccount({ id: "p2", name: "Few Co", inputs: TYPED20 })], dated("p2", [[10, NOW], [8, NOW]])));
+  try {
+    await ready(page);
+    await page.setViewportSize({ width: 1280, height: 900 });
+    await openDetail(page, "Few Co");
+    const pill = page.locator("[data-nps-source] .ad-pill");
+    assert((await pill.innerText()).trim() === "Survey NPS +50 (n=2, needs 3)", "pill: " + await pill.innerText());
+    assert(await pill.getAttribute("data-sev") === "grey", "too few is grey");
+    assert((await page.locator("[data-nps-source-note]").innerText()).trim() === "Using typed NPS", "note");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.waitForTimeout(200);
+    assert(await noOverflow(page), "page overflows at 390px");
+    const box = await pill.boundingBox();
+    assert(box.x >= 0 && box.x + box.width <= 390, "grey pill leaves the screen: " + JSON.stringify(box));
+  } finally { await browser.close(); }
+});
+
+test("nps source: the threshold comes from settings, and no answers means no line", async () => {
+  const accounts = [seedAccount({ id: "p3", name: "Five Co", inputs: TYPED20 }), seedAccount({ id: "p4", name: "None Co", inputs: TYPED20 })];
+  const { page, browser } = await launch(seedWith(accounts, dated("p3", FIVE), { surveys: { minNpsResponses: 6 } }));
+  try {
+    await ready(page);
+    await openDetail(page, "Five Co");
+    assert((await page.locator("[data-nps-source] .ad-pill").innerText()).trim() === "Survey NPS +40 (n=5, needs 6)", "needs 6");
+    await openDetail(page, "None Co");
+    assert(await page.locator("[data-nps-source]").count() === 0, "no answers, no line");
+  } finally { await browser.close(); }
+});
+
+// A February answer belongs to the campaign that began the March before it.
+const CAMPAIGN = [[10, "2026-02-10T10:00:00Z"], [0, "2025-04-10T10:00:00Z"], [10, "2025-02-10T10:00:00Z"]];
+test("surveys card: March campaign puts a February 2026 answer in the 2025 campaign", async () => {
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "w1", name: "Window Co" })], dated("w1", CAMPAIGN), { surveys: { npsCampaignMonth: 3 } }));
+  try {
+    await ready(page);
+    await openDetail(page, "Window Co");
+    const t = await page.locator("[data-surveys-nps]").innerText();
+    assert(/NPS 0 from 2 answers/.test(t) && /2025 campaign/.test(t), "latest: " + t);
+    assert(/2024 campaign: NPS 100 from 1 answer/.test(t), "previous: " + t);
+  } finally { await browser.close(); }
+});
+
+test("surveys card: a January campaign month regroups the same answers", async () => {
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "w2", name: "January Co" })], dated("w2", CAMPAIGN), { surveys: { npsCampaignMonth: 1 } }));
+  try {
+    await ready(page);
+    await openDetail(page, "January Co");
+    const t = await page.locator("[data-surveys-nps]").innerText();
+    assert(/NPS 100 from 1 answer/.test(t) && /2026 campaign/.test(t), "latest: " + t);
+    assert(/2025 campaign: NPS 0 from 2 answers/.test(t), "previous: " + t);
+  } finally { await browser.close(); }
+});
+
+const cfg = page => page.evaluate(() => window.__store.getState().settings.surveys);
+const settingsPage = async page => { await page.click("text=Settings"); await page.waitForSelector("[data-surveys-settings]"); };
+
+test("survey settings: both fields save on blur, not per keystroke", async () => {
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "t1" })], [], {}));
+  try {
+    assert(await page.locator('button[title="Settings"]').count() === 1, "the CSM test's selector must find the admin link");
+    await settingsPage(page);
+    const min = page.locator("[data-survey-min-nps]"), month = page.locator("[data-survey-campaign-month]");
+    assert(await min.inputValue() === "3" && await month.inputValue() === "3", "defaults shown");
+    await min.fill("7");
+    assert((await cfg(page)).minNpsResponses === 3, "wrote before blur");
+    await min.blur();
+    await month.fill("12");
+    await month.blur();
+    const c = await cfg(page);
+    assert(c.minNpsResponses === 7 && c.npsCampaignMonth === 12, "saved " + JSON.stringify(c));
+  } finally { await browser.close(); }
+});
+
+test("survey settings: out-of-range and non-whole values do not save", async () => {
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "t2" })], [], { surveys: { minNpsResponses: 4, npsCampaignMonth: 6 } }));
+  try {
+    await settingsPage(page);
+    for (const [sel, key, keep, bad] of [["[data-survey-min-nps]", "minNpsResponses", "4", ["0", "51", "2.5", ""]], ["[data-survey-campaign-month]", "npsCampaignMonth", "6", ["0", "13", "2.5", ""]]]) {
+      for (const v of bad) {
+        const box = page.locator(sel);
+        await box.fill(v);
+        await box.blur();
+        assert((await cfg(page))[key] === +keep, `${key} took "${v}": ` + (await cfg(page))[key]);
+        assert(await box.inputValue() === keep, `${key} box shows ${await box.inputValue()} after "${v}"`);
+      }
+    }
+    for (const [sel, key, v] of [["[data-survey-min-nps]", "minNpsResponses", 50], ["[data-survey-min-nps]", "minNpsResponses", 1], ["[data-survey-campaign-month]", "npsCampaignMonth", 1]]) {
+      await page.locator(sel).fill(String(v));
+      await page.locator(sel).blur();
+      assert((await cfg(page))[key] === v, `boundary ${v} refused`);
+    }
+  } finally { await browser.close(); }
+});
+
+test("survey settings: a CSM has no NPS fields", async () => {
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "t3" })], [], {}, "csm"));
+  try {
+    await ready(page); // the app is up, so an absent Settings link is the role, not a slow start
+    assert(await page.locator('button[title="Settings"]').count() === 0, "CSM can reach Settings");
+    assert(await page.locator("[data-survey-min-nps]").count() === 0 && await page.locator("[data-survey-campaign-month]").count() === 0, "CSM sees the fields");
+  } finally { await browser.close(); }
+});
