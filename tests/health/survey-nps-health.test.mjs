@@ -82,6 +82,55 @@ test("survey nps: a refetch whose surveys read fails keeps the score and adds no
   } finally { await browser.close(); }
 });
 
+// A failed FIRST read has no prior surveys to keep: scores fall back to typed NPS, so nothing may be
+// written from them until one read succeeds.
+const writes = page => page.evaluate(() => {
+  const st = window.__store.getState(), a = st.accounts.find(x => x.id === "f1"), b = st.accounts.find(x => x.id === "f2");
+  return { surveys: st.surveys, band: a.healthBand, newBand: b.healthBand, events: (a.healthEvents || []).length, tasks: st.tasks.filter(t => t.healthPlaybook).length,
+    snapshots: (st.settings.snapshots || []).length, recorded: (window.__recordHealthCalls || []).length,
+    rpc: (window.__rpcCalls || []).filter(c => c.fn === "record_health").length };
+});
+const firstLoad = err => seed([seedAccount({ id: "f1", healthBand: "Green", healthPlaybookBand: "Green", inputs: TYPED }), seedAccount({ id: "f2" })], answers("f1", 3)) + " window.__tableError = { surveys: " + JSON.stringify(err) + " };";
+const settled = async page => { await page.waitForFunction(() => window.__store && window.__store.getState().accounts.length === 2, null, { timeout: 15000 }); await page.waitForTimeout(500); };
+const assertBlocked = s => {
+  assert(s.surveys === null, "surveys should stay null: " + JSON.stringify(s.surveys));
+  assert(s.band === "Green" && s.newBand === undefined && s.events === 0 && s.tasks === 0, "crossing wrote: " + JSON.stringify(s));
+  assert(s.recorded === 0 && s.rpc === 0, "record_health wrote: " + JSON.stringify(s));
+  assert(s.snapshots === 0, "snapshot taken: " + JSON.stringify(s));
+};
+
+test("survey nps: a failed first read writes nothing, and the next good read proceeds", async () => {
+  const { page, browser } = await launch(firstLoad({ code: "42501", message: "permission denied for table surveys" }));
+  try {
+    await settled(page);
+    assertBlocked(await writes(page));
+    await page.evaluate(async () => { delete window.__tableError; await window.__refetch(); });
+    await ready(page);
+    await page.waitForFunction(() => (window.__store.getState().settings.snapshots || []).length === 1, null, { timeout: 8000 });
+    const s = await writes(page);
+    assert(s.surveys.length === 3 && s.band === "Green" && s.newBand !== undefined && s.events === 0 && s.tasks === 0, "after good read: " + JSON.stringify({ ...s, surveys: s.surveys.length }));
+    assert(await recorded(page) === await expected(page, 100), "baseline should use survey NPS");
+  } finally { await browser.close(); }
+});
+
+test("survey nps: a transient schema cache error is a failed read, not a missing table", async () => {
+  const { page, browser } = await launch(firstLoad({ code: "PGRST002", message: "Could not query the database for the schema cache. Retrying." }));
+  try {
+    await settled(page);
+    assertBlocked(await writes(page));
+  } finally { await browser.close(); }
+});
+
+test("survey nps: a missing surveys table does not block the health writes", async () => {
+  const { page, browser } = await launch(firstLoad({ code: "42P01", message: 'relation "public.surveys" does not exist' }));
+  try {
+    await ready(page);
+    await page.waitForFunction(() => window.__store.getState().accounts.find(x => x.id === "f2").healthBand !== undefined, null, { timeout: 8000 });
+    const s = await writes(page);
+    assert(Array.isArray(s.surveys) && s.surveys.length === 0 && s.rpc > 0, JSON.stringify(s));
+  } finally { await browser.close(); }
+});
+
 // ---- Task 6: NPS source on the account, Surveys card campaign window, Settings fields ----
 const dated = (accountId, list) => list.map(([value, at], i) => ({ ...answers(accountId, 1, value)[0], id: `${accountId}-d${i}`, contact_id: `${accountId}-dc${i}`, submitted_at: at }));
 const seedWith = (accounts, surveys, settings, role = "admin") => `window.__seedRows = { accounts: ${JSON.stringify(accounts.map(d => ({ id: d.id, data: d })))}, contacts: [], activities: [], tasks: [], opportunities: [],

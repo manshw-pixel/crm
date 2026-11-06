@@ -561,6 +561,14 @@ test("survey follow-up: survey_template_valid refuses the same bad rules as vali
   ]) assert.equal(await valid(q), true, label);
 });
 
+test("survey follow-up: a padded CSM name is trimmed, so the task owner matches the user", async () => {
+  await seedAccount("sv-fpad", { name: "Padded Co", csm: "  Plain User " });
+  const s = await fuSend(T, "sv-fpad");
+  await s.sub({ nps: 2, reason: "Broken" });
+  const [t] = await fuTasks(s.id);
+  assert.equal(t.data.owner, "Plain User");
+});
+
 test("survey follow-up: a failed task insert still saves the answers", async () => {
   await seedAccount("sv-fboom", { name: "Boom Co", csm: "Plain User" });
   const s = await fuSend(T, "sv-fboom");

@@ -292,7 +292,7 @@ declare
 begin
   if jsonb_typeof(qs) is distinct from 'array' then return; end if;
   select a.data into acct from accounts a where a.org_id = s.org_id and a.id = s.account_id;
-  v_csm := coalesce(acct->>'csm', '');
+  v_csm := trim(coalesce(acct->>'csm', ''));
   ctx := jsonb_build_object(
     'firstName', split_part(trim(coalesce(s.contact_name, '')), ' ', 1),
     'accountName', acct->>'name',

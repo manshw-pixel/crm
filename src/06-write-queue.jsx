@@ -25,11 +25,14 @@ function implRows(r) {
   if (missingTable(r.error)) return [];
   throw r.error;
 }
-// Any failure (missing relation, RLS, network) yields null, never a throw -- the surveys feature must
-// never stop the CRM loading. null, not []: the refetch keeps the surveys it has, because an empty
-// list would drop survey NPS from every score and could fire health playbook tasks.
+// Never throws -- the surveys feature must never stop the CRM loading. [] means "there are no surveys":
+// the table is missing (surveys.sql not run) or the response carries no rows. null means the read FAILED
+// (RLS, network): the refetch keeps the surveys it has, and until one read has succeeded st.surveys stays
+// null and the App holds its score-driven writes, because a score without survey NPS could otherwise
+// fire health playbook tasks. PGRST002 says "schema cache" but is a transient outage, not a missing table.
 function surveyRows(r) {
-  if (!r || r.error || !Array.isArray(r.data)) return null;
+  if (r && r.error) return missingTable(r.error) && r.error.code !== "PGRST002" ? [] : null;
+  if (!r || !Array.isArray(r.data)) return [];
   return r.data.map(x => ({
     id: x.id, accountId: x.account_id, contactId: x.contact_id, contactName: x.contact_name, contactRole: x.contact_role,
     templateId: x.template_id, template: x.template_snapshot, source: x.source,

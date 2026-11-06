@@ -268,7 +268,8 @@ export function reducer(state, action) {
       return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds] };
     }
     case "SET_SURVEY_RECIPIENTS": { const ids = new Set(action.ids); return { ...state, contacts: state.contacts.map(c => ids.has(c.id) ? { ...c, surveyRecipient: !!action.value } : c) }; }
-    case "SURVEYS_SENT": { const have = new Set((state.surveys || []).map(s => s.id)); return { ...state, surveys: [...(state.surveys || []), ...action.items.filter(s => !have.has(s.id))] }; }
+    case "SURVEYS_SENT": { if (state.surveys === null) return state; // not read yet: the next good read brings these
+      const have = new Set((state.surveys || []).map(s => s.id)); return { ...state, surveys: [...(state.surveys || []), ...action.items.filter(s => !have.has(s.id))] }; }
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };

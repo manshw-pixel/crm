@@ -318,7 +318,7 @@ function Settings({ st, dispatch, user, scored, theme, feed, orgName }) {
   const NO_IMPACT = { down: 0, toYellow: 0, toRed: 0 };
   const recencyOpen = openSub.recency, valueLive = w.value > 0;
   // The same effective accounts the live scores use, so a preview agrees with them.
-  const effAccounts = useMemo(() => { const nps = npsByAccount(st.surveys, iso(Date.now()), st.settings.surveys);
+  const effAccounts = useMemo(() => { const nps = npsByAccount(st.surveys || [], iso(Date.now()), st.settings.surveys);
     return st.accounts.map(a => withSurveyNps(a, nps.get(a.id))); }, [st.accounts, st.surveys, st.settings.surveys]);
   const recencyImpact = useMemo(() => !recencyOpen ? NO_IMPACT : bandImpact(effAccounts, st.activities,
     { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }),
