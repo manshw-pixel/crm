@@ -185,8 +185,8 @@ function FollowUpEditor({ q, n, onChange }) {
             <span className="min-w-0 break-words">{o}</span>
           </label>
         ))}
+        {(r.value || []).length === 0 && <p data-q-followup-hint role="status" className="text-xs font-semibold text-rose-700">Tick at least one option</p>}
       </fieldset>}
-      <p className="mt-1 text-slate-500">NPS questions start with this on, at 6 or lower. Text questions have no rule.</p>
     </div>
   );
 }
@@ -255,7 +255,7 @@ function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
                   {(q.options || []).map((o, k) => (
                     <div key={k} className="mb-1 flex items-center gap-2">
                       <Input aria-label={`Question ${i + 1} option ${k + 1}`} data-q-option maxLength={80} value={o}
-                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).map(v => v === o ? e.target.value : v) } } : {}) })} />
+                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).map(v => v === o ? e.target.value : v).filter(v => v.trim() !== "") } } : {}) })} />
                       <button type="button" aria-label={`Remove option ${k + 1}`} className="px-1 text-xs text-rose-600" onClick={() => setQ(i, { options: q.options.filter((_, m) => m !== k), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).filter(v => v !== o) } } : {}) })}>✕</button>
                     </div>
                   ))}
@@ -265,6 +265,7 @@ function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
                 {q.type === "text" && <label className="mt-2 flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" data-q-long checked={!!q.long} onChange={e => setQ(i, { long: e.target.checked })} />Long answer</label>}
               </div>
             ))}
+            <p data-followup-helper className="mb-2 text-xs text-slate-500">NPS questions start with this on, at 6 or lower. Text questions have no rule.</p>
             <div className="mb-2">
               <Btn data-add-question aria-expanded={adding} onClick={() => setAdding(a => !a)}>+ Add question</Btn>
               {adding && <div className="mt-2 flex flex-wrap gap-2" data-add-question-menu>

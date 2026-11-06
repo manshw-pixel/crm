@@ -33,7 +33,7 @@ test("followup editor: NPS shows the rule on at 6; off saves null; text has none
     assert(await r.nth(0).locator("[data-q-followup-value]").inputValue() === "6", "default 6");
     assert(!(await r.nth(1).locator("[data-q-followup]").isChecked()), "rating off by default");
     assert(await r.nth(3).locator("[data-q-followup]").count() === 0, "text has no rule");
-    assert(/NPS questions start with this on, at 6 or lower/.test(await r.nth(0).innerText()), "helper line");
+    assert(/NPS questions start with this on, at 6 or lower/.test(await page.locator("[data-followup-helper]").innerText()), "helper line");
     await r.nth(0).locator("[data-q-followup]").uncheck();
     await save(page);
     const t = await saved(page);
@@ -95,5 +95,34 @@ test("followup editor: dark mode and 390px", async () => {
     assert(inside, "block inside viewport");
     const color = await page.evaluate(() => getComputedStyle(document.querySelector("[data-q-followup-block] span")).color);
     assert(color !== "rgb(0, 0, 0)", "text colour themed: " + color);
+  } finally { await browser.close(); }
+});
+
+test("followup editor: helper line shows once", async () => {
+  const { page, browser } = await launch(seed({ surveyTemplates: [TPL] }));
+  try {
+    await open(page);
+    const txt = await page.locator("[data-template-editor]").innerText();
+    const n = txt.split("NPS questions start with this on, at 6 or lower. Text questions have no rule.").length - 1;
+    assert(n === 1, "helper count " + n);
+  } finally { await browser.close(); }
+});
+
+test("followup editor: blank rename drops the value; emptying shows a hint", async () => {
+  const tpl = { ...TPL, questions: [{ id: "qs", type: "single", text: "Pick", required: false, options: ["A", "B", "C"], followUp: { op: "in", value: ["A", "B"] } }] };
+  const { page, browser } = await launch(seed({ surveyTemplates: [tpl] }));
+  try {
+    await open(page);
+    const row = page.locator("[data-template-editor] [data-q-row]").first();
+    assert(await row.locator("[data-q-followup-hint]").count() === 0, "no hint while ticked");
+    await row.locator("[data-q-option]").nth(0).fill("");
+    assert(await row.locator("[data-q-followup-option]").count() === 2, "blank option has no checkbox");
+    assert(await row.locator("[data-q-followup-option]:checked").count() === 1, "only B still ticked");
+    await row.locator("[data-q-option]").nth(0).fill("A");
+    await row.getByRole("button", { name: "Remove option 2" }).click();
+    assert(await row.locator("[data-q-followup]").isChecked(), "box still checked");
+    assert(/Tick at least one option/.test(await row.innerText()), "hint shown");
+    await row.locator("[data-q-followup-option]").first().check();
+    assert(await row.locator("[data-q-followup-hint]").count() === 0, "hint gone after ticking");
   } finally { await browser.close(); }
 });
