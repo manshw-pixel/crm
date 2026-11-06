@@ -49,6 +49,8 @@ function useSurveyOutcome(st, user, dispatch) {
   const [id, setId] = useState(null);
   const tick = t => { if (isOpenSurveyTask(t)) setId(t.id); else dispatch({ type: "TOGGLE_TASK", id: t.id }); };
   const task = id ? st.tasks.find(t => t.id === id) : null;
+  // finished or deleted elsewhere: forget it, or a later reopen would pop the dialog up unasked
+  useEffect(() => { if (id && !(task && isOpenSurveyTask(task))) setId(null); }, [id, task]);
   const acct = task ? st.accounts.find(a => a.id === task.accountId) : null;
   const dialog = task && isOpenSurveyTask(task)
     ? <SurveyOutcomeDialog task={task} user={user} dispatch={dispatch} onClose={() => setId(null)} accountName={acct ? acct.name : ""} />

@@ -65,13 +65,29 @@ test("survey followups: bell gives one alert per survey with the approved copy",
   } finally { await browser.close(); }
 });
 
-test("survey followups: bell skips a 31-day-old task, a future date and a done task", async () => {
+test("survey followups: bell keeps the newest task's date whichever order they load in", async () => {
+  const { page, browser } = await start([T({ createdAt: ago(3) }), T({ id: "sv-fu-sv1-q2", questionId: "q2", createdAt: ago(1) }),
+    T({ id: "sv-fu-sv2-q1", surveyId: "sv2", createdAt: ago(2) }), T({ id: "sv-fu-sv2-q2", surveyId: "sv2", questionId: "q2", createdAt: ago(5) })]);
+  try {
+    await surveyAlertIds(page);
+    const one = await page.locator('[data-notif-item="survey-sv1"]').innerText();
+    const two = await page.locator('[data-notif-item="survey-sv2"]').innerText();
+    assert(/1d ago/.test(one), "newest last: " + one);
+    assert(/2d ago/.test(two), "newest first: " + two);
+  } finally { await browser.close(); }
+});
+
+test("survey followups: bell window is 30 days both sides; a slightly future task reads today", async () => {
   const { page, browser } = await start([T({ createdAt: ago(31) }),
     T({ id: "sv-fu-sv2-q1", surveyId: "sv2", createdAt: ago(-2) }), T({ id: "sv-fu-sv3-q1", surveyId: "sv3", status: "Done" }),
-    T({ id: "sv-fu-sv4-q1", surveyId: "sv4", createdAt: ago(29) })]);
+    T({ id: "sv-fu-sv4-q1", surveyId: "sv4", createdAt: ago(29) }), T({ id: "sv-fu-sv5-q1", surveyId: "sv5", createdAt: ago(-32) }),
+    T({ id: "sv-fu-sv6-q1", surveyId: "sv6", createdAt: ago(0) })]);
   try {
     const ids = await surveyAlertIds(page);
-    assert(ids.join() === "survey-sv4", "only the in-window open one: " + ids);
+    assert([...ids].sort().join() === "survey-sv2,survey-sv4,survey-sv6", "in-window open ones: " + ids);
+    assert(/today/.test(await page.locator('[data-notif-item="survey-sv2"]').innerText()), "future date reads today");
+    assert(/today/.test(await page.locator('[data-notif-item="survey-sv6"]').innerText()), "same day reads today");
+    assert(/29d ago/.test(await page.locator('[data-notif-item="survey-sv4"]').innerText()), "old one counts days");
   } finally { await browser.close(); }
 });
 
@@ -185,6 +201,21 @@ test("survey followups: un-ticking reopens with no dialog, keeps the outcome; co
     await complete(page, "Fixed", "Second go");
     const t = await task(page);
     assert(t.surveyOutcome.result === "Fixed" && t.surveyOutcome.note === "Second go" && t.doneAt === t.surveyOutcome.at, "overwritten: " + JSON.stringify(t));
+  } finally { await browser.close(); }
+});
+
+test("survey followups: a task finished elsewhere closes the dialog, and a later reopen does not bring it back", async () => {
+  const { page, browser } = await start([T()]);
+  try {
+    await nav(page, "Tasks");
+    await tasksCheck(page).click();
+    await page.waitForSelector(DLG);
+    await page.evaluate(i => window.__store.dispatch({ type: "TOGGLE_TASK", id: i }), ID);
+    await page.waitForSelector(DLG, { state: "detached" });
+    await page.evaluate(i => window.__store.dispatch({ type: "TOGGLE_TASK", id: i }), ID);
+    await waitTask(page, "Open");
+    await page.waitForTimeout(200);
+    assert(await page.locator(DLG).count() === 0, "dialog stayed closed after the reopen");
   } finally { await browser.close(); }
 });
 

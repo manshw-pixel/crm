@@ -45,19 +45,20 @@ function implAlerts(projects, tasks, accounts, user) {
 
 // Bell alerts for survey follow-ups, derived from the tasks (no store). One per survey, for the
 // task owner, or for admins when nobody owns it. Same 30-day window as the other sources, and a
-// finished follow-up drops out. The id has no date, so a read alert stays read across a reopen.
+// finished follow-up drops out. The id has no date, so a reopen can find it still read, unless
+// marking another alert read pruned it while the task was done.
 function surveyAlerts(tasks, user, accounts = []) {
   const bySurvey = new Map();
   for (const t of tasks) {
     if (t.source !== "survey" || t.status === "Done" || !t.createdAt) continue;
     if (!(t.owner ? t.owner === user.name : user.role === "admin")) continue;
     const age = daysSince(t.createdAt);
-    if (age > 30 || age < 0) continue;
+    if (Math.abs(age) > 30) continue; // a client clock behind the database gives a small negative age
     const cur = bySurvey.get(t.surveyId);
     if (cur && cur.days >= -age) continue; // keep the newest task's date
     const acct = accounts.find(a => a.id === t.accountId);
     bySurvey.set(t.surveyId, { id: `survey-${t.surveyId}`, accountId: t.accountId, name: acct ? acct.name : "Survey follow-up",
-      sub: "Survey follow-up needed", date: t.createdAt, days: -age, chip: age === 0 ? "today" : `${age}d ago` });
+      sub: "Survey follow-up needed", date: t.createdAt, days: -age, chip: age <= 0 ? "today" : `${age}d ago` });
   }
   return [...bySurvey.values()];
 }
