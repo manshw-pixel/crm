@@ -39,6 +39,20 @@ const surveyAlertIds = async page => {
   return ids.filter(i => i.startsWith("survey-"));
 };
 
+test("survey followups: survey alerts lead the bell, newest first, above older alerts", async () => {
+  const old = seedAccount({ id: "a2", name: "Old Co", csm: "Test User", healthEvents: [{ date: ago(20).slice(0, 10), from: "Green", to: "Red" }] });
+  const { page, browser } = await launch(seed([T({ id: "n1", surveyId: "older", createdAt: ago(5) }), T({ id: "n2", surveyId: "newer", createdAt: ago(0) })]).replace(rows([A]), rows([A, old])));
+  try {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.waitForFunction(() => window.__store && window.__store.getState().tasks.length >= 2);
+    await page.locator("[data-bell]").click();
+    await page.waitForSelector("[data-notif-panel]");
+    const ids = await page.locator("[data-notif-item]").evaluateAll(l => l.map(x => x.getAttribute("data-notif-item")));
+    assert(ids[0] === "survey-newer" && ids[1] === "survey-older", "order: " + ids.join());
+    assert(ids.some(i => i.startsWith("health-")), "older alert still listed: " + ids.join());
+  } finally { await browser.close(); }
+});
+
 test("survey followups: Survey tag shows and the source filter finds the task", async () => {
   const { page, browser } = await start([T(), PLAIN]);
   try {

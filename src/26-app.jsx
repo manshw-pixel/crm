@@ -63,6 +63,11 @@ function surveyAlerts(tasks, user, accounts = []) {
   return [...bySurvey.values()];
 }
 
+// Survey follow-ups lead the bell, newest first: oldest-first would bury a fresh answer under weeks
+// of older alerts. Everything else stays in date order, so overdue renewals keep their urgency.
+const isSurveyAlert = a => a.id.startsWith("survey-");
+const alertOrder = (x, y) => (isSurveyAlert(y) - isSurveyAlert(x)) || (isSurveyAlert(x) ? y.days - x.days : x.days - y.days);
+
 // Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
@@ -462,7 +467,7 @@ function App({ user, onBackToClients }) {
         sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
     ...implAlerts(st.projects || [], st.projectTasks || [], st.accounts || [], user),
     ...surveyAlerts(st.tasks || [], user, st.accounts || []),
-  ].sort((x, y) => x.days - y.days);
+  ].sort(alertOrder);
   const alertIds = new Set(alerts.map(a => a.id));
   // Prune on write: ids for alerts that have aged out would otherwise accumulate in localStorage
   // forever. Dropping them also means a renewed contract (new expiryDate ⇒ new id) resurfaces unread.
