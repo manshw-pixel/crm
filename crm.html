@@ -65,7 +65,7 @@
     --f-side: #070b16; --f-side-hi: #162036; --f-side-line: #1a2236;
     --f-title: rgb(241 245 249); --f-meta: rgb(148 163 184); --f-page-meta: rgb(148 163 184); --f-kpi: rgb(170 182 199); --f-body: rgb(203 213 225);
     --f-line: rgb(58 72 94); --f-band: rgb(24 33 52); --f-rowline: rgb(30 41 59); --f-th: rgb(148 163 184);
-    --f-primary: #4f46e5; --f-primary-hi: #6366f1; --f-btn2-bg: rgb(19 27 44); --f-btn2-tx: rgb(203 213 225);
+    --f-primary: #4f46e5; --f-primary-hi: #5850ec; --f-btn2-bg: rgb(19 27 44); --f-btn2-tx: rgb(203 213 225);
     --f-seg-bg: rgb(30 41 59); --f-seg-tx: rgb(170 182 199); --f-seg-on: rgb(45 58 79); --f-seg-on-tx: #c7d2fe; --f-seg-shadow: 0 1px 2px rgba(0,0,0,.4);
     --f-ring: #818cf8;
     --sky-50: 10 35 52; --sky-100: 12 48 72; --sky-200: 16 70 100; --sky-300: 30 110 150; --sky-400: 56 189 248; --sky-500: 56 189 248; --sky-600: 125 211 252; --sky-700: 125 211 252; --sky-800: 186 230 253; --sky-900: 224 242 254; --sky-950: 240 249 255;
@@ -150,7 +150,8 @@
   .nm-btn { background: var(--f-btn2-bg); border: 1px solid var(--f-line); color: var(--f-btn2-tx); border-radius: 12px; font-weight: 600; transition: background .12s; }
   .nm-btn:hover { background: var(--f-band); }
   .nm-btn:active { background: rgb(var(--slate-200)); }
-  .grad { background: var(--f-primary); color: #fff; border-radius: 12px; font-weight: 600; }
+  /* .text-white follows --white, which turns navy in dark mode; filled buttons stay white */
+  .grad, .grad.text-white { background: var(--f-primary); color: #fff; border-radius: 12px; font-weight: 600; }
   .grad:hover { background: var(--f-primary-hi); }
   .grad:active { background: rgb(var(--indigo-800)); }
   /* frame-level controls (outside cards, tables, dialogs): 40px buttons, 42px inputs */

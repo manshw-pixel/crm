@@ -424,6 +424,14 @@ function App({ user, onBackToClients }) {
   const [notifOpen, setNotifOpen] = useState(false);
   const bellRef = useRef(null);
   const [bellBottom, setBellBottom] = useState(64);
+  const [bellOpensRight, setBellOpensRight] = useState(false);
+  // Measured on the click, so the panel's first paint is already on the right side: a short page
+  // title leaves the bell near the sidebar, and 320px leftwards would slide under it.
+  const toggleBell = () => {
+    const side = document.querySelector('nav[aria-label="Main"]');
+    if (bellRef.current && side) setBellOpensRight(bellRef.current.getBoundingClientRect().right - 320 < side.getBoundingClientRect().right);
+    setNotifOpen(o => !o);
+  };
   // measure where the bell sits each time the panel opens (the header wraps on phones), and
   // close on Escape
   useEffect(() => {
@@ -534,7 +542,7 @@ function App({ user, onBackToClients }) {
         </div>}
         <div className="ml-1"><SyncStatus quietSaved={view === "Dashboard"} /></div>
         <div className="relative ml-1">
-          <button data-bell ref={bellRef} onClick={() => setNotifOpen(o => !o)} title="Renewal & contract alerts"
+          <button data-bell ref={bellRef} onClick={toggleBell} title="Renewal & contract alerts"
             aria-label={`Notifications${unreadCount ? `, ${unreadCount} unread` : ""}`} aria-expanded={notifOpen}
             className="nm-btn relative flex h-9 w-9 items-center justify-center text-slate-600">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9" /><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" /></svg>
@@ -547,7 +555,7 @@ function App({ user, onBackToClients }) {
           {notifOpen && <div data-notif-backdrop className="fixed inset-0 z-10" onClick={() => setNotifOpen(false)} />}
           {notifOpen && (
             <div data-notif-panel style={{ "--bell-bottom": `${bellBottom}px` }}
-              className="nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80">
+              className={`nm fixed inset-x-3 top-[calc(var(--bell-bottom)+8px)] z-20 max-h-[calc(100dvh-var(--bell-bottom)-20px)] overflow-y-auto p-3 sm:absolute sm:inset-x-auto ${bellOpensRight ? "sm:left-0" : "sm:right-0"} sm:top-auto sm:mt-2 sm:max-h-[70vh] sm:w-80`}>
               <div className="flex items-center justify-between px-2 py-1">
                 <span className="text-xs font-semibold text-slate-700">Alerts</span>
                 {unreadCount > 0 && <button className="text-[11px] font-semibold text-indigo-600 hover:underline" onClick={() => alerts.forEach(a => markNotifRead(a.id))}>Mark all read</button>}
