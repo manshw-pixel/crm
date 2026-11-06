@@ -15,5 +15,10 @@ site_url = "http://127.0.0.1:3000"
 # signUp returns { session: null } and every assertion downstream fails on a null token.
 enable_confirmations = false
 
+# The test mail catcher is unused (confirmations are off) and its fixed port 54324 can already be
+# taken on a CI machine, which stopped the whole stack from starting.
+[inbucket]
+enabled = false
+
 [storage]
 enabled = true
