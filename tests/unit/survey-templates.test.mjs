@@ -106,3 +106,17 @@ test("sendCandidates: old string-id call still works", () => {
   const sv = [{ templateId: "t", contactId: "c", sentAt: "2026-11-01T00:00:00Z", expiresAt: "2026-12-01T00:00:00Z", submittedAt: null }];
   assert.match(sendCandidates(cs, sv, "t", "2026-11-05").other[0].reason, /^Survey pending since 1 Nov/);
 });
+
+test("follow-up validation and persistence", () => {
+  const Q = q => T({ questions: [q] });
+  assert.equal(validateTemplate(Q({ id: "a", type: "rating", text: "x", scale: 5, followUp: { op: "lte", value: 8 } })).ok, false);
+  assert.equal(validateTemplate(Q({ id: "a", type: "rating", text: "x", scale: 5, followUp: { op: "lte", value: 3 } })).ok, true);
+  assert.equal(validateTemplate(Q({ id: "a", type: "single", text: "x", options: ["a", "b"], followUp: { op: "in", value: ["c"] } })).ok, false);
+  assert.equal(validateTemplate(Q({ id: "a", type: "single", text: "x", options: ["a", "b"], followUp: { op: "in", value: ["b"] } })).ok, true);
+  assert.equal(validateTemplate(Q({ id: "a", type: "nps", text: "x", followUp: { op: "lte", value: 11 } })).ok, false);
+  assert.equal(validateTemplate(Q({ id: "a", type: "text", text: "x", followUp: { op: "lte", value: 1 } })).ok, false);
+  assert.equal(normaliseTemplate(Q({ id: "a", type: "nps", text: "x", followUp: null })).questions[0].followUp, null);
+  assert.equal("followUp" in normaliseTemplate(Q({ id: "a", type: "nps", text: "x" })).questions[0], false);
+  const c = copyTemplate(Q({ id: "a", type: "nps", text: "x", followUp: null }), () => "n", "now");
+  assert.equal(c.questions[0].followUp, null);
+});
