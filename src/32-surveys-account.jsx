@@ -44,6 +44,7 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
   const latest = start ? start.slice(0, 4) : null;
   const prevY = latest ? String(+latest - 1) : null;
   const cur = start ? npsByAccount(mine, start, svCfg).get(account.id) : null;
+  const pastCampaign = !!start && start !== campaignWindow(today, svCfg && svCfg.npsCampaignMonth).start;
   const prev = start ? npsByAccount(mine, prevY + start.slice(4), svCfg).get(account.id) : null;
   const flagged = contacts.some(c => c.surveyRecipient);
   const focusContacts = () => {
@@ -62,6 +63,7 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
         {cur && <div data-surveys-nps className="ad-row !gap-2 flex-wrap">
           <span className="ad-t-sm font-semibold">NPS {svSigned(cur.nps)} from {svPlural(cur.n, "answer")}</span>
           <span className="ad-xs">{latest} campaign</span>
+          {pastCampaign && <span data-surveys-past className="ad-pill ad-pill-sm" data-sev="grey">Past campaign: not in the score</span>}
           <span className="ad-xs w-full">{prevY} campaign: {prev ? `NPS ${svSigned(prev.nps)} from ${svPlural(prev.n, "answer")}` : "—"}</span>
         </div>}
         {!flagged && mine.length === 0 && <div className="ad-empty">No contacts flagged for surveys{" "}

@@ -202,6 +202,17 @@ test("nps source: a negative score keeps its sign and a zero score has none", as
   } finally { await browser.close(); }
 });
 
+test("surveys card: an answer in today's campaign shows no past-campaign note", async () => {
+  const now = new Date().toISOString();
+  const { page, browser } = await launch(seedWith([seedAccount({ id: "w2", name: "Current Co" })], dated("w2", [[10, now]]), { surveys: { npsCampaignMonth: 3 } }));
+  try {
+    await ready(page);
+    await openDetail(page, "Current Co");
+    await page.waitForSelector("[data-surveys-nps]");
+    assert(await page.locator("[data-surveys-past]").count() === 0, "no note on the current campaign");
+  } finally { await browser.close(); }
+});
+
 // A February answer belongs to the campaign that began the March before it.
 const CAMPAIGN = [[10, "2026-02-10T10:00:00Z"], [0, "2025-04-10T10:00:00Z"], [10, "2025-02-10T10:00:00Z"]];
 test("surveys card: March campaign puts a February 2026 answer in the 2025 campaign", async () => {
@@ -212,6 +223,7 @@ test("surveys card: March campaign puts a February 2026 answer in the 2025 campa
     const t = await page.locator("[data-surveys-nps]").innerText();
     assert(/NPS 0 from 2 answers/.test(t) && /2025 campaign/.test(t), "latest: " + t);
     assert(/2024 campaign: NPS \+100 from 1 answer/.test(t), "previous: " + t);
+    assert(/Past campaign: not in the score/.test(t), "past note: " + t);
   } finally { await browser.close(); }
 });
 
