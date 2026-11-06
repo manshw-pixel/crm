@@ -82,7 +82,8 @@ test("followup editor: dark mode and 390px", async () => {
   const { page, browser } = await launch(seed({ surveyTemplates: [TPL] }));
   try {
     await page.evaluate(() => document.documentElement.classList.add("dark"));
-    await open(page, 390, 844);
+    await open(page);
+    await page.setViewportSize({ width: 390, height: 844 });
     const r = page.locator("[data-template-editor] [data-q-row]");
     await r.nth(2).locator("[data-q-followup]").check();
     await page.waitForFunction(() => document.documentElement.scrollWidth <= window.innerWidth, null, { timeout: 3000 }).catch(() => {});
