@@ -85,6 +85,7 @@ import "./surveys-card.test.mjs";
 import "./surveys-settings.test.mjs";
 import "./survey-nps-health.test.mjs";
 import "./survey-followup-editor.test.mjs";
+import "./survey-followups.test.mjs";
 import "./dark-mode.test.mjs";
 import "./account-limit.test.mjs";
 import "./licenses.test.mjs";

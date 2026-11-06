@@ -19,6 +19,7 @@ function KpiSpark({ points, label }) {
 }
 
 function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, renewalsDue, user, dispatch, openAccount, openAccounts, goFinance, goTasks, openProject, goRenewals }) {
+  const surveyDone = useSurveyOutcome(st, user, dispatch);
   const totalARR = scored.reduce((s, a) => s + a.arrUSD, 0);
   // `today` is in the deps so the card re-bases itself when the year turns, even in a
   // session that was left open over New Year -- without it the memo would hold last
@@ -163,7 +164,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
               const a = scored.find(x => x.id === t.accountId), d = daysUntil(t.due);
               return (
                 <div key={t.id} data-row data-week-task={t.id} className="flex items-center gap-3 border-t border-slate-100 px-1 py-2.5 text-sm">
-                  <label className="dash-check"><input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-indigo-600" checked={t.status === "Done"} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
+                  <label className="dash-check"><input type="checkbox" aria-label={`Complete ${t.title}`} className="h-[18px] w-[18px] shrink-0 cursor-pointer accent-indigo-600" checked={t.status === "Done"} onChange={() => surveyDone.tick(t)} /></label>
                   <span className="min-w-0 flex-1 truncate font-medium text-slate-900" title={t.title}>{t.title}</span>
                   <button className="min-w-0 max-w-[40%] truncate text-[12.5px] font-semibold text-indigo-600 hover:underline" title={a?.name} onClick={() => openAccount(t.accountId)}>{a?.name}</button>
                   <span className={`w-[88px] shrink-0 whitespace-nowrap text-end text-[12.5px] tabular-nums ${d < 0 ? "font-semibold text-rose-700" : d === 0 ? "text-orange-700" : "text-slate-600"}`}>{d < 0 ? "Overdue" : d === 0 ? "Today" : fmtDate(t.due)}</span>
@@ -263,6 +264,7 @@ function Dashboard({ st, scored, all, allAccounts, scope, setScopeSel, myCount, 
       <CohortGrid accounts={scope === "all" ? allAccounts : all} />
       <ChurnAnalysis accounts={scope === "all" ? allAccounts : all} rates={rates} />
       </AnalyticsSection>
+      {surveyDone.dialog}
     </div>
   );
 }

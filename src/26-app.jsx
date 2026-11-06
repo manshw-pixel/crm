@@ -43,6 +43,25 @@ function implAlerts(projects, tasks, accounts, user) {
   return out;
 }
 
+// Bell alerts for survey follow-ups, derived from the tasks (no store). One per survey, for the
+// task owner, or for admins when nobody owns it. Same 30-day window as the other sources, and a
+// finished follow-up drops out. The id has no date, so a read alert stays read across a reopen.
+function surveyAlerts(tasks, user, accounts = []) {
+  const bySurvey = new Map();
+  for (const t of tasks) {
+    if (t.source !== "survey" || t.status === "Done" || !t.createdAt) continue;
+    if (!(t.owner ? t.owner === user.name : user.role === "admin")) continue;
+    const age = daysSince(t.createdAt);
+    if (age > 30 || age < 0) continue;
+    const cur = bySurvey.get(t.surveyId);
+    if (cur && cur.days >= -age) continue; // keep the newest task's date
+    const acct = accounts.find(a => a.id === t.accountId);
+    bySurvey.set(t.surveyId, { id: `survey-${t.surveyId}`, accountId: t.accountId, name: acct ? acct.name : "Survey follow-up",
+      sub: "Survey follow-up needed", date: t.createdAt, days: -age, chip: age === 0 ? "today" : `${age}d ago` });
+  }
+  return [...bySurvey.values()];
+}
+
 // Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
@@ -431,6 +450,7 @@ function App({ user, onBackToClients }) {
       .map(e => ({ id: `health-${a.id}-${e.date}-${e.to}`, accountId: a.id, name: a.name,
         sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
     ...implAlerts(st.projects || [], st.projectTasks || [], st.accounts || [], user),
+    ...surveyAlerts(st.tasks || [], user, st.accounts || []),
   ].sort((x, y) => x.days - y.days);
   const alertIds = new Set(alerts.map(a => a.id));
   // Prune on write: ids for alerts that have aged out would otherwise accumulate in localStorage
@@ -545,7 +565,7 @@ function App({ user, onBackToClients }) {
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-xs">
                     <span className="text-slate-700">{fmtDate(a.date)}</span>
-                    <span className={`rounded px-1.5 py-0.5 font-semibold ${a.days <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.days < 0 ? "expired" : a.days + "d"}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${a.days <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.chip || (a.days < 0 ? "expired" : a.days + "d")}</span>
                   </span>
                 </button>
               ); })}

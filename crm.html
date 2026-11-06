@@ -618,7 +618,15 @@
   .tk-title { font-size: 14px; font-weight: 600; overflow-wrap: anywhere; min-width: 0; color: var(--t-fg); }
   .tk-row[data-done=true] .tk-title { color: var(--t-meta); }
   .tk-tag { flex: none; font-size: 11px; font-weight: 700; padding: 1px 7px; border-radius: 6px; }
-  .tk-tag[data-src=renewal] { background: var(--t-acc-soft); color: var(--t-acc-tx); } .tk-tag[data-src=health] { background: var(--p-r-bg); color: var(--p-r-tx); }
+  .tk-tag[data-src=renewal] { background: var(--t-acc-soft); color: var(--t-acc-tx); } .tk-tag[data-src=health] { background: var(--p-r-bg); color: var(--p-r-tx); } .tk-tag[data-src=survey] { background: var(--t-acc-soft); color: var(--t-acc-tx); border: 1px solid var(--t-acc-ln); }
+  /* survey outcome dialog: opens from three pages, so it carries its own accent tokens */
+  .so-dlg { --so-acc: #6366f1; --so-soft: #eef2ff; }
+  @media screen { html.dark .so-dlg { --so-acc: #818cf8; --so-soft: #1e2046; } }
+  .so-opt { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 12px; margin-bottom: 6px; border: 1px solid var(--f-line); border-radius: 10px; cursor: pointer; }
+  .so-opt:has(input:checked) { border-color: var(--so-acc); background: var(--so-soft); }
+  .so-opt input { width: 18px; height: 18px; margin: 0; flex: none; accent-color: var(--so-acc); }
+  .so-note { display: block; width: 100%; min-height: 88px; resize: vertical; }
+  .so-dlg [data-btn] { min-height: 44px; padding-inline: 16px; }
   .tk-acct { border: 0; background: transparent; padding: 0; font-size: 12.5px; font-weight: 600; color: var(--t-link); max-width: 100%; text-align: left; overflow-wrap: anywhere; }
   .tk-acct:hover { text-decoration: underline; }
   .tk-cluster { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }

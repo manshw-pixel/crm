@@ -57,6 +57,7 @@ const ACTIONS = {
   ADD_TASK: { type: "ADD_TASK", item: { id: "t9", accountId: "a1", title: "x", status: "Open" } },
   EDIT_TASK: { type: "EDIT_TASK", id: "t1", patch: { title: "y" } },
   TOGGLE_TASK: { type: "TOGGLE_TASK", id: "t1" },
+  COMPLETE_SURVEY_TASK: { type: "COMPLETE_SURVEY_TASK", id: "t1", outcome: { result: "Called", note: "n", by: "T", at: "2026-06-15T12:00:00.000Z" } },
   UPDATE_INPUTS: { type: "UPDATE_INPUTS", id: "a1", inputs: { usage: 20 } },
   BULK_PATCH_ACCOUNTS: { type: "BULK_PATCH_ACCOUNTS", ids: ["a1", "b1"], patch: { csm: "Marco" }, by: "T" },
   BULK_ADD_TASKS: { type: "BULK_ADD_TASKS", items: [{ id: "t8", accountId: "a1", title: "x" }, { id: "t7", accountId: "gone", title: "x" }] },
@@ -286,6 +287,26 @@ test("TOGGLE_TASK flips Open <-> Done", () => {
   const once = run(ACTIONS.TOGGLE_TASK).next;
   assert.equal(once.tasks[0].status, "Done");
   assert.equal(run(ACTIONS.TOGGLE_TASK, structuredClone(once)).next.tasks[0].status, "Open");
+});
+
+test("COMPLETE_SURVEY_TASK sets Done, doneAt and surveyOutcome, and writes them", () => {
+  const { next, ops } = run(ACTIONS.COMPLETE_SURVEY_TASK);
+  const t = next.tasks[0];
+  assert.equal(t.status, "Done");
+  assert.equal(t.doneAt, "2026-06-15T12:00:00.000Z");
+  assert.deepEqual(t.surveyOutcome, ACTIONS.COMPLETE_SURVEY_TASK.outcome);
+  assert.deepEqual(merges(ops).map(o => o.table), ["tasks"]);
+});
+
+test("TOGGLE_TASK reopening a survey task keeps surveyOutcome; completing again overwrites it", () => {
+  const done = run(ACTIONS.COMPLETE_SURVEY_TASK).next;
+  const open = run(ACTIONS.TOGGLE_TASK, structuredClone(done)).next;
+  assert.equal(open.tasks[0].status, "Open");
+  assert.deepEqual(open.tasks[0].surveyOutcome, ACTIONS.COMPLETE_SURVEY_TASK.outcome);
+  const outcome = { result: "Fixed", note: "", by: "U", at: "2026-06-16T09:00:00.000Z" };
+  const again = run({ type: "COMPLETE_SURVEY_TASK", id: "t1", outcome }, structuredClone(open)).next;
+  assert.deepEqual(again.tasks[0].surveyOutcome, outcome);
+  assert.equal(again.tasks[0].doneAt, outcome.at);
 });
 
 test("BULK_ADD_TASKS drops tasks for accounts that no longer exist (state and writes)", () => {

@@ -109,6 +109,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [handoverOpen, setHandoverOpen] = useState(false);
+  const surveyDone = useSurveyOutcome(st, user, dispatch);
   const shownId = useRef(id); shownId.current = id; // the toast action can outlive this account's page
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
@@ -407,7 +408,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             {tasks.map(t => { const du = daysUntil(t.due); return (
               <div key={t.id}>
                 <label data-task-row className="ad-task">
-                  {!ro && <input type="checkbox" checked={false} aria-label={`Complete ${t.title}`} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />}
+                  {!ro && <input type="checkbox" checked={false} aria-label={`Complete ${t.title}`} onChange={() => surveyDone.tick(t)} />}
                   <span className="min-w-0 flex-auto" style={{ overflowWrap: "anywhere" }}>{t.title}
                     <span className="ad-xs block">{t.owner}{t.owner ? " · " : ""}<span data-task-due data-overdue={du < 0 ? "true" : undefined} className="ad-due">{du < 0 ? `Overdue · ${fmtDate(t.due)}` : du === 0 ? "Today" : fmtDate(t.due)}</span></span></span>
                   {t.priority && <span data-priority data-sev={PRIORITY_SEV[t.priority] || "grey"} className="ad-pill ad-pill-sm">{t.priority}</span>}
@@ -481,6 +482,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         onClose={() => setConfirmOpp(null)} />}
       <ProjectsCard className="ad-card" account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
       <DocumentsCard className="ad-card" a={a} dispatch={dispatch} user={user} readOnly={ro} />
+      {surveyDone.dialog}
     </div>
   );
 }

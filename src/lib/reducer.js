@@ -92,7 +92,7 @@ export function persistOps(action, next, prev) {
     case "SEED_PLAYBOOK": case "SEED_HEALTH_PLAYBOOK": {
       action.items.forEach(t => up("tasks", t)); const a = acct(action.id); if (a) up("accounts", a); break;
     }
-    case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); if (t) up("tasks", t); break; }
+    case "TOGGLE_TASK": case "COMPLETE_SURVEY_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); if (t) up("tasks", t); break; }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); if (x) up("activities", x); break; }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT":
     case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = acct(action.id); if (a) up("accounts", a); break; }
@@ -287,6 +287,7 @@ export function reducer(state, action) {
     case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
     case "EDIT_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
     case "TOGGLE_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: t.status === "Done" ? "Open" : "Done" } : t) };
+    case "COMPLETE_SURVEY_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: "Done", doneAt: action.outcome.at, surveyOutcome: action.outcome } : t) };
     case "UPDATE_INPUTS": {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;

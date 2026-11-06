@@ -51,8 +51,8 @@ const bucketTasks = (tasks, today) => {
   Object.keys(out).forEach(k => out[k].sort(cmp));
   return out;
 };
-/* Source of a task: the two seeders tag their own rows, anything untagged is hand-created. */
-const taskSource = t => (t.healthPlaybook ? "health" : t.playbook ? "renewal" : "manual");
+/* Source of a task: the two seeders and submit_survey tag their own rows, anything untagged is hand-created. */
+const taskSource = t => (t.source === "survey" ? "survey" : t.healthPlaybook ? "health" : t.playbook ? "renewal" : "manual");
 /* accountsById maps account id -> scored account (carries `risk` and `name`). */
 const filterTasks = (tasks, accountsById, { scope = "all", userName = "", source = "all", band = "all", q = "", owner = "" } = {}) =>
   tasks.filter(t => {
