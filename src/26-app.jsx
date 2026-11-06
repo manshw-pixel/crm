@@ -217,7 +217,7 @@ function App({ user, onBackToClients }) {
   useEffect(() => { window.__openAccounts = openAccounts; });
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
-    .then(s => { setSt(s); setLoaded(true); })
+    .then(s => { setSt(prev => s.surveys ? s : { ...s, surveys: prev.surveys || [] }); setLoaded(true); })
     .catch(e => {
       console.error(e);
       setLoadFailed(true);
@@ -281,10 +281,16 @@ function App({ user, onBackToClients }) {
     const h = e => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen(o => !o); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
+  const scoreDay = iso(Date.now());
+  const npsMap = useMemo(() => npsByAccount(st.surveys, scoreDay, st.settings.surveys), [st.surveys, st.settings.surveys, scoreDay]);
+  // Survey NPS applies at read time: score the effective copy, but spread the raw account, so
+  // `inputs` stays what the CSM typed (the Update health dialog edits it from here).
   const scored = useMemo(() => st.accounts.map(a => {
-    const score = healthScore(a, st.activities, st.settings.weights, st.settings);
-    return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
-  }), [st]);
+    const r = npsMap.get(a.id) || null;
+    const eff = withSurveyNps(a, r);
+    const score = healthScore(eff, st.activities, st.settings.weights, st.settings);
+    return { ...a, score, risk: riskOf(score), flags: flagsFor(eff, st.activities, score), surveyNps: r, arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
+  }), [st, npsMap]);
   // Record today's health baseline once per session. This is the ONLY writer of
   // health_snapshots: the scoring formula lives here in JS and must stay the single source
   // of truth, so SQL is given finished numbers rather than the inputs to recompute from.

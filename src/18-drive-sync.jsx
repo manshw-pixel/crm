@@ -391,8 +391,9 @@ function IntegrationsCard({ st, dispatch, user, feed }) {
     return { tier: ["Enterprise", "Mid", "SMB"], contractStatus: ["Active", "Auto-renew", "In negotiation", "Churn risk"], currency: CURRENCIES,
       ...(csms.length ? { csm: csms } : {}), dedicatedSupport: YES_NO, billingCompleted: YES_NO, caseStudy: YES_NO, approvedSavings: YES_NO, approvedRoi: YES_NO };
   };
-  const salesCSV = () => accountsCSVText(st.accounts.map(a => { const score = healthScore(a, st.activities, st.settings.weights, st.settings);
-    return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; }));
+  const salesCSV = () => { const nps = npsByAccount(st.surveys, iso(Date.now()), st.settings.surveys);
+    return accountsCSVText(st.accounts.map(a => { const score = healthScore(withSurveyNps(a, nps.get(a.id)), st.activities, st.settings.weights, st.settings);
+      return { ...a, score, risk: riskOf(score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) }; })); };
   const onboardingCSV = () => {
     const head = accountsCSVText([]).split("\n")[0].split(",");
     const cols = [...head, "destination", ...checklist().map(i => i.id)];

@@ -25,9 +25,11 @@ function implRows(r) {
   if (missingTable(r.error)) return [];
   throw r.error;
 }
-// Any failure (missing relation, RLS, network) yields [] -- the surveys feature must never stop the CRM loading.
+// Any failure (missing relation, RLS, network) yields null, never a throw -- the surveys feature must
+// never stop the CRM loading. null, not []: the refetch keeps the surveys it has, because an empty
+// list would drop survey NPS from every score and could fire health playbook tasks.
 function surveyRows(r) {
-  if (!r || r.error || !Array.isArray(r.data)) return [];
+  if (!r || r.error || !Array.isArray(r.data)) return null;
   return r.data.map(x => ({
     id: x.id, accountId: x.account_id, contactId: x.contact_id, contactName: x.contact_name, contactRole: x.contact_role,
     templateId: x.template_id, template: x.template_snapshot, source: x.source,

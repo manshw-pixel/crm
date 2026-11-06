@@ -133,7 +133,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hEpisode = healthAll.filter(t => t.healthFor === hLatest);
   const hDone = hEpisode.filter(t => t.status === "Done").length;
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
-  const comps = scoreComponents(a, st.activities, st.settings);
+  const eff = withSurveyNps(a, a.surveyNps); // what the score used; `a.inputs` stays as typed
+  const comps = scoreComponents(eff, st.activities, st.settings);
   // Σ rollup (own ARR + live subs, USD): one value for the ARR stat and the Sub-accounts title.
   const rollup = subs.length > 0 ? toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0) : null;
   return (
@@ -144,7 +145,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
       <div data-header-card className="space-y-4">
       {(() => { const f = licenseFigures(a); const r = accountRetention(a, (st.settings && st.settings.rates) || {});
         const ld = a.leadId && (team || []).find(u => u.id === a.leadId);
-        const iu = daysSince(a.inputsUpdatedAt || a.startDate);
+        const iu = daysSince(eff.inputsUpdatedAt || a.startDate);
         const rk = riskOf(a.score);
         // Sub line: empty parts drop out entirely, so there is never a stray "·".
         const subParts = [a.tier, a.industry, ld && `Lead ${ld.name}`,
@@ -379,7 +380,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
         </div>
         <div className="ad-col-r">
-          {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); const sev = iu >= 45 ? "red" : iu >= 30 ? "amber" : undefined;
+          {(() => { const iu = daysSince(eff.inputsUpdatedAt || a.startDate); const sev = iu >= 45 ? "red" : iu >= 30 ? "amber" : undefined;
             const pts = [...(a.history || []), { d: iso(Date.now()), s: a.score }];
             return (
             <AdCard title="Health breakdown" right={<span data-sev={sev} className="ad-stale ml-auto text-right">

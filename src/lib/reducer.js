@@ -8,6 +8,7 @@ import { QBR_FREQ_MONTHS } from "./qbr.js";
 import { clampInputs, healthScore } from "./scoring.js";
 import { auditChanges, withAudit } from "./audit.js";
 import { historyEntry, applySignoff, STAGE_LABEL } from "./implementation.js";
+import { npsByAccount, withSurveyNps } from "./surveys.js";
 
 /* Compute what actually changed between two versions of one row.
    This exists so that NO form has to diff: dispatch already holds prev and next, and this
@@ -290,7 +291,9 @@ export function reducer(state, action) {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
         const upd = { ...a, inputs: { ...a.inputs, ...clampInputs(action.inputs) }, inputsUpdatedAt: iso(Date.now()) };
-        const s = healthScore(upd, state.activities, state.settings.weights, state.settings);
+        // The history point must match the live score, so it scores with survey NPS; `upd` stays as typed.
+        const nps = npsByAccount((state.surveys || []).filter(sv => sv.accountId === a.id), iso(Date.now()), state.settings.surveys);
+        const s = healthScore(withSurveyNps(upd, nps.get(a.id)), state.activities, state.settings.weights, state.settings);
         return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }

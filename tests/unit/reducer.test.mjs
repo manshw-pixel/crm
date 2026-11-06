@@ -3,7 +3,7 @@ process.env.TZ = "UTC";
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { reducer, persistOps, diffRow } from "../../src/lib/reducer.js";
-import { DEFAULT_WEIGHTS, mergeSettings } from "../../src/lib/scoring.js";
+import { DEFAULT_WEIGHTS, healthScore, mergeSettings } from "../../src/lib/scoring.js";
 
 const NOW = Date.parse("2026-06-15T12:00:00Z");
 const TODAY = "2026-06-15";
@@ -242,6 +242,22 @@ test("UPDATE_INPUTS clamps, stamps, and appends a scored history point", () => {
   assert.equal(a.inputsUpdatedAt, TODAY);
   assert.equal(a.history.length, 1); assert.equal(typeof a.history[0].s, "number");
   assert.deepEqual(merges(ops)[0].appends.history, a.history);
+});
+
+test("UPDATE_INPUTS records a history score that uses survey NPS, and stores the typed NPS", () => {
+  const snap = { questions: [{ id: "nps", type: "nps" }] };
+  const surveys = ["c1", "c2", "c3"].map(c => ({ id: "s" + c, accountId: "a1", contactId: c, template: snap, submittedAt: "2026-06-10T00:00:00Z", answers: { nps: 10 } }));
+  const st = { ...base(), surveys };
+  st.settings = { ...st.settings, surveys: { npsCampaignMonth: 3, minNpsResponses: 3 } };
+  const a = A(run({ type: "UPDATE_INPUTS", id: "a1", inputs: { nps: -50 } }, st).next);
+  assert.equal(a.inputs.nps, -50);
+  const scored = nps => {
+    mock.timers.enable({ apis: ["Date"], now: NOW });
+    try { return healthScore({ ...a, inputs: { ...a.inputs, nps } }, st.activities, st.settings.weights, st.settings); }
+    finally { mock.timers.reset(); }
+  };
+  assert.notEqual(scored(100), scored(-50));
+  assert.equal(a.history[0].s, scored(100));
 });
 
 // ---------- contacts, activities, tasks, opps
