@@ -471,11 +471,12 @@ begin
     -- Idempotency: the unique (kind, recipient, day) constraint means a cron double-fire
     -- or a manual re-run takes this branch and sends nothing. Claim the slot BEFORE
     -- posting, so a crash between the two cannot produce a second email.
-    begin
-      insert into email_log (kind, recipient, row_count, org_id) values (p_kind, r.email, n_rows, o.org_id);
-    exception when unique_violation then
-      continue;
-    end;
+    -- Only THIS constraint means "already sent". Any other duplicate (a sequence left behind
+    -- by a data copy hit the primary key for two weeks after the Mumbai move, silently) must
+    -- raise, so the per-recipient handler counts it and writes it to error_log.
+    insert into email_log (kind, recipient, row_count, org_id) values (p_kind, r.email, n_rows, o.org_id)
+      on conflict (kind, recipient, day) do nothing;
+    continue when not found;
 
     req := alert_post(
       cfg.api_base,
