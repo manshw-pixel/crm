@@ -20,7 +20,7 @@ const HealthRing = ({ score, size = 72 }) => {
 const HealthChip = ({ score }) =><Chip risk={riskOf(score)}>{score}</Chip>;
 const Card = ({ title, right, children, className = "", id }) => (
   <div id={id} className={`nm p-4 ${className}`}>
-    {(title || right) && <div className="mb-3 flex items-center justify-between"><h3 className="text-base font-bold text-slate-900">{title}</h3>{right}</div>}
+    {(title || right) && <div className="mb-3 flex items-center justify-between max-sm:flex-wrap max-sm:gap-2"><h3 className="text-base font-bold text-slate-900">{title}</h3>{right}</div>}
     {children}
   </div>
 );

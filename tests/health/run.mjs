@@ -56,6 +56,7 @@ import "./retention-ui.test.mjs";
 import "./health-snapshot.test.mjs";
 import "./transition-date.test.mjs";
 import "./am-book.test.mjs";
+import "./dashboard-mobile-cards.test.mjs";
 import "./orgs.test.mjs";
 import "./client-console.test.mjs";
 import "./touchpoint-activity.test.mjs";
