@@ -14,6 +14,20 @@ function svAnswerText(q, v) {
   return Array.isArray(v) ? v.join(", ") : String(v);
 }
 
+// Under the NPS bar in the health breakdown: which NPS the score is using, and why.
+const svSigned = n => (n > 0 ? "+" : "") + n;
+function NpsSourceLine({ result, typed, min }) {
+  const note = !result.enough ? "Using typed NPS"
+    : `Score ${svSigned(result.nps)} · ${typed == null ? "no typed value" : `typed value ${svSigned(typed)} kept as fallback`}`;
+  return (
+    <div data-nps-source className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      {result.enough
+        ? <span className="ad-pill ad-pill-sm" data-sev="green">NPS from surveys (n={result.n})</span>
+        : <span className="ad-pill ad-pill-sm" data-sev="grey">Survey NPS {svSigned(result.nps)} (n={result.n}, needs {min})</span>}
+      <span data-nps-source-note className="ad-xs">{note}</span>
+    </div>);
+}
+
 function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgName, settings }) {
   const [open, setOpen] = useState(false);
   const admin = !!user && user.role === "admin";
@@ -21,18 +35,16 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
   const done = mine.filter(s => s.submittedAt).sort((x, y) => String(y.submittedAt).localeCompare(String(x.submittedAt)));
   const today = iso(Date.now());
   const pending = mine.filter(s => !s.submittedAt).sort((x, y) => String(y.sentAt).localeCompare(String(x.sentAt)));
-  // NPS: this account's submitted nps answers, grouped by the calendar year they were submitted.
-  const byYear = {};
-  for (const s of done) {
-    const q = ((s.template && s.template.questions) || []).find(x => x.type === "nps");
-    const v = q && s.answers ? s.answers[q.id] : null;
-    if (Number.isInteger(v)) (byYear[String(s.submittedAt).slice(0, 4)] = byYear[String(s.submittedAt).slice(0, 4)] || []).push(v);
-  }
-  const years = Object.keys(byYear).sort();
-  const latest = years.length ? years[years.length - 1] : null;
-  const cur = latest ? npsSummary(byYear[latest]) : null;
+  // NPS by campaign, counted as the score counts it (latest answer per contact). The card shows
+  // the campaign of the newest answer, even when that is not the campaign running today.
+  const svCfg = settings && settings.surveys;
+  const hasNps = s => { const q = ((s.template && s.template.questions) || []).find(x => x.type === "nps"); return !!q && Number.isInteger((s.answers || {})[q.id]); };
+  const newest = done.find(hasNps);
+  const start = newest ? campaignWindow(String(newest.submittedAt).slice(0, 10), svCfg && svCfg.npsCampaignMonth).start : null;
+  const latest = start ? start.slice(0, 4) : null;
   const prevY = latest ? String(+latest - 1) : null;
-  const prev = prevY && byYear[prevY] ? npsSummary(byYear[prevY]) : null;
+  const cur = start ? npsByAccount(mine, start, svCfg).get(account.id) : null;
+  const prev = start ? npsByAccount(mine, prevY + start.slice(4), svCfg).get(account.id) : null;
   const flagged = contacts.some(c => c.surveyRecipient);
   const focusContacts = () => {
     const el = document.querySelector('section[data-ad-card][aria-label="Contacts"]');
@@ -48,9 +60,9 @@ function AccountSurveysCard({ account, contacts, surveys, user, dispatch, orgNam
     <div data-surveys-card>
       <AdCard title="Surveys" right={right}>
         {cur && <div data-surveys-nps className="ad-row !gap-2 flex-wrap">
-          <span className="ad-t-sm font-semibold">NPS {cur.nps} from {svPlural(cur.n, "answer")}</span>
-          <span className="ad-xs">{latest}</span>
-          <span className="ad-xs w-full">{prevY}: {prev ? `NPS ${prev.nps} from ${svPlural(prev.n, "answer")}` : "—"}</span>
+          <span className="ad-t-sm font-semibold">NPS {svSigned(cur.nps)} from {svPlural(cur.n, "answer")}</span>
+          <span className="ad-xs">{latest} campaign</span>
+          <span className="ad-xs w-full">{prevY} campaign: {prev ? `NPS ${svSigned(prev.nps)} from ${svPlural(prev.n, "answer")}` : "—"}</span>
         </div>}
         {!flagged && mine.length === 0 && <div className="ad-empty">No contacts flagged for surveys{" "}
           <button type="button" data-surveys-goto-contacts className="st-link" onClick={focusContacts}>Go to Contacts</button></div>}

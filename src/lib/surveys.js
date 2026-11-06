@@ -143,3 +143,93 @@ export function npsSummary(values) {
   }
   return { nps: Math.round((promoters / n) * 100 - (detractors / n) * 100), n, promoters, passives, detractors };
 }
+
+// ---- NPS campaign window, per-account NPS, and follow-up rules ----
+const pad2 = n => String(n).padStart(2, "0");
+
+// One-year window [start, end) starting on the 1st of `month`, the latest such date <= today.
+export function campaignWindow(today, month) {
+  const m = Number.isInteger(month) && month >= 1 && month <= 12 ? month : 3;
+  const t = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(today || ""));
+  const y = t ? +t[1] : new Date().getUTCFullYear();
+  const cur = t ? `${t[1]}-${t[2]}-${t[3]}` : "";
+  const startYear = cur && cur >= `${y}-${pad2(m)}-01` ? y : y - 1;
+  return { start: `${startYear}-${pad2(m)}-01`, end: `${startYear + 1}-${pad2(m)}-01` };
+}
+
+// answers: [{ contactId, surveyId, value, date }]. Latest answer per contact inside the window.
+export function accountNps(answers, today, opts) {
+  const o = opts || {};
+  const { start, end } = campaignWindow(today, o.campaignMonth);
+  const latest = new Map();
+  for (const a of answers || []) {
+    if (!a || !Number.isInteger(a.value)) continue;
+    const d = String(a.date || "").slice(0, 10);
+    if (d < start || d >= end) continue;
+    const key = a.contactId != null ? "c:" + a.contactId : "s:" + a.surveyId;
+    const prev = latest.get(key);
+    if (!prev || d >= prev.d) latest.set(key, { d, value: a.value });
+  }
+  if (!latest.size) return null;
+  const rows = [...latest.values()];
+  const sum = npsSummary(rows.map(r => r.value));
+  const min = o.minResponses == null ? 0 : Number(o.minResponses);
+  return { ...sum, enough: sum.n >= min, lastDate: rows.reduce((m, r) => (r.d > m ? r.d : m), "") };
+}
+
+// Submitted surveys grouped by account; the NPS question comes from each survey's own snapshot.
+export function npsByAccount(surveys, today, surveySettings) {
+  const s = surveySettings || {};
+  const groups = new Map();
+  for (const sv of surveys || []) {
+    if (!sv || !sv.submittedAt || !sv.template || !Array.isArray(sv.template.questions)) continue;
+    const q = sv.template.questions.find(x => x && x.type === "nps");
+    if (!q) continue;
+    const value = (sv.answers || {})[q.id];
+    if (!Number.isInteger(value)) continue;
+    if (!groups.has(sv.accountId)) groups.set(sv.accountId, []);
+    groups.get(sv.accountId).push({ contactId: sv.contactId == null ? null : sv.contactId, surveyId: sv.id, value, date: String(sv.submittedAt).slice(0, 10) });
+  }
+  const out = new Map();
+  for (const [accountId, list] of groups) {
+    const r = accountNps(list, today, { campaignMonth: s.npsCampaignMonth, minResponses: s.minNpsResponses });
+    if (r) out.set(accountId, r);
+  }
+  return out;
+}
+
+export function withSurveyNps(acct, result) {
+  if (!result) return acct;
+  const next = { ...acct };
+  if (result.enough) next.inputs = { ...(acct.inputs || {}), nps: result.nps };
+  const cur = acct.inputsUpdatedAt;
+  if (!cur || String(result.lastDate) > String(cur)) next.inputsUpdatedAt = result.lastDate;
+  return next;
+}
+
+export function followUpRule(q) {
+  if (!q) return null;
+  if (q.followUp !== undefined) return q.followUp;
+  return q.type === "nps" ? { op: "lte", value: 6 } : null;
+}
+
+export function followUpMatches(q, value) {
+  const r = followUpRule(q);
+  if (!r) return false;
+  const blank = value == null || (typeof value === "string" && value.trim() === "") || (Array.isArray(value) && value.length === 0);
+  if (blank) return false;
+  if (r.op === "lte") return (q.type === "nps" || q.type === "rating") && typeof value === "number" && value <= r.value;
+  if (r.op === "in") {
+    const list = Array.isArray(r.value) ? r.value : [];
+    if (q.type === "single") return list.includes(value);
+    if (q.type === "multi") return Array.isArray(value) && value.some(v => list.includes(v));
+  }
+  return false;
+}
+
+export function answerLabel(q, value) {
+  if (q.type === "nps") return `${value}/10`;
+  if (q.type === "rating") return `${value}/${q.scale || 5}`;
+  if (Array.isArray(value)) return value.join(", ");
+  return String(value == null ? "" : value);
+}

@@ -317,12 +317,15 @@ function Settings({ st, dispatch, user, scored, theme, feed, orgName }) {
   // Impact previews rescore every account, so compute them only while they are visible.
   const NO_IMPACT = { down: 0, toYellow: 0, toRed: 0 };
   const recencyOpen = openSub.recency, valueLive = w.value > 0;
-  const recencyImpact = useMemo(() => !recencyOpen ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+  // The same effective accounts the live scores use, so a preview agrees with them.
+  const effAccounts = useMemo(() => { const nps = npsByAccount(st.surveys || [], iso(Date.now()), st.settings.surveys);
+    return st.accounts.map(a => withSurveyNps(a, nps.get(a.id))); }, [st.accounts, st.surveys, st.settings.surveys]);
+  const recencyImpact = useMemo(() => !recencyOpen ? NO_IMPACT : bandImpact(effAccounts, st.activities,
     { ...st.settings, recencyMix: { ...rmix, enabled: false } }, { ...st.settings, recencyMix: { ...rmix, enabled: true } }),
-    [st.accounts, st.activities, st.settings, recencyOpen]);
-  const valueImpact = useMemo(() => !valueLive ? NO_IMPACT : bandImpact(st.accounts, st.activities,
+    [effAccounts, st.activities, st.settings, recencyOpen]);
+  const valueImpact = useMemo(() => !valueLive ? NO_IMPACT : bandImpact(effAccounts, st.activities,
     { ...st.settings, weights: { ...w, value: 0 } }, st.settings),
-    [st.accounts, st.activities, st.settings, valueLive]);
+    [effAccounts, st.activities, st.settings, valueLive]);
   const admin = user.role === "admin";
   const doExport = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify(st, null, 2)], { type: "application/json" }));

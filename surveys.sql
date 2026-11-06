@@ -1,5 +1,6 @@
 -- surveys.sql -- NPS / CSAT surveys. PR 1: send, answer, unsubscribe. PR 2: template
--- validation (survey_template_valid) and the non-NPS throttle in send_survey.
+-- validation (survey_template_valid) and the non-NPS throttle in send_survey. PR 3: follow-up
+-- tasks, created and updated by submit_survey (survey_sync_followups).
 --
 -- HOW TO RUN: paste this whole file into the Supabase SQL editor and run it AFTER
 -- supabase-setup.sql and email-alerts.sql (it reuses alert_config, alert_post and
@@ -10,7 +11,8 @@
 -- read surveys of their own org (leads: only accounts they own), and can never read the
 -- token column. The public survey page (anon) reaches a survey only by its token.
 -- Validation mirrors src/lib/surveys.js (validateAnswers, sendCandidates) and
--- src/lib/survey-templates.js (validateTemplate); keep them in step.
+-- src/lib/survey-templates.js (validateTemplate); keep them in step. The follow-up functions
+-- mirror followUpRule, followUpMatches and answerLabel in src/lib/surveys.js the same way.
 
 create extension if not exists pgcrypto with schema extensions;
 
@@ -157,6 +159,7 @@ revoke execute on function public.survey_answers_valid(jsonb, jsonb) from public
 create or replace function public.survey_template_valid(p jsonb)
 returns boolean language plpgsql immutable set search_path = public as $$
 declare q jsonb; o jsonb; typ text; ids text[] := '{}'; opts text[]; n_nps int := 0; v_scale numeric;
+        f jsonb; v_max numeric; v_min numeric; v_n numeric;
 begin
   if p is null or jsonb_typeof(p) <> 'object' then return false; end if;
   if jsonb_typeof(p->'name') is distinct from 'string' or trim(p->>'name') = ''
@@ -193,10 +196,171 @@ begin
         opts := opts || lower(o #>> '{}');
       end loop;
     end if;
+    f := q->'followUp';
+    if f is not null and jsonb_typeof(f) <> 'null' then
+      if typ = 'text' then return false; end if;
+      if f->>'op' = 'lte' then
+        v_max := case typ when 'nps' then 10 when 'rating' then v_scale else 0 end;
+        v_min := case when typ = 'nps' then 0 else 1 end;
+        if v_max = 0 or jsonb_typeof(f->'value') is distinct from 'number' then return false; end if;
+        v_n := (f->>'value')::numeric;
+        if v_n <> trunc(v_n) or v_n < v_min or v_n > v_max then return false; end if;
+      elsif f->>'op' = 'in' then
+        if typ not in ('single', 'multi') or jsonb_typeof(f->'value') is distinct from 'array' then return false; end if;
+        if jsonb_array_length(f->'value') = 0 then return false; end if;
+        for o in select * from jsonb_array_elements(f->'value') loop
+          if not (q->'options' @> jsonb_build_array(o)) then return false; end if;
+        end loop;
+      else
+        return false;
+      end if;
+    end if;
   end loop;
   return n_nps <= 1;
 end $$;
 revoke execute on function public.survey_template_valid(jsonb) from public, anon, authenticated;
+
+-- ---------- follow-ups (PR 3) ----------
+-- followUpRule: a set rule wins, a null rule means off, and an NPS question with no followUp
+-- key defaults to <= 6.
+create or replace function public.survey_followup_rule(q jsonb)
+returns jsonb language plpgsql immutable set search_path = public as $$
+begin
+  if q is null or jsonb_typeof(q) <> 'object' then return null; end if;
+  if q ? 'followUp' then
+    if jsonb_typeof(q->'followUp') = 'null' then return null; end if;
+    return q->'followUp';
+  end if;
+  if q->>'type' = 'nps' then return jsonb_build_object('op', 'lte', 'value', 6); end if;
+  return null;
+end $$;
+revoke execute on function public.survey_followup_rule(jsonb) from public, anon, authenticated;
+
+-- followUpMatches: lte for nps and rating, in for single and multi; blank never matches.
+create or replace function public.survey_followup_matches(q jsonb, v jsonb)
+returns boolean language plpgsql immutable set search_path = public as $$
+declare r jsonb := public.survey_followup_rule(q); typ text := jsonb_typeof(v); list jsonb;
+begin
+  if r is null then return false; end if;
+  if v is null or typ = 'null' or (typ = 'string' and trim(v #>> '{}') = '') then return false; end if;
+  if typ = 'array' and jsonb_array_length(v) = 0 then return false; end if;
+  if r->>'op' = 'lte' then
+    if q->>'type' not in ('nps', 'rating') or typ <> 'number'
+       or jsonb_typeof(r->'value') is distinct from 'number' then
+      return false;
+    end if;
+    return (v #>> '{}')::numeric <= (r->>'value')::numeric;
+  end if;
+  if r->>'op' = 'in' then
+    list := case when jsonb_typeof(r->'value') = 'array' then r->'value' else '[]'::jsonb end;
+    if q->>'type' = 'single' then return list @> jsonb_build_array(v); end if;
+    if q->>'type' = 'multi' and typ = 'array' then
+      return exists (select 1 from jsonb_array_elements(v) e where list @> jsonb_build_array(e));
+    end if;
+  end if;
+  return false;
+end $$;
+revoke execute on function public.survey_followup_matches(jsonb, jsonb) from public, anon, authenticated;
+
+-- answerLabel: nps 6/10, rating 2/7, multi joined with ", ".
+create or replace function public.survey_answer_label(q jsonb, v jsonb)
+returns text language plpgsql immutable set search_path = public as $$
+begin
+  if q->>'type' = 'nps' then return (v #>> '{}') || '/10'; end if;
+  if q->>'type' = 'rating' then return (v #>> '{}') || '/' || coalesce(q->>'scale', '5'); end if;
+  if jsonb_typeof(v) = 'array' then
+    return (select coalesce(string_agg(x.e, ', ' order by x.n), '')
+              from jsonb_array_elements_text(v) with ordinality x(e, n));
+  end if;
+  return coalesce(v #>> '{}', '');
+end $$;
+revoke execute on function public.survey_answer_label(jsonb, jsonb) from public, anon, authenticated;
+
+-- Creates or updates one task per matching question. The task id is fixed per survey and
+-- question, so an edit inside the 7-day window reaches the same task. An edit only ever sets
+-- title and details: status, surveyOutcome, owner and due stay as the CSM left them. Details
+-- are appended to, never rebuilt, because a CSM can type in them. They stop growing at 8000
+-- characters: the token is public and can resubmit for 7 days, so growth must be bounded.
+create or replace function public.survey_sync_followups(s surveys, p_answers jsonb)
+returns void language plpgsql set search_path = public as $$
+declare
+  qs jsonb := s.template_snapshot->'questions';
+  acct jsonb; v_csm text; ctx jsonb; v_contact text; v_texts text[];
+  q jsonb; v jsonb; v_id text; v_title text; v_match boolean; cur jsonb;
+  v_line text; v_details text; v_note text;
+  c_max constant int := 8000;
+begin
+  if jsonb_typeof(qs) is distinct from 'array' then return; end if;
+  select a.data into acct from accounts a where a.org_id = s.org_id and a.id = s.account_id;
+  v_csm := trim(coalesce(acct->>'csm', ''));
+  ctx := jsonb_build_object(
+    'firstName', split_part(trim(coalesce(s.contact_name, '')), ' ', 1),
+    'accountName', acct->>'name',
+    'csmName', v_csm,
+    'orgName', (select o.name from orgs o where o.id = s.org_id));
+  v_contact := coalesce(nullif(trim(coalesce(s.contact_name, '')), ''), s.contact_email, '');
+  select coalesce(array_agg(trim(p_answers->>(x.q->>'id')) order by x.n), '{}') into v_texts
+    from jsonb_array_elements(qs) with ordinality x(q, n)
+   where x.q->>'type' = 'text'
+     and jsonb_typeof(p_answers->(x.q->>'id')) = 'string'
+     and trim(p_answers->>(x.q->>'id')) <> '';
+
+  for q in select * from jsonb_array_elements(qs) loop
+    continue when public.survey_followup_rule(q) is null;
+    v := p_answers->(q->>'id');
+    v_match := public.survey_followup_matches(q, v);
+    v_id := 'sv-fu-' || s.id || '-' || (q->>'id');
+    cur := null;
+    select t.data into cur from tasks t where t.org_id = s.org_id and t.id = v_id;
+    continue when cur is null and not v_match;
+    if v_match then
+      v_title := format('Follow up: %s — %s: %s', v_contact,
+                        left(public.survey_fill(q->>'text', ctx), 60), public.survey_answer_label(q, v));
+    end if;
+
+    if cur is null then
+      insert into tasks (org_id, id, data) values (s.org_id, v_id, jsonb_build_object(
+        'id', v_id, 'accountId', s.account_id, 'title', v_title,
+        'details', left(array_to_string(v_texts, E'\n'), c_max),
+        'due', to_char((now() at time zone 'utc')::date + 2, 'YYYY-MM-DD'),
+        'priority', 'High', 'status', 'Open', 'owner', v_csm, 'source', 'survey',
+        'surveyId', s.id, 'questionId', q->>'id',
+        'createdAt', to_char(now() at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS"Z"')));
+      continue;
+    end if;
+
+    v_details := coalesce(cur->>'details', '');
+    foreach v_line in array v_texts loop
+      if position(E'\n' || v_line || E'\n' in E'\n' || v_details || E'\n') = 0
+         and length(v_details) + 1 + length(v_line) <= c_max then
+        v_details := v_details || case when v_details = '' then '' else E'\n' end || v_line;
+      end if;
+    end loop;
+    -- The note tracks the latest answer. A matching edit also writes one when the last line is
+    -- an older note, or that note would read as the current answer.
+    v_note := null;
+    if not v_match then
+      if v is null or jsonb_typeof(v) = 'null' or (jsonb_typeof(v) = 'string' and trim(v #>> '{}') = '')
+         or v = '[]'::jsonb then
+        v_note := 'Answer removed';
+      else
+        v_note := 'Answer changed to ' || public.survey_answer_label(q, v);
+      end if;
+    elsif v_details ~ '(^|\n)Answer (changed to [^\n]*|removed)$' then
+      v_note := 'Answer changed to ' || public.survey_answer_label(q, v);
+    end if;
+    if v_note is not null and v_details <> v_note and right(v_details, length(v_note) + 1) <> E'\n' || v_note
+       and length(v_details) + 1 + length(v_note) <= c_max then
+      v_details := v_details || case when v_details = '' then '' else E'\n' end || v_note;
+    end if;
+    update tasks t
+       set data = t.data || jsonb_build_object('details', v_details)
+                || case when v_match then jsonb_build_object('title', v_title) else '{}'::jsonb end,
+           updated_at = now()
+     where t.org_id = s.org_id and t.id = v_id;
+  end loop;
+end $$;
+revoke execute on function public.survey_sync_followups(public.surveys, jsonb) from public, anon, authenticated;
 
 -- ---------- send (admin only) ----------
 create or replace function public.send_survey(p_account text, p_contact_ids text[], p_template jsonb)
@@ -409,6 +573,13 @@ begin
       'summary', format('Survey answered by %s', coalesce(s.contact_name, s.contact_email))))
     on conflict (org_id, id) do nothing;
   end if;
+
+  -- A follow-up failure must never cost the customer their answers or their success page.
+  begin
+    perform public.survey_sync_followups(s, p_answers);
+  exception when others then
+    raise warning 'survey follow-up failed for %: %', s.id, sqlerrm;
+  end;
   return jsonb_build_object('ok', true);
 end $$;
 revoke execute on function public.submit_survey(text, jsonb) from public;

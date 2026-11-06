@@ -39,6 +39,16 @@ function SurveysSettingsCard({ st, dispatch, user, orgName }) {
     if (v == null) { e.target.value = cfg[key]; return; }
     e.target.value = v; setCfg(key, v);
   };
+  // These two move every account's score, so a value outside the range is refused, not clamped.
+  const blurStrictInt = (key, lo, hi) => e => {
+    const raw = e.target.value.trim(), n = Number(raw);
+    if (raw === "" || !Number.isInteger(n) || n < lo || n > hi) {
+      e.target.value = cfg[key];
+      if (raw !== "") toast({ text: `Enter a whole number from ${lo} to ${hi}.`, tone: "info" });
+      return;
+    }
+    e.target.value = n; setCfg(key, n);
+  };
   const copy = t => {
     const now = surveyNow();
     const c = copyTemplate(t, uid, now);
@@ -62,6 +72,16 @@ function SurveysSettingsCard({ st, dispatch, user, orgName }) {
           <label className="block text-xs font-semibold text-slate-600">From name
             <Input key={"fn" + cfg.fromName} maxLength={60} defaultValue={cfg.fromName} placeholder={orgName || ""}
               data-survey-fromname onBlur={e => { const v = e.target.value.trim().slice(0, 60); e.target.value = v; setCfg("fromName", v); }} />
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">Answers needed for survey NPS
+            <Input key={"mn" + cfg.minNpsResponses} type="number" min="1" max="50" step="1" defaultValue={cfg.minNpsResponses}
+              data-survey-min-nps aria-describedby="survey-min-nps-help" onBlur={blurStrictInt("minNpsResponses", 1, 50)} />
+            <span id="survey-min-nps-help" className="mt-1 block font-normal text-slate-500">1 to 50. Below this, the typed NPS scores.</span>
+          </label>
+          <label className="block text-xs font-semibold text-slate-600">NPS campaign start month
+            <Input key={"cm" + cfg.npsCampaignMonth} type="number" min="1" max="12" step="1" defaultValue={cfg.npsCampaignMonth}
+              data-survey-campaign-month aria-describedby="survey-campaign-help" onBlur={blurStrictInt("npsCampaignMonth", 1, 12)} />
+            <span id="survey-campaign-help" className="mt-1 block font-normal text-slate-500">1 = January, 12 = December.</span>
           </label>
         </div>
         <ul className="mb-3 divide-y divide-slate-200">
@@ -150,6 +170,47 @@ function SurveyQuestionPreview({ q, n, ctx }) {
   );
 }
 
+const fuList = q => { const r = followUpRule(q); return r && r.op === "in" && Array.isArray(r.value) ? r.value : null; };
+
+// One question's follow-up rule. No stored rule means the lib default (NPS on at 6, others off);
+// an explicit null means off. The rule is saved on the question as `followUp`.
+function FollowUpEditor({ q, n, onChange }) {
+  const r = followUpRule(q);
+  const on = !!r;
+  const isChoice = q.type === "single" || q.type === "multi";
+  const max = q.type === "nps" ? 10 : Number(q.scale) || 5;
+  const min = q.type === "nps" ? 0 : 1;
+  const nums = Array.from({ length: max - min + 1 }, (_, k) => String(min + k));
+  if (r && r.op === "lte" && !nums.includes(String(r.value))) nums.push(String(r.value)); // stale value stays visible; save is blocked
+  const fresh = () => isChoice ? { op: "in", value: [] } : { op: "lte", value: q.type === "nps" ? 6 : 2 };
+  const ctl = { minHeight: 44 };
+  return (
+    <div data-q-followup-block className="mt-2 text-xs text-slate-600">
+      <label className="flex items-center gap-2" style={ctl}>
+        <input type="checkbox" data-q-followup style={{ width: 18, height: 18 }} checked={on} onChange={e => onChange(e.target.checked ? fresh() : null)} />
+        <span className="font-semibold">Create a follow-up task</span>
+      </label>
+      {on && r.op === "lte" && <label className="flex flex-wrap items-center gap-2" style={ctl}>
+        <span>When the answer is</span>
+        <Select aria-label={`Question ${n} follow-up score`} data-q-followup-value style={ctl} value={String(r.value)} options={nums}
+          onChange={e => onChange({ op: "lte", value: Number(e.target.value) })} />
+        <span>or lower</span>
+      </label>}
+      {on && r.op === "in" && <fieldset className="min-w-0">
+        <legend className="py-1">When the answer is one of</legend>
+        {(q.options || []).map((o, k) => o && (
+          <label key={k} className="flex items-center gap-2" style={ctl}>
+            <input type="checkbox" data-q-followup-option style={{ width: 18, height: 18 }} checked={(r.value || []).includes(o)}
+              onChange={e => onChange({ op: "in", value: e.target.checked ? [...(r.value || []), o] : (r.value || []).filter(v => v !== o) })} />
+            <span className="min-w-0 break-words">{o}</span>
+          </label>
+        ))}
+        {(r.value || []).length === 0 && <p data-q-followup-hint role="status" className="text-xs font-semibold text-rose-700">Tick at least one option</p>}
+      </fieldset>}
+    </div>
+  );
+}
+
 function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
   const initial = useMemo(() => JSON.parse(JSON.stringify({ ...template, __new: undefined })), [template]);
   const [t, setT] = useState(initial);
@@ -214,15 +275,17 @@ function TemplateEditorDialog({ template, onSave, onClose, user, orgName }) {
                   {(q.options || []).map((o, k) => (
                     <div key={k} className="mb-1 flex items-center gap-2">
                       <Input aria-label={`Question ${i + 1} option ${k + 1}`} data-q-option maxLength={80} value={o}
-                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x) })} />
-                      <button type="button" aria-label={`Remove option ${k + 1}`} className="px-1 text-xs text-rose-600" onClick={() => setQ(i, { options: q.options.filter((_, m) => m !== k) })}>✕</button>
+                        onChange={e => setQ(i, { options: q.options.map((x, m) => m === k ? e.target.value : x), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).map(v => v === o ? e.target.value : v) } } : {}) })} />
+                      <button type="button" aria-label={`Remove option ${k + 1}`} className="px-1 text-xs text-rose-600" onClick={() => setQ(i, { options: q.options.filter((_, m) => m !== k), ...(fuList(q) ? { followUp: { op: "in", value: fuList(q).filter(v => v !== o) } } : {}) })}>✕</button>
                     </div>
                   ))}
                   <button type="button" data-q-add-option className="text-xs font-semibold text-indigo-600" onClick={() => setQ(i, { options: [...(q.options || []), ""] })}>+ Add option</button>
                 </div>}
+                {q.type !== "text" && <FollowUpEditor q={q} n={i + 1} onChange={followUp => setQ(i, { followUp })} />}
                 {q.type === "text" && <label className="mt-2 flex items-center gap-1 text-xs text-slate-600"><input type="checkbox" data-q-long checked={!!q.long} onChange={e => setQ(i, { long: e.target.checked })} />Long answer</label>}
               </div>
             ))}
+            <p data-followup-helper className="mb-2 text-xs text-slate-500">NPS questions start with this on, at 6 or lower. Text questions have no rule.</p>
             <div className="mb-2">
               <Btn data-add-question aria-expanded={adding} onClick={() => setAdding(a => !a)}>+ Add question</Btn>
               {adding && <div className="mt-2 flex flex-wrap gap-2" data-add-question-menu>

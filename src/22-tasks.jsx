@@ -1,14 +1,14 @@
 /* ------------------------------ tasks view ------------------------------ */
 // Playbook tasks are stored with a glyph title prefix; the UI shows a word tag instead.
-const SOURCE_TAG = { renewal: "Renewal", health: "Health" };
-const SOURCE_NAME = { health: "Health playbook step", renewal: "Renewal playbook step" };
+const SOURCE_TAG = { renewal: "Renewal", health: "Health", survey: "Survey" };
+const SOURCE_NAME = { health: "Health playbook step", renewal: "Renewal playbook step", survey: "Survey follow-up" };
 const TASK_PRI_SEV = { High: "red", Medium: "amber", Low: "grey" };
 const TkChevron = ({ open }) => (
   <svg className="tk-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
     <path d={open ? "M6 9l6 6 6-6" : "M9 6l6 6-6 6"} />
   </svg>
 );
-function TaskRow({ t, a, dispatch, openAccount }) {
+function TaskRow({ t, a, dispatch, openAccount, onTick }) {
   const [custom, setCustom] = useState(false);
   const done = t.status === "Done";
   const src = taskSource(t);
@@ -19,7 +19,7 @@ function TaskRow({ t, a, dispatch, openAccount }) {
   return (
     <div data-task-row className="tk-row" data-done={done ? "true" : undefined}>
       <label data-task-check-hit className="tk-hit"><input type="checkbox" className="tk-check" checked={done} title="Complete" aria-label={`Complete ${title}`}
-        onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} /></label>
+        onChange={() => onTick(t)} /></label>
       <div className="tk-main">
         <div className="tk-title-line">
           <span data-task-title className={`tk-title${done ? " line-through" : ""}`}>{title}</span>
@@ -56,6 +56,7 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
   const [q, setQ] = useState("");
   const [owner, setOwner] = useState("");
   const [open, setOpen] = useState({ overdue: true, today: true, week: false, later: false, done: false });
+  const surveyDone = useSurveyOutcome(st, user, dispatch);
   // Hand-off from a dashboard card/row: pre-apply an owner filter and/or open only Overdue.
   useEffect(() => {
     if (!initialFilter) return;
@@ -89,6 +90,7 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
             <option value="all">All sources</option>
             <option value="renewal">Renewal playbook</option>
             <option value="health">Health playbook</option>
+            <option value="survey">Survey follow-up</option>
             <option value="manual">Manual</option>
           </select>
         </label>
@@ -105,7 +107,7 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
         </label>
         {owner && <button data-task-owner-filter onClick={() => setOwner("")} className="tk-chip" aria-label={`Clear owner filter ${owner}`} title={`Owner: ${owner}`}>Owner: <span className="inline-block max-w-[16rem] truncate align-bottom">{owner}</span> ×</button>}
         <span className="tk-spacer" />
-        <p data-source-legend className="tk-legend">Tags: <b>Renewal</b> / <b>Health</b> = playbook step · untagged = added by hand</p>
+        <p data-source-legend className="tk-legend">Tags: <b>Renewal</b> / <b>Health</b> = playbook step · <b>Survey</b> = customer follow-up · untagged = added by hand</p>
       </div>
       {st.tasks.length === 0 && <p className="tk-empty">Nothing in the queue — tasks appear here as playbooks seed them.</p>}
       {st.tasks.length > 0 && total === 0 && <p className="tk-empty">No tasks match these filters.</p>}
@@ -118,9 +120,10 @@ function TasksView({ st, scored, dispatch, user, openAccount, initialFilter }) {
             {hint && <span data-section-hint className="tk-hint">{hint}</span>}
             <span className="tk-chev-wrap"><TkChevron open={!!open[key]} /></span>
           </button></h2>
-          {open[key] && <div className="tk-rows">{buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} />)}</div>}
+          {open[key] && <div className="tk-rows">{buckets[key].map(t => <TaskRow key={t.id} t={t} a={byId[t.accountId]} dispatch={dispatch} openAccount={openAccount} onTick={surveyDone.tick} />)}</div>}
         </section>
       ))}
+      {surveyDone.dialog}
     </div>
   );
 }

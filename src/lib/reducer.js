@@ -8,6 +8,7 @@ import { QBR_FREQ_MONTHS } from "./qbr.js";
 import { clampInputs, healthScore } from "./scoring.js";
 import { auditChanges, withAudit } from "./audit.js";
 import { historyEntry, applySignoff, STAGE_LABEL } from "./implementation.js";
+import { npsByAccount, withSurveyNps } from "./surveys.js";
 
 /* Compute what actually changed between two versions of one row.
    This exists so that NO form has to diff: dispatch already holds prev and next, and this
@@ -91,7 +92,7 @@ export function persistOps(action, next, prev) {
     case "SEED_PLAYBOOK": case "SEED_HEALTH_PLAYBOOK": {
       action.items.forEach(t => up("tasks", t)); const a = acct(action.id); if (a) up("accounts", a); break;
     }
-    case "TOGGLE_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); if (t) up("tasks", t); break; }
+    case "TOGGLE_TASK": case "COMPLETE_SURVEY_TASK": case "EDIT_TASK": { const t = next.tasks.find(x => x.id === action.id); if (t) up("tasks", t); break; }
     case "EDIT_ACTIVITY": { const x = next.activities.find(v => v.id === action.id); if (x) up("activities", x); break; }
     case "UPDATE_INPUTS": case "EDIT_ACCOUNT": case "COMPLETE_RENEWAL": case "CHURN_ACCOUNT": case "REACTIVATE_ACCOUNT":
     case "ADJUST_ARR": case "ADD_DOCUMENT": case "EDIT_DOCUMENT": case "DELETE_DOCUMENT": { const a = acct(action.id); if (a) up("accounts", a); break; }
@@ -267,7 +268,8 @@ export function reducer(state, action) {
       return { ...state, contacts: [...state.contacts.map(c => patchOf.has(c.id) ? { ...c, ...patchOf.get(c.id) } : c), ...action.adds] };
     }
     case "SET_SURVEY_RECIPIENTS": { const ids = new Set(action.ids); return { ...state, contacts: state.contacts.map(c => ids.has(c.id) ? { ...c, surveyRecipient: !!action.value } : c) }; }
-    case "SURVEYS_SENT": { const have = new Set((state.surveys || []).map(s => s.id)); return { ...state, surveys: [...(state.surveys || []), ...action.items.filter(s => !have.has(s.id))] }; }
+    case "SURVEYS_SENT": { if (state.surveys === null) return state; // not read yet: the next good read brings these
+      const have = new Set((state.surveys || []).map(s => s.id)); return { ...state, surveys: [...(state.surveys || []), ...action.items.filter(s => !have.has(s.id))] }; }
     case "EDIT_CONTACT": return { ...state, contacts: state.contacts.map(c => c.id === action.id ? { ...c, ...action.patch } : c) };
     case "DELETE_CONTACT": return { ...state, contacts: state.contacts.filter(c => c.id !== action.id) };
     case "ADD_OPP": return { ...state, opportunities: [...state.opportunities, action.item] };
@@ -286,11 +288,14 @@ export function reducer(state, action) {
     case "ADD_TASK": return { ...state, tasks: [...state.tasks, action.item] };
     case "EDIT_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, ...action.patch } : t) };
     case "TOGGLE_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: t.status === "Done" ? "Open" : "Done" } : t) };
+    case "COMPLETE_SURVEY_TASK": return { ...state, tasks: state.tasks.map(t => t.id === action.id ? { ...t, status: "Done", doneAt: action.outcome.at, surveyOutcome: action.outcome } : t) };
     case "UPDATE_INPUTS": {
       return { ...state, accounts: state.accounts.map(a => {
         if (a.id !== action.id) return a;
         const upd = { ...a, inputs: { ...a.inputs, ...clampInputs(action.inputs) }, inputsUpdatedAt: iso(Date.now()) };
-        const s = healthScore(upd, state.activities, state.settings.weights, state.settings);
+        // The history point must match the live score, so it scores with survey NPS; `upd` stays as typed.
+        const nps = npsByAccount((state.surveys || []).filter(sv => sv.accountId === a.id), iso(Date.now()), state.settings.surveys);
+        const s = healthScore(withSurveyNps(upd, nps.get(a.id)), state.activities, state.settings.weights, state.settings);
         return { ...upd, history: [...(a.history || []), { d: iso(Date.now()), s }] };
       }) };
     }

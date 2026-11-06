@@ -113,7 +113,7 @@ test("stage6 tasks: row look -- due pill, priority tag, word source tags, no gly
     assert(r.ghost.pri === "Low" && r.ghost.psev === "grey" && r.ghost.acct === "—", "ghost " + JSON.stringify(r.ghost));
     assert(!/[▶♥]/.test(r.main) && /Send renewal quote/.test(r.main), "glyphs must be gone from main");
     const legend = await page.textContent("[data-source-legend]");
-    assert(legend.trim() === "Tags: Renewal / Health = playbook step · untagged = added by hand", "legend " + legend);
+    assert(legend.trim() === "Tags: Renewal / Health = playbook step · Survey = customer follow-up · untagged = added by hand", "legend " + legend);
   } finally { await browser.close(); }
 });
 

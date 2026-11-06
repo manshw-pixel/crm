@@ -3,7 +3,7 @@ process.env.TZ = "UTC";
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import { reducer, persistOps, diffRow } from "../../src/lib/reducer.js";
-import { DEFAULT_WEIGHTS, mergeSettings } from "../../src/lib/scoring.js";
+import { DEFAULT_WEIGHTS, healthScore, mergeSettings } from "../../src/lib/scoring.js";
 
 const NOW = Date.parse("2026-06-15T12:00:00Z");
 const TODAY = "2026-06-15";
@@ -57,6 +57,7 @@ const ACTIONS = {
   ADD_TASK: { type: "ADD_TASK", item: { id: "t9", accountId: "a1", title: "x", status: "Open" } },
   EDIT_TASK: { type: "EDIT_TASK", id: "t1", patch: { title: "y" } },
   TOGGLE_TASK: { type: "TOGGLE_TASK", id: "t1" },
+  COMPLETE_SURVEY_TASK: { type: "COMPLETE_SURVEY_TASK", id: "t1", outcome: { result: "Called", note: "n", by: "T", at: "2026-06-15T12:00:00.000Z" } },
   UPDATE_INPUTS: { type: "UPDATE_INPUTS", id: "a1", inputs: { usage: 20 } },
   BULK_PATCH_ACCOUNTS: { type: "BULK_PATCH_ACCOUNTS", ids: ["a1", "b1"], patch: { csm: "Marco" }, by: "T" },
   BULK_ADD_TASKS: { type: "BULK_ADD_TASKS", items: [{ id: "t8", accountId: "a1", title: "x" }, { id: "t7", accountId: "gone", title: "x" }] },
@@ -244,6 +245,22 @@ test("UPDATE_INPUTS clamps, stamps, and appends a scored history point", () => {
   assert.deepEqual(merges(ops)[0].appends.history, a.history);
 });
 
+test("UPDATE_INPUTS records a history score that uses survey NPS, and stores the typed NPS", () => {
+  const snap = { questions: [{ id: "nps", type: "nps" }] };
+  const surveys = ["c1", "c2", "c3"].map(c => ({ id: "s" + c, accountId: "a1", contactId: c, template: snap, submittedAt: "2026-06-10T00:00:00Z", answers: { nps: 10 } }));
+  const st = { ...base(), surveys };
+  st.settings = { ...st.settings, surveys: { npsCampaignMonth: 3, minNpsResponses: 3 } };
+  const a = A(run({ type: "UPDATE_INPUTS", id: "a1", inputs: { nps: -50 } }, st).next);
+  assert.equal(a.inputs.nps, -50);
+  const scored = nps => {
+    mock.timers.enable({ apis: ["Date"], now: NOW });
+    try { return healthScore({ ...a, inputs: { ...a.inputs, nps } }, st.activities, st.settings.weights, st.settings); }
+    finally { mock.timers.reset(); }
+  };
+  assert.notEqual(scored(100), scored(-50));
+  assert.equal(a.history[0].s, scored(100));
+});
+
 // ---------- contacts, activities, tasks, opps
 
 test("contacts: edit merges and writes only the changed field; delete writes a delete", () => {
@@ -270,6 +287,26 @@ test("TOGGLE_TASK flips Open <-> Done", () => {
   const once = run(ACTIONS.TOGGLE_TASK).next;
   assert.equal(once.tasks[0].status, "Done");
   assert.equal(run(ACTIONS.TOGGLE_TASK, structuredClone(once)).next.tasks[0].status, "Open");
+});
+
+test("COMPLETE_SURVEY_TASK sets Done, doneAt and surveyOutcome, and writes them", () => {
+  const { next, ops } = run(ACTIONS.COMPLETE_SURVEY_TASK);
+  const t = next.tasks[0];
+  assert.equal(t.status, "Done");
+  assert.equal(t.doneAt, "2026-06-15T12:00:00.000Z");
+  assert.deepEqual(t.surveyOutcome, ACTIONS.COMPLETE_SURVEY_TASK.outcome);
+  assert.deepEqual(merges(ops).map(o => o.table), ["tasks"]);
+});
+
+test("TOGGLE_TASK reopening a survey task keeps surveyOutcome; completing again overwrites it", () => {
+  const done = run(ACTIONS.COMPLETE_SURVEY_TASK).next;
+  const open = run(ACTIONS.TOGGLE_TASK, structuredClone(done)).next;
+  assert.equal(open.tasks[0].status, "Open");
+  assert.deepEqual(open.tasks[0].surveyOutcome, ACTIONS.COMPLETE_SURVEY_TASK.outcome);
+  const outcome = { result: "Fixed", note: "", by: "U", at: "2026-06-16T09:00:00.000Z" };
+  const again = run({ type: "COMPLETE_SURVEY_TASK", id: "t1", outcome }, structuredClone(open)).next;
+  assert.deepEqual(again.tasks[0].surveyOutcome, outcome);
+  assert.equal(again.tasks[0].doneAt, outcome.at);
 });
 
 test("BULK_ADD_TASKS drops tasks for accounts that no longer exist (state and writes)", () => {
@@ -324,6 +361,10 @@ test("SURVEYS_SENT skips ids already present", () => {
   const once = run(ACTIONS.SURVEYS_SENT).next;
   const twice = reducer(once, { type: "SURVEYS_SENT", items: [{ id: "sv1", accountId: "a1" }, { id: "sv2", accountId: "a1" }] });
   assert.deepEqual(twice.surveys.map(s => s.id), ["sv1", "sv2"]);
+});
+test("SURVEYS_SENT leaves surveys null until a read succeeds: a partial list would open the health writes", () => {
+  const st = { ...run(ACTIONS.SURVEYS_SENT).prev, surveys: null };
+  assert.equal(reducer(st, ACTIONS.SURVEYS_SENT).surveys, null);
 });
 test("IMPORT_CONTACTS ignores a patch for a missing id", () => {
   const { prev, next, ops } = run({ type: "IMPORT_CONTACTS", adds: [], patches: [{ id: "zz", patch: { name: "x" } }] });

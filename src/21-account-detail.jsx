@@ -109,6 +109,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const subs = scored.filter(x => x.parentId === id);
   const parent = a && a.parentId ? scored.find(x => x.id === a.parentId) : null;
   const [handoverOpen, setHandoverOpen] = useState(false);
+  const surveyDone = useSurveyOutcome(st, user, dispatch);
   const shownId = useRef(id); shownId.current = id; // the toast action can outlive this account's page
   const ro = isImplRole(user); // implementation roles: read-only on CRM data (RLS enforces it; the UI hides the controls)
   const [form, setForm] = useState(null);
@@ -133,7 +134,8 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
   const hEpisode = healthAll.filter(t => t.healthFor === hLatest);
   const hDone = hEpisode.filter(t => t.status === "Done").length;
   const hBehind = hEpisode.some(t => t.status !== "Done" && t.due < iso(Date.now())); // textual ISO compare
-  const comps = scoreComponents(a, st.activities, st.settings);
+  const eff = withSurveyNps(a, a.surveyNps); // what the score used; `a.inputs` stays as typed
+  const comps = scoreComponents(eff, st.activities, st.settings);
   // Σ rollup (own ARR + live subs, USD): one value for the ARR stat and the Sub-accounts title.
   const rollup = subs.length > 0 ? toUSD(a.arr, a.currency, st.settings.rates) + subs.filter(s => !s.churn).reduce((t, s) => t + s.arrUSD, 0) : null;
   return (
@@ -144,7 +146,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
       <div data-header-card className="space-y-4">
       {(() => { const f = licenseFigures(a); const r = accountRetention(a, (st.settings && st.settings.rates) || {});
         const ld = a.leadId && (team || []).find(u => u.id === a.leadId);
-        const iu = daysSince(a.inputsUpdatedAt || a.startDate);
+        const iu = daysSince(eff.inputsUpdatedAt || a.startDate);
         const rk = riskOf(a.score);
         // Sub line: empty parts drop out entirely, so there is never a stray "·".
         const subParts = [a.tier, a.industry, ld && `Lead ${ld.name}`,
@@ -379,7 +381,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
           {(a.audit || []).length > 0 && <ChangeHistoryCard a={a} />}
         </div>
         <div className="ad-col-r">
-          {(() => { const iu = daysSince(a.inputsUpdatedAt || a.startDate); const sev = iu >= 45 ? "red" : iu >= 30 ? "amber" : undefined;
+          {(() => { const iu = daysSince(eff.inputsUpdatedAt || a.startDate); const sev = iu >= 45 ? "red" : iu >= 30 ? "amber" : undefined;
             const pts = [...(a.history || []), { d: iso(Date.now()), s: a.score }];
             return (
             <AdCard title="Health breakdown" right={<span data-sev={sev} className="ad-stale ml-auto text-right">
@@ -391,6 +393,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
                     <div className="flex text-[13px]"><span style={{ color: "var(--d-label)" }}>{WEIGHT_LABELS[k]}</span><b data-risk={rk} className="ad-bar-n ml-auto tabular-nums">{comps[k]}</b></div>
                     <span data-input-bar data-risk={rk} aria-hidden="true" className="ad-bar"><span style={{ width: `${Math.max(0, Math.min(100, comps[k]))}%` }} /></span>
                   </div>
+                  {k === "nps" && a.surveyNps && <NpsSourceLine result={a.surveyNps} typed={a.inputs?.nps} min={{ ...SURVEY_DEFAULTS, ...st.settings.surveys }.minNpsResponses} />}
                   {k === "recency" && st.settings.recencyMix?.enabled && <div data-recency-breakdown className="ml-4 space-y-0.5 text-[11px]" style={{ color: "var(--d-meta)" }}>
                     {recencyBreakdown(a, st.activities, st.settings.recencyMix).filter(b => b.weight > 0).map(b =>
                       <div key={b.type} data-recency-type={b.type} className="flex justify-between">
@@ -406,7 +409,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
             {tasks.map(t => { const du = daysUntil(t.due); return (
               <div key={t.id}>
                 <label data-task-row className="ad-task">
-                  {!ro && <input type="checkbox" checked={false} aria-label={`Complete ${t.title}`} onChange={() => dispatch({ type: "TOGGLE_TASK", id: t.id })} />}
+                  {!ro && <input type="checkbox" checked={false} aria-label={`Complete ${t.title}`} onChange={() => surveyDone.tick(t)} />}
                   <span className="min-w-0 flex-auto" style={{ overflowWrap: "anywhere" }}>{t.title}
                     <span className="ad-xs block">{t.owner}{t.owner ? " · " : ""}<span data-task-due data-overdue={du < 0 ? "true" : undefined} className="ad-due">{du < 0 ? `Overdue · ${fmtDate(t.due)}` : du === 0 ? "Today" : fmtDate(t.due)}</span></span></span>
                   {t.priority && <span data-priority data-sev={PRIORITY_SEV[t.priority] || "grey"} className="ad-pill ad-pill-sm">{t.priority}</span>}
@@ -480,6 +483,7 @@ function AccountDetail({ st, scored, id, dispatch, back, user, team, openAccount
         onClose={() => setConfirmOpp(null)} />}
       <ProjectsCard className="ad-card" account={a} st={st} dispatch={dispatch} user={user} open={handoverOpen} setOpen={setHandoverOpen} openProject={openProject} />
       <DocumentsCard className="ad-card" a={a} dispatch={dispatch} user={user} readOnly={ro} />
+      {surveyDone.dialog}
     </div>
   );
 }

@@ -100,3 +100,49 @@ test("sendCandidates: an unflagged contact with an open survey reads pending, no
   const r = sendCandidates(cs, sv, "t", "2026-11-05");
   assert.deepEqual(r.other.map(o => o.reason), ["Survey pending since 5 Nov"]);
 });
+
+import { campaignWindow, accountNps, npsByAccount, withSurveyNps, followUpRule, followUpMatches, answerLabel } from "../../src/lib/surveys.js";
+
+test("campaignWindow", () => {
+  assert.deepEqual(campaignWindow("2026-02-28", 3), { start: "2025-03-01", end: "2026-03-01" });
+  assert.equal(campaignWindow("2026-03-01", 3).start, "2026-03-01");
+  assert.equal(campaignWindow("2026-06-01", 99).start, "2026-03-01");
+});
+test("accountNps", () => {
+  const a = (contactId, value, date, surveyId = "s" + value + date) => ({ contactId, surveyId, value, date });
+  const o = { campaignMonth: 3, minResponses: 3 };
+  assert.equal(accountNps([], "2026-06-01", o), null);
+  assert.equal(accountNps([a("c1", 9, "2026-02-01")], "2026-06-01", o), null);
+  const r = accountNps([a("c1", 2, "2026-04-01"), a("c1", 10, "2026-05-01"), a("c2", 9, "2026-05-02")], "2026-06-01", o);
+  assert.equal(r.n, 2); assert.equal(r.promoters, 2); assert.equal(r.nps, 100);
+  assert.equal(r.enough, false); assert.equal(r.lastDate, "2026-05-02");
+  assert.equal(accountNps([a("c1", 9, "2026-04-01"), a("c2", 9, "2026-04-01"), a(null, 3, "2026-04-02", "x")], "2026-06-01", o).enough, true);
+  assert.equal(accountNps([a(null, 9, "2026-04-01", "x"), a(null, 9, "2026-04-01", "y")], "2026-06-01", o).n, 2);
+});
+test("npsByAccount", () => {
+  const tpl = { questions: [{ id: "q", type: "nps" }] };
+  const sv = (id, accountId, contactId, v, at) => ({ id, accountId, contactId, template: tpl, submittedAt: at, answers: { q: v } });
+  const m = npsByAccount([sv("1", "A", "c1", 9, "2026-04-01T10:00:00Z"), sv("2", "A", "c2", 3, null), sv("3", "A", "c3", 5.5, "2026-04-01"), { id: "4", accountId: "B", submittedAt: "2026-04-01", answers: {} }], "2026-06-01", { npsCampaignMonth: 3, minNpsResponses: 1 });
+  assert.equal(m.size, 1);
+  assert.equal(m.get("A").n, 1);
+});
+test("withSurveyNps", () => {
+  const acct = { inputs: { nps: 5, x: 1 }, inputsUpdatedAt: "2026-01-01" };
+  const r = withSurveyNps(acct, { nps: 40, enough: true, lastDate: "2026-05-01" });
+  assert.equal(r.inputs.nps, 40); assert.equal(r.inputsUpdatedAt, "2026-05-01"); assert.equal(acct.inputs.nps, 5);
+  const r2 = withSurveyNps(acct, { nps: 40, enough: false, lastDate: "2026-05-01" });
+  assert.equal(r2.inputs.nps, 5); assert.equal(r2.inputsUpdatedAt, "2026-05-01");
+  assert.equal(withSurveyNps(acct, null), acct);
+});
+test("follow-up rules", () => {
+  assert.deepEqual(followUpRule({ type: "nps" }), { op: "lte", value: 6 });
+  assert.equal(followUpRule({ type: "nps", followUp: null }), null);
+  assert.equal(followUpRule({ type: "rating" }), null);
+  assert.equal(followUpMatches({ type: "nps" }, 6), true);
+  assert.equal(followUpMatches({ type: "nps" }, 7), false);
+  assert.equal(followUpMatches({ type: "multi", followUp: { op: "in", value: ["B"] } }, ["A", "B"]), true);
+  assert.equal(followUpMatches({ type: "single", followUp: { op: "in", value: ["B"] } }, ""), false);
+  assert.equal(answerLabel({ type: "nps" }, 6), "6/10");
+  assert.equal(answerLabel({ type: "rating", scale: 7 }, 2), "2/7");
+  assert.equal(answerLabel({ type: "multi" }, ["A", "B"]), "A, B");
+});

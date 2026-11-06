@@ -48,7 +48,7 @@ test("surveys card: admin dialog defaults, disabled reasons, send adds pending r
     await openAccount(page);
     const card = page.locator("[data-surveys-card]");
     const txt = await card.innerText();
-    assert(/NPS 100 from 1 answer/.test(txt), "nps line: " + txt);
+    assert(txt.includes("NPS +100 from 1 answer"), "nps line: " + txt);
     assert(/9\/10/.test(txt) && /“Great support”/.test(txt), "answers shown");
     assert(await card.locator('[data-survey-row="pending"]').count() === 1, "one pending row");
     const exp = card.locator('[data-survey-row="expired"]');

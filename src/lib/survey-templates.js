@@ -49,6 +49,7 @@ export function normaliseTemplate(t) {
       } else if (q.type === "text") {
         o.long = !!q.long;
       }
+      if (q.followUp !== undefined) o.followUp = q.followUp;
       return o;
     }),
   };
@@ -80,6 +81,17 @@ export function validateTemplate(t) {
       if (o.length < 2 || o.length > 12 || o.some(x => !x)) return bad(p + "add 2 to 12 options");
       if (o.some(x => x.length > 80)) return bad(p + "too long");
       if (new Set(o.map(x => x.toLowerCase())).size !== o.length) return bad(p + "options must be unique");
+    }
+    const f = q.followUp;
+    if (f != null) {
+      if (q.type === "text") return bad(p + "text questions take no follow-up rule");
+      if (f.op === "lte") {
+        const max = q.type === "nps" ? 10 : q.type === "rating" ? q.scale : 0;
+        const min = q.type === "nps" ? 0 : 1;
+        if (!max || !Number.isInteger(f.value) || f.value < min || f.value > max) return bad(p + "follow-up score must be a whole number from " + min + " to " + (max || min));
+      } else if (f.op === "in") {
+        if ((q.type !== "single" && q.type !== "multi") || !Array.isArray(f.value) || !f.value.length || !f.value.every(v => q.options.includes(v))) return bad(p + "follow-up options must be some of the question's options");
+      } else return bad(p + "unknown follow-up rule");
     }
   }
   return { ok: true };

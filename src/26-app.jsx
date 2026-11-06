@@ -43,6 +43,26 @@ function implAlerts(projects, tasks, accounts, user) {
   return out;
 }
 
+// Bell alerts for survey follow-ups, derived from the tasks (no store). One per survey, for the
+// task owner, or for admins when nobody owns it. Same 30-day window as the other sources, and a
+// finished follow-up drops out. The id has no date, so a reopen can find it still read, unless
+// marking another alert read pruned it while the task was done.
+function surveyAlerts(tasks, user, accounts = []) {
+  const bySurvey = new Map();
+  for (const t of tasks) {
+    if (t.source !== "survey" || t.status === "Done" || !t.createdAt) continue;
+    if (!(t.owner ? t.owner === user.name : user.role === "admin")) continue;
+    const age = daysSince(t.createdAt);
+    if (Math.abs(age) > 30) continue; // a client clock behind the database gives a small negative age
+    const cur = bySurvey.get(t.surveyId);
+    if (cur && cur.days >= -age) continue; // keep the newest task's date
+    const acct = accounts.find(a => a.id === t.accountId);
+    bySurvey.set(t.surveyId, { id: `survey-${t.surveyId}`, accountId: t.accountId, name: acct ? acct.name : "Survey follow-up",
+      sub: "Survey follow-up needed", date: t.createdAt, days: -age, chip: age <= 0 ? "today" : `${age}d ago` });
+  }
+  return [...bySurvey.values()];
+}
+
 // Sidebar views per role. Implementation roles get only the Implementation view and
 // Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
@@ -171,7 +191,7 @@ function App({ user, onBackToClients }) {
     return () => { cancelled = true; };
   }, [user.org_id]);
   const views = viewsFor(user);
-  const [st, setSt] = useState(emptyData);
+  const [st, setSt] = useState(() => ({ ...emptyData(), surveys: null })); // null until one surveys read succeeds
   const [loaded, setLoaded] = useState(false);
   // a failed first load falls back to rendering the (empty) views, as before the skeleton existed
   const [loadFailed, setLoadFailed] = useState(false);
@@ -217,7 +237,7 @@ function App({ user, onBackToClients }) {
   useEffect(() => { window.__openAccounts = openAccounts; });
   useEffect(() => { window.__snapshotFor = snapshotFor; }, []);
   const refetch = useCallback(() => fetchAll()
-    .then(s => { setSt(s); setLoaded(true); })
+    .then(s => { setSt(prev => s.surveys ? s : { ...s, surveys: prev.surveys }); setLoaded(true); })
     .catch(e => {
       console.error(e);
       setLoadFailed(true);
@@ -281,10 +301,18 @@ function App({ user, onBackToClients }) {
     const h = e => { if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === "k") { e.preventDefault(); setPaletteOpen(o => !o); } };
     window.addEventListener("keydown", h); return () => window.removeEventListener("keydown", h);
   }, []);
+  const scoreDay = iso(Date.now());
+  // Scores without survey NPS are fine to show but not to store: see surveyRows.
+  const surveysReady = st.surveys !== null;
+  const npsMap = useMemo(() => npsByAccount(st.surveys || [], scoreDay, st.settings.surveys), [st.surveys, st.settings.surveys, scoreDay]);
+  // Survey NPS applies at read time: score the effective copy, but spread the raw account, so
+  // `inputs` stays what the CSM typed (the Update health dialog edits it from here).
   const scored = useMemo(() => st.accounts.map(a => {
-    const score = healthScore(a, st.activities, st.settings.weights, st.settings);
-    return { ...a, score, risk: riskOf(score), flags: flagsFor(a, st.activities, score), arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
-  }), [st]);
+    const r = npsMap.get(a.id) || null;
+    const eff = withSurveyNps(a, r);
+    const score = healthScore(eff, st.activities, st.settings.weights, st.settings);
+    return { ...a, score, risk: riskOf(score), flags: flagsFor(eff, st.activities, score), surveyNps: r, arrUSD: toUSD(a.arr, a.currency, st.settings.rates) };
+  }), [st, npsMap]);
   // Record today's health baseline once per session. This is the ONLY writer of
   // health_snapshots: the scoring formula lives here in JS and must stay the single source
   // of truth, so SQL is given finished numbers rather than the inputs to recompute from.
@@ -294,7 +322,7 @@ function App({ user, onBackToClients }) {
   // by day anyway. The upsert makes a second write harmless, not merely tolerable.
   const healthRecorded = React.useRef(false);
   React.useEffect(() => {
-    if (!loaded || healthRecorded.current || !user || !scored.length || isImplRole(user)) return; // read-only roles never write baselines
+    if (!loaded || !surveysReady || healthRecorded.current || !user || !scored.length || isImplRole(user)) return; // read-only roles never write baselines
     const payload = scored.map(a => ({ accountId: a.id, score: Math.round(a.score) }));
     if (typeof window !== "undefined") {
       // Test seam: the suite asserts on what was sent without a live database.
@@ -309,16 +337,16 @@ function App({ user, onBackToClients }) {
       // a failed baseline must never surface as a user-visible error. Only the SUCCESS path
       // marks the ref, so a failure leaves healthRecorded.current false and this effect can
       // still fire again -- but effects run on DEPENDENCY CHANGE, not on every render, and
-      // once `loaded` is true the only dep left that can change is `scored.length`. That
+      // once `loaded` and `surveysReady` are true the only dep left that can change is `scored.length`. That
       // retries the baseline write after an account is added or deleted, and only then: a
       // session that only edits existing accounts, or only reads, never touches
       // scored.length and so never retries after a failed load.
       if (p && p.then) p.then(() => { healthRecorded.current = true; }, () => {});
       else healthRecorded.current = true;
     } catch (e) { /* same reasoning */ }
-  }, [loaded, user, scored.length]);
+  }, [loaded, surveysReady, user, scored.length]);
   useEffect(() => { // one aggregate snapshot per calendar month (whole book) for trend lines
-    if (!loaded || !scored.length || isImplRole(user)) return; // settings are not writable by impl roles
+    if (!loaded || !surveysReady || !scored.length || isImplRole(user)) return; // settings are not writable by impl roles
     const month = iso(Date.now()).slice(0, 7);
     const snaps = st.settings.snapshots || [];
     // re-take this month's snapshot once if it predates forecast recording
@@ -334,7 +362,7 @@ function App({ user, onBackToClients }) {
         nrr: r.nrr, grr: r.grr, churnedARR: Math.round(r.churnedARR), ...counts,
         due90: s90(due90), commit90: s90(due90.filter(a => renewalStageOf(a) === "Committed")),
         atRisk90: s90(due90.filter(a => renewalStageOf(a) === "At risk")), due90Count: due90.length }].slice(-24) });
-  }, [loaded, scored]);
+  }, [loaded, surveysReady, scored]);
   useEffect(() => { // auto-create renewal playbook tasks when an account is within 90d of renewal
     if (!loaded || isImplRole(user)) return;
     const pb = playbookOf(st.settings);
@@ -351,7 +379,7 @@ function App({ user, onBackToClients }) {
     });
   }, [loaded, st.accounts, st.settings.playbook]);
   useEffect(() => { // auto: detect health-band crossings, seed per-band playbook tasks
-    if (!loaded || isImplRole(user)) return;
+    if (!loaded || !surveysReady || isImplRole(user)) return;
     const today = iso(Date.now());
     const hpb = healthPlaybookOf(st.settings);
     scored.forEach(a => {
@@ -382,7 +410,7 @@ function App({ user, onBackToClients }) {
       dispatch({ type: "SEED_HEALTH_PLAYBOOK", id: a.id, healthBand: cur,
         healthPlaybookBand: pbBand, event, items });
     });
-  }, [loaded, scored, st.settings.healthPlaybook]);
+  }, [loaded, surveysReady, scored, st.settings.healthPlaybook]);
   const [scopeSel, setScopeSel] = useState(null);
   const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("crm-nav") === "1"; } catch (e) { return false; } });
   useEffect(() => { try { localStorage.setItem("crm-nav", collapsed ? "1" : "0"); } catch (e) {} }, [collapsed]);
@@ -425,6 +453,7 @@ function App({ user, onBackToClients }) {
       .map(e => ({ id: `health-${a.id}-${e.date}-${e.to}`, accountId: a.id, name: a.name,
         sub: `Health dropped to ${e.to}`, date: e.date, days: -daysSince(e.date) }))),
     ...implAlerts(st.projects || [], st.projectTasks || [], st.accounts || [], user),
+    ...surveyAlerts(st.tasks || [], user, st.accounts || []),
   ].sort((x, y) => x.days - y.days);
   const alertIds = new Set(alerts.map(a => a.id));
   // Prune on write: ids for alerts that have aged out would otherwise accumulate in localStorage
@@ -539,7 +568,7 @@ function App({ user, onBackToClients }) {
                   </span>
                   <span className="flex shrink-0 items-center gap-2 text-xs">
                     <span className="text-slate-700">{fmtDate(a.date)}</span>
-                    <span className={`rounded px-1.5 py-0.5 font-semibold ${a.days <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.days < 0 ? "expired" : a.days + "d"}</span>
+                    <span className={`rounded px-1.5 py-0.5 font-semibold ${a.days <= 7 ? "bg-rose-100 text-rose-700" : "bg-amber-100 text-amber-700"}`}>{a.chip || (a.days < 0 ? "expired" : a.days + "d")}</span>
                   </span>
                 </button>
               ); })}
