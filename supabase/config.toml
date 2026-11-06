@@ -17,7 +17,7 @@ enable_confirmations = false
 
 # The test mail catcher is unused (confirmations are off) and its fixed port 54324 can already be
 # taken on a CI machine, which stopped the whole stack from starting.
-[inbucket]
+[local_smtp]
 enabled = false
 
 [storage]
