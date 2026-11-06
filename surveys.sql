@@ -279,14 +279,16 @@ revoke execute on function public.survey_answer_label(jsonb, jsonb) from public,
 -- Creates or updates one task per matching question. The task id is fixed per survey and
 -- question, so an edit inside the 7-day window reaches the same task. An edit only ever sets
 -- title and details: status, surveyOutcome, owner and due stay as the CSM left them. Details
--- are appended to, never rebuilt, because a CSM can type in them.
+-- are appended to, never rebuilt, because a CSM can type in them. They stop growing at 8000
+-- characters: the token is public and can resubmit for 7 days, so growth must be bounded.
 create or replace function public.survey_sync_followups(s surveys, p_answers jsonb)
 returns void language plpgsql set search_path = public as $$
 declare
   qs jsonb := s.template_snapshot->'questions';
   acct jsonb; v_csm text; ctx jsonb; v_contact text; v_texts text[];
   q jsonb; v jsonb; v_id text; v_title text; v_match boolean; cur jsonb;
-  v_lines text[]; v_line text; v_details text;
+  v_line text; v_details text; v_note text;
+  c_max constant int := 8000;
 begin
   if jsonb_typeof(qs) is distinct from 'array' then return; end if;
   select a.data into acct from accounts a where a.org_id = s.org_id and a.id = s.account_id;
@@ -319,7 +321,7 @@ begin
     if cur is null then
       insert into tasks (org_id, id, data) values (s.org_id, v_id, jsonb_build_object(
         'id', v_id, 'accountId', s.account_id, 'title', v_title,
-        'details', array_to_string(v_texts, E'\n'),
+        'details', left(array_to_string(v_texts, E'\n'), c_max),
         'due', to_char((now() at time zone 'utc')::date + 2, 'YYYY-MM-DD'),
         'priority', 'High', 'status', 'Open', 'owner', v_csm, 'source', 'survey',
         'surveyId', s.id, 'questionId', q->>'id',
@@ -327,21 +329,30 @@ begin
       continue;
     end if;
 
-    v_lines := v_texts;
-    if not v_match then
-      if v is null or jsonb_typeof(v) = 'null' or (jsonb_typeof(v) = 'string' and trim(v #>> '{}') = '')
-         or v = '[]'::jsonb then
-        v_lines := v_lines || 'Answer removed'::text;
-      else
-        v_lines := v_lines || ('Answer changed to ' || public.survey_answer_label(q, v));
-      end if;
-    end if;
     v_details := coalesce(cur->>'details', '');
-    foreach v_line in array v_lines loop
-      if position(v_line in v_details) = 0 then
+    foreach v_line in array v_texts loop
+      if position(E'\n' || v_line || E'\n' in E'\n' || v_details || E'\n') = 0
+         and length(v_details) + 1 + length(v_line) <= c_max then
         v_details := v_details || case when v_details = '' then '' else E'\n' end || v_line;
       end if;
     end loop;
+    -- The note tracks the latest answer. A matching edit also writes one when the last line is
+    -- an older note, or that note would read as the current answer.
+    v_note := null;
+    if not v_match then
+      if v is null or jsonb_typeof(v) = 'null' or (jsonb_typeof(v) = 'string' and trim(v #>> '{}') = '')
+         or v = '[]'::jsonb then
+        v_note := 'Answer removed';
+      else
+        v_note := 'Answer changed to ' || public.survey_answer_label(q, v);
+      end if;
+    elsif v_details ~ '(^|\n)Answer (changed to [^\n]*|removed)$' then
+      v_note := 'Answer changed to ' || public.survey_answer_label(q, v);
+    end if;
+    if v_note is not null and v_details <> v_note and right(v_details, length(v_note) + 1) <> E'\n' || v_note
+       and length(v_details) + 1 + length(v_note) <= c_max then
+      v_details := v_details || case when v_details = '' then '' else E'\n' end || v_note;
+    end if;
     update tasks t
        set data = t.data || jsonb_build_object('details', v_details)
                 || case when v_match then jsonb_build_object('title', v_title) else '{}'::jsonb end,

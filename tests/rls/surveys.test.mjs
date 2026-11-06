@@ -588,6 +588,38 @@ test("survey follow-up: a failed task insert still saves the answers", async () 
   assert.equal((await fuTasks(s.id)).length, 1, "a later edit creates the missed task");
 });
 
+test("survey follow-up: the latest answer is the last note", async () => {
+  const s = await fuSend();
+  for (const nps of [6, 9, 3, 9]) await s.sub({ nps, reason: "Meh" });
+  const [t] = await fuTasks(s.id);
+  assert.equal(t.data.details, "Meh\nAnswer changed to 9/10\nAnswer changed to 3/10\nAnswer changed to 9/10");
+});
+
+test("survey follow-up: a short answer inside a longer line is still added", async () => {
+  const s = await fuSend();
+  await s.sub({ nps: 6, reason: "nothing" });
+  await s.sub({ nps: 5, reason: "no" });
+  assert.equal((await fuTasks(s.id))[0].data.details, "nothing\nno");
+});
+
+test("survey follow-up: details stop growing at 8000 characters", async () => {
+  const s = await fuSend();
+  for (const c of "abcd") await s.sub({ nps: 6, reason: c.repeat(3000) });
+  const { details } = (await fuTasks(s.id))[0].data;
+  assert.equal(details, "a".repeat(3000) + "\n" + "b".repeat(3000), "a line past the limit is not added");
+  const many = { id: "fu-long", name: "Long", intro: "", questions: [
+    { id: "n", type: "nps", text: "Score?", required: true },
+    ...["x", "y", "z"].map(id => ({ id, type: "text", text: id }))] };
+  const l = await fuSend(many);
+  await l.sub({ n: 1, x: "x".repeat(4000), y: "y".repeat(4000), z: "z".repeat(4000) });
+  assert.equal((await fuTasks(l.id))[0].data.details.length, 8000, "the first submit is capped too");
+});
+
+test("survey follow-up: send count stays under the default daily cap", async () => {
+  const [{ n }] = await sql(`select count(*)::int n from surveys where org_id = $1 and (sent_at at time zone 'utc')::date = (now() at time zone 'utc')::date`, [ORG_A]);
+  assert.ok(n <= 45, `${n} sends today in org A; the default cap is 50, so split the tests across orgs`);
+});
+
 test("survey follow-up: clean up", async () => {
   await sql(`delete from tasks where org_id = $1 and id like 'sv-fu-%'`, [ORG_A]);
   await sql(`delete from accounts where org_id = $1 and id in ('sv-fa', 'sv-fb', 'sv-fboom')`, [ORG_A]);
