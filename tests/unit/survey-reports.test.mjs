@@ -139,3 +139,11 @@ test("detractorsAwaiting lists open NPS follow-ups with score and comment", () =
   assert.equal(r[0].survey.id, "S");
   assert.deepEqual(detractorsAwaiting(null, null), []);
 });
+test("text items carry the survey source so imported answers can be marked", () => {
+  const t = { questions: [{ id: "m", type: "text", text: "M" }] };
+  const r = questionResults([
+    sv({ submittedAt: "2026-03-06", template: t, answers: { m: "a" }, source: "import" }),
+    sv({ submittedAt: "2026-03-07", template: t, answers: { m: "b" } }),
+  ], "t");
+  assert.deepEqual(r[0].items.map(i => [i.text, i.source]), [["b", "sent"], ["a", "import"]]);
+});

@@ -868,8 +868,20 @@
   .sv-src { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--f-row); color: var(--f-label); }
   .sv-paging { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px 4px; border-top: 1px solid var(--f-row); font-size: 13px; color: var(--f-meta); } .sv-paging span { margin-right: auto; }
   .sv-pg { min-height: 36px; padding: 0 12px; font-size: 13px; }
-  .sv-flabel .fn-field:focus-visible, .sv-export:focus-visible, .sv-pg:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
-  @media (max-width: 640px) { .sv-seg-btn, .sv-aw-top .fn-link { min-height: 44px; } .sv-export, .sv-pg, .sv-flabel .fn-field { min-height: 44px; } }
+  .sv-q { padding: 18px; display: flex; flex-direction: column; gap: 14px; } .sv-q-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; min-width: 0; } .sv-q-head .sv-h2 { overflow-wrap: anywhere; }
+  .sv-q-kind { font-size: 12px; font-weight: 700; color: var(--f-meta); } .sv-check { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; font-size: 13.5px; font-weight: 600; color: var(--f-fg); } .sv-check input { width: 18px; height: 18px; }
+  .sv-cmp { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(280px, 100%), 1fr)); gap: 16px; } .sv-period, .sv-role { border: 1px solid var(--f-row); border-radius: 12px; padding: 14px; min-width: 0; display: flex; flex-direction: column; gap: 10px; }
+  .sv-cmp .sv-period + .sv-period { background: var(--f-band); } .sv-period-k { font-size: 12.5px; font-weight: 700; color: var(--f-label); } .sv-dash { margin: 0; font-size: 18px; }
+  .sv-roles { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 12px; }
+  .sv-avg { display: flex; align-items: baseline; gap: 4px; } .sv-avg-num { font-size: 24px; font-weight: 800; font-variant-numeric: tabular-nums; color: var(--f-fg); } .sv-n { margin-left: auto; }
+  .sv-bars { display: flex; align-items: stretch; gap: 6px; height: 110px; margin-top: 8px; min-width: 0; } .sv-bar-col { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 3px; }
+  .sv-bar-track { flex: 1 1 auto; width: 100%; display: flex; align-items: flex-end; } .sv-bar { width: 100%; min-height: 2px; background: rgb(var(--indigo-500)); border-radius: 4px 4px 0 0; } .sv-bar-count, .sv-bar-label { font-size: 11.5px; color: var(--f-meta); font-variant-numeric: tabular-nums; }
+  .sv-choices { display: flex; flex-direction: column; gap: 8px; min-width: 0; } .sv-choice { display: grid; grid-template-columns: minmax(70px, 150px) 1fr 40px; align-items: center; gap: 10px; font-size: 13px; font-variant-numeric: tabular-nums; } .sv-choice-label { font-weight: 600; overflow-wrap: anywhere; }
+  .sv-choice-track { height: 10px; background: var(--f-row); border-radius: 5px; overflow: hidden; } .sv-choice-track > span { display: block; height: 10px; background: rgb(var(--indigo-500)); border-radius: 5px; } .sv-choice-n { text-align: right; font-weight: 700; }
+  .sv-texts { margin: 6px 0 0; padding: 0; list-style: none; } .sv-text { padding: 10px 0; border-top: 1px solid var(--f-row); font-size: 13.5px; overflow-wrap: anywhere; } .sv-text .sv-meta { margin-top: 3px; } .sv-imp { margin-left: 4px; }
+  .sv-showall { min-height: 36px; font-size: 13px; font-weight: 600; } .sv-foot { margin: 0; }
+  .sv-flabel .fn-field:focus-visible, .sv-export:focus-visible, .sv-pg:focus-visible, .sv-showall:focus-visible, .sv-check input:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
+  @media (max-width: 640px) { .sv-seg-btn, .sv-aw-top .fn-link { min-height: 44px; } .sv-export, .sv-pg, .sv-flabel .fn-field, .sv-showall { min-height: 44px; } }
   @media (prefers-reduced-motion: reduce) { .sv-page *, .sv-page { transition: none !important; animation: none !important; } }
   @media (forced-colors: active) { .sv-kpi, .sv-panel, .sv-note, .sv-count { border: 1px solid CanvasText; } .sv-split, .sv-legend i { forced-color-adjust: none; border: 1px solid CanvasText; } .sv-seg-btn[aria-selected=true] { border: 3px solid Highlight; } }
   @media print { .sv-seg { display: none !important; } .sv-kpi, .sv-panel { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } }

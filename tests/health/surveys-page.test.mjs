@@ -254,3 +254,147 @@ test("responses: no sideways page scroll at 390px", async () => {
     assert(w.doc <= w.win, "page scrolls sideways: " + JSON.stringify(w));
   } finally { await browser.close(); }
 });
+
+// ---- Task 5: Reports tab ----
+const QB = { id: "qbr", name: "QBR feedback", questions: [{ id: "val", type: "rating", scale: 7, text: "Value?" }, { id: "pick", type: "single", text: "Improve next?", options: ["Reporting", "SSO"] }, { id: "why", type: "text", text: "Anything else?" }] };
+const OLD = { id: "old", name: "Old pulse", questions: [{ id: "o1", type: "rating", scale: 5, text: "Happy?" }] };
+const qa = (val, pick, why) => [{ question_id: "val", value_num: val }, { question_id: "pick", value_choices: [pick] }, ...(why ? [{ question_id: "why", value_text: why }] : [])];
+const PS = [
+  rs("p1", "a1", "CIO", "sent", "2026-07-10", QB, qa(6, "Reporting", "Fast")),
+  rs("p2", "a1", "User", "sent", "2026-07-12", QB, qa(4, "SSO")),
+  rs("p3", "a2", "CIO", "import", "2026-07-20", QB, qa(5, "Reporting", "Imported note")),
+  rs("p4", "a2", "User", "sent", "2026-01-15", QB, qa(3, "SSO")),
+  rs("p5", "a1", "CIO", "sent", "2025-01-01", OLD, [{ question_id: "o1", value_num: 5 }]),
+  rs("n1", "a1", "CIO", "sent", "2026-03-06", TPL, nA(3, "Too slow")),
+  rs("n2", "a1", "User", "sent", "2025-03-07", TPL, nA(10)),
+];
+async function openReports(surveys = PS, width = 1280) {
+  const r = await open(rseed(surveys), width);
+  await r.page.waitForSelector("[data-sv-overview]");
+  await r.page.click('[data-sv-tab="reports"]');
+  await r.page.waitForSelector("[data-sv-reports]");
+  return r;
+}
+const flatOf = async (page, sel) => (await page.locator(sel).first().innerText()).replace(/\s+/g, " ");
+
+test("reports: template picker lists sent templates, including archived ones, and defaults to the latest answered", async () => {
+  const { page, browser } = await openReports();
+  try {
+    const opts = await page.$$eval('[data-sv-filter="report-template"] option', els => els.map(e => e.textContent));
+    assert(JSON.stringify(opts) === JSON.stringify(["NPS check-in", "Old pulse", "QBR feedback"]), "options " + opts);
+    assert(await page.locator('[data-sv-filter="report-template"]').inputValue() === "qbr", "default template");
+    await page.selectOption('[data-sv-filter="report-template"]', "old");
+    await page.waitForSelector('[data-sv-question="o1"]');
+  } finally { await browser.close(); }
+});
+
+test("reports: rating shows 4.5 / 7 with its own distribution", async () => {
+  const { page, browser } = await openReports();
+  try {
+    const q = await flatOf(page, '[data-sv-question="val"]');
+    assert(/Q1 · RATING 1–7/.test(q) && /Value\?/.test(q) && /4\.5 \/ 7/.test(q) && /n ?= ?4/.test(q), "rating: " + q);
+    const aria = await page.locator('[data-sv-question="val"] [role="img"]').first().getAttribute("aria-label");
+    assert(/3: 1/.test(aria) && /6: 1/.test(aria) && /7: 0/.test(aria), "aria " + aria);
+  } finally { await browser.close(); }
+});
+
+test("reports: nps shows the split by yearly campaign", async () => {
+  const { page, browser } = await openReports();
+  try {
+    await page.selectOption('[data-sv-filter="report-template"]', "nps-checkin");
+    const q = await flatOf(page, '[data-sv-question="nps"]');
+    assert(/Mar 2026/.test(q) && /Mar 2025/.test(q) && /-100/.test(q) && /\+100/.test(q), "nps: " + q);
+    assert(/always compare by yearly campaign/.test(await flatOf(page, "[data-sv-reports]")), "footnote");
+    assert(await page.locator('[data-sv-question="nps"] [role="img"]').count() >= 2, "bars");
+  } finally { await browser.close(); }
+});
+
+test("reports: choices show counts as text", async () => {
+  const { page, browser } = await openReports();
+  try {
+    const q = await flatOf(page, '[data-sv-question="pick"]');
+    assert(/Reporting 2/.test(q) && /SSO 2/.test(q) && /PICK ONE/.test(q), "choices: " + q);
+  } finally { await browser.close(); }
+});
+
+test("reports: text answers list, five first, imported ones marked", async () => {
+  const many = Array.from({ length: 7 }, (_, i) => rs("t" + i, "a1", "CIO", "sent", `2026-08-0${i + 1}`, QB, qa(5, "SSO", "note " + i)));
+  const { page, browser } = await openReports([...PS, ...many]);
+  try {
+    assert(await page.locator("[data-sv-text-item]").count() === 5, "first five");
+    const btn = page.locator("[data-sv-show-all]");
+    assert(/Show all 9 text answers/.test(await btn.innerText()), "button " + await btn.innerText());
+    await btn.click();
+    assert(await page.locator("[data-sv-text-item]").count() === 9, "all");
+    assert(/imported/.test(await flatOf(page, '[data-sv-text-item]:has-text("Imported note")')), "imported mark");
+    assert(await page.locator("[data-sv-reports] img").count() === 0, "text only");
+  } finally { await browser.close(); }
+});
+
+test("reports: filters by date, tier and CSM", async () => {
+  const { page, browser } = await openReports();
+  try {
+    const n = async () => /n ?= ?(\d+)/.exec(await flatOf(page, '[data-sv-question="val"]'))[1];
+    assert(await n() === "4", "all");
+    await page.selectOption('[data-sv-filter="csm"]', "Priya"); assert(await n() === "2", "csm");
+    await page.selectOption('[data-sv-filter="csm"]', "");
+    await page.selectOption('[data-sv-filter="tier"]', "Mid"); assert(await n() === "2", "tier");
+    await page.selectOption('[data-sv-filter="tier"]', "");
+    await page.fill('[data-sv-filter="from"]', "2026-07-01"); await page.fill('[data-sv-filter="to"]', "2026-07-31");
+    assert(await n() === "3", "date");
+  } finally { await browser.close(); }
+});
+
+test("reports: comparison shows the previous period, and a dash when it has no answers", async () => {
+  const { page, browser } = await openReports();
+  try {
+    assert(await page.locator("[data-sv-prev]").count() === 0, "no comparison without a range");
+    // 2026-07-01..07-31 (31 days) -> previous 2026-05-31..06-30, no answers
+    await page.fill('[data-sv-filter="from"]', "2026-07-01"); await page.fill('[data-sv-filter="to"]', "2026-07-31");
+    const none = await flatOf(page, '[data-sv-question="val"] [data-sv-prev]');
+    assert(/—/.test(none) && !/\/ 7/.test(none), "dash: " + none);
+    // 2026-01-16..2026-07-31 holds p1-p3; the previous period ends 2026-01-15 and holds p4
+    await page.fill('[data-sv-filter="from"]', "2026-01-16"); await page.fill('[data-sv-filter="to"]', "2026-07-31");
+    const prev = await flatOf(page, '[data-sv-question="val"] [data-sv-prev]');
+    assert(/3 \/ 7/.test(prev) && /n ?= ?1/.test(prev), "previous: " + prev);
+    // half-filled or reversed ranges must not crash the page
+    await page.fill('[data-sv-filter="to"]', "");
+    await page.waitForSelector("[data-sv-reports]");
+    await page.fill('[data-sv-filter="from"]', "2026-09-01"); await page.fill('[data-sv-filter="to"]', "2026-08-01");
+    await page.waitForSelector("[data-sv-reports]");
+    assert(await page.locator("[data-sv-prev]").count() === 0, "no comparison for a reversed range");
+  } finally { await browser.close(); }
+});
+
+test("reports: role split shows roles side by side", async () => {
+  const { page, browser } = await openReports();
+  try {
+    assert(await page.locator("[data-sv-role]").count() === 0, "off by default");
+    await page.check("[data-sv-split]");
+    const cio = await flatOf(page, '[data-sv-question="val"] [data-sv-role="CIO"]');
+    const usr = await flatOf(page, '[data-sv-question="val"] [data-sv-role="User"]');
+    assert(/5\.5 \/ 7/.test(cio) && /n ?= ?2/.test(cio), "CIO " + cio);
+    assert(/3\.5 \/ 7/.test(usr) && /n ?= ?2/.test(usr), "User " + usr);
+  } finally { await browser.close(); }
+});
+
+test("reports: CSV export uses the filtered rows", async () => {
+  const { page, browser } = await openReports();
+  try {
+    await page.selectOption('[data-sv-filter="tier"]', "Mid");
+    await page.evaluate(() => { window.__csv = null; const b = window.Blob; window.Blob = function (parts, o) { if (o && o.type === "text/csv") window.__csv = parts.join(""); return new b(parts, o); }; });
+    await page.click("[data-sv-export]");
+    const csv = await page.evaluate(() => window.__csv);
+    assert(csv && /Beta Co/.test(csv) && !/Alpha Co/.test(csv) && /QBR feedback/.test(csv), "csv: " + csv);
+  } finally { await browser.close(); }
+});
+
+test("reports: no sideways page scroll at 390px, with comparison and role split on", async () => {
+  const { page, browser } = await openReports(PS, 390);
+  try {
+    await page.fill('[data-sv-filter="from"]', "2026-07-01"); await page.fill('[data-sv-filter="to"]', "2026-07-31");
+    await page.check("[data-sv-split]");
+    const w = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, win: window.innerWidth }));
+    assert(w.doc <= w.win, "page scrolls sideways: " + JSON.stringify(w));
+  } finally { await browser.close(); }
+});

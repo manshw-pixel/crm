@@ -192,7 +192,7 @@ export function questionResults(surveys, templateId) {
       return { ...base, counts: [...m].map(([label, n]) => ({ label, n })).sort((a, b) => b.n - a.n) };
     }
     if (q.type === "text") {
-      const items = values.map(({ v, s }) => ({ text: String(v), contactName: s.contactName || "", accountId: s.accountId, date: surveyDate(s) }));
+      const items = values.map(({ v, s }) => ({ text: String(v), source: s.source || "", contactName: s.contactName || "", accountId: s.accountId, date: surveyDate(s) }));
       items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
       return { ...base, items };
     }

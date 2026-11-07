@@ -1,6 +1,6 @@
 /* ------------------------------ surveys page ------------------------------ */
 // Surveys PR 4a: the admin-only Surveys sidebar page. Three tabs: Overview (this task), Responses
-// and Reports (stubs here, replaced by the next two tasks). All numbers come from the pure
+// and Reports. All numbers come from the pure
 // functions in src/lib/survey-reports.js; this file only lays them out.
 const SV_TAB_KEY = "onevio.surveys.tab";
 const SV_TABS = [["overview", "Overview"], ["responses", "Responses"], ["reports", "Reports"]];
@@ -216,6 +216,166 @@ function SurveysResponses({ surveys, accountsById, openAccount }) {
     </div>);
 }
 
+// ---- Reports tab ----
+const SV_TEXT_FIRST = 5;
+const SV_TYPE_LABEL = { rating: q => `RATING 1–${q.scale || 5}`, nps: () => "NPS 0–10", single: () => "PICK ONE", multi: () => "PICK ANY", text: () => "TEXT" };
+const svValidDay = d => /^\d{4}-\d{2}-\d{2}$/.test(d) && !Number.isNaN(Date.parse(d + "T00:00:00Z"));
+
+// Rating: one column per score, with the count printed under each bar and the average beside it.
+function SvRating({ r }) {
+  const max = Math.max(1, ...r.dist);
+  return (
+    <div className="sv-rating">
+      <div className="sv-avg"><span className="sv-avg-num">{r.avg == null ? "—" : r.avg}</span>{r.avg != null && <span className="sv-meta"> / {r.scale}</span>}<span className="sv-meta sv-n">n={r.n}</span></div>
+      <div role="img" aria-label={`Answers by score: ${r.dist.map((c, i) => `${i + 1}: ${c}`).join(", ")}`} className="sv-bars">
+        {r.dist.map((c, i) => (
+          <div key={i} className="sv-bar-col"><span className="sv-bar-count">{c}</span><div className="sv-bar-track"><div className="sv-bar" style={{ height: (c / max) * 100 + "%" }} /></div><span className="sv-bar-label">{i + 1}</span></div>
+        ))}
+      </div>
+    </div>);
+}
+
+function SvNpsBar({ y }) {
+  const t = y.n || 0, w = c => (t ? (c / t) * 100 : 0) + "%";
+  return (
+    <span role="img" aria-label={t ? `${y.promoters} promoters, ${y.passives} passives, ${y.detractors} detractors` : "No scored answers"} className="sv-split">
+      <span style={{ width: w(y.promoters) }} data-k="pro" /><span style={{ width: w(y.passives) }} data-k="pas" /><span style={{ width: w(y.detractors) }} data-k="det" />
+    </span>);
+}
+
+function SvChoices({ r }) {
+  const max = Math.max(1, ...r.counts.map(c => c.n));
+  return (
+    <div className="sv-choices">
+      <span className="sv-meta">n={r.n}</span>
+      {r.counts.map(c => (
+        <div key={c.label} className="sv-choice"><span className="sv-choice-label">{c.label}</span>
+          <span aria-hidden="true" className="sv-choice-track"><span style={{ width: (c.n / max) * 100 + "%" }} /></span>
+          <span className="sv-choice-n">{c.n}</span></div>
+      ))}
+    </div>);
+}
+
+function SvTexts({ r, accountsById }) {
+  const [all, setAll] = useState(false);
+  const shown = all ? r.items : r.items.slice(0, SV_TEXT_FIRST);
+  return (
+    <div>
+      <span className="sv-meta">n={r.n}</span>
+      <ul className="sv-texts">{shown.map((x, i) => {
+        const a = accountsById[x.accountId];
+        return (
+          <li key={i} data-sv-text-item className="sv-text">“{x.text}”
+            <div className="sv-meta">{[a && a.name, x.contactName, svDate(x.date)].filter(Boolean).join(" · ")}{x.source === "import" && <span className="sv-src sv-imp"> imported</span>}</div>
+          </li>);
+      })}</ul>
+      {!all && r.items.length > SV_TEXT_FIRST && <button type="button" className="fn-link sv-showall" data-sv-show-all onClick={() => setAll(true)}>Show all {r.items.length} text answers</button>}
+    </div>);
+}
+
+// A result in one scale, compact. Used for the current period, the previous period and each role.
+function SvResultBody({ r, accountsById }) {
+  if (!r || !r.n) return <p className="sv-meta sv-dash">—</p>;
+  if (r.type === "rating") return <SvRating r={r} />;
+  if (r.type === "single" || r.type === "multi") return <SvChoices r={r} />;
+  if (r.type === "text") return <SvTexts r={r} accountsById={accountsById} />;
+  return null;
+}
+
+function SvQuestionCard({ r, index, prev, roles, split, years, accountsById, compare }) {
+  const label = (SV_TYPE_LABEL[r.type] || (() => String(r.type).toUpperCase()))(r);
+  const isNps = r.type === "nps";
+  return (
+    <section data-sv-question={r.id} aria-label={`Question ${index + 1}`} className="sv-panel sv-q">
+      <div className="sv-q-head"><span className="sv-q-kind">Q{index + 1} · {label}</span><h2 className="sv-h2">{r.text}</h2></div>
+      {isNps ? (
+        <div className="sv-years">
+          <span className="sv-meta">Filtered answers: {r.n ? `${svSign(r.nps)} · n=${r.n}` : "—"}</span>
+          {years.length ? [...years].reverse().map(y => (
+            <div key={y.start} className="sv-year"><span className="sv-year-label">{svMonths[+y.start.slice(5, 7) - 1]} {y.start.slice(0, 4)}</span><SvNpsBar y={y} /><span className="sv-year-nps">{svSign(y.nps)}</span><span className="sv-year-n">n={y.n || 0}</span></div>
+          )) : <span className="sv-meta">No scored answers yet.</span>}
+        </div>
+      ) : (
+        <div className={compare ? "sv-cmp" : ""}>
+          <div className="sv-period" data-sv-current>{compare && <div className="sv-period-k">Selected period</div>}<SvResultBody r={r} accountsById={accountsById} /></div>
+          {compare && <div className="sv-period" data-sv-prev><div className="sv-period-k">Previous period</div><SvResultBody r={prev} accountsById={accountsById} /></div>}
+        </div>
+      )}
+      {split && (
+        <div className="sv-roles">{roles.map(({ role, r: rr }) => (
+          <div key={role} data-sv-role={role} className="sv-role"><div className="sv-period-k">{role}</div>
+            {rr && rr.n ? (isNps ? <span className="sv-meta">{svSign(rr.nps)} · n={rr.n}</span> : r.type === "text" ? <span className="sv-meta">{rr.n} text answer{rr.n === 1 ? "" : "s"}</span> : <SvResultBody r={rr} accountsById={accountsById} />) : <p className="sv-meta sv-dash">—</p>}
+          </div>))}
+        </div>)}
+    </section>);
+}
+
+function SurveysReports({ surveys, accountsById, month }) {
+  const [f, setF] = useState({ templateId: "", csm: "", tier: "", from: "", to: "" });
+  const [split, setSplit] = useState(false);
+  const set = (k, v) => setF(o => ({ ...o, [k]: v }));
+  const opts = useMemo(() => {
+    const tpl = new Map(), csm = new Set(), tier = new Set();
+    let latest = "", latestId = "";
+    for (const s of surveys || []) {
+      if (!s || !s.templateId) continue;
+      if (!tpl.has(s.templateId)) tpl.set(s.templateId, (s.template && s.template.name) || s.templateId);
+      const a = accountsById[s.accountId] || {};
+      if (a.csm) csm.add(a.csm);
+      if (a.tier) tier.add(a.tier);
+      if (s.submittedAt && String(s.submittedAt) > latest) { latest = String(s.submittedAt); latestId = s.templateId; }
+    }
+    const srt = x => [...x].sort((p, q) => String(p).localeCompare(String(q)));
+    const list = [...tpl].sort((p, q) => String(p[1]).localeCompare(String(q[1])));
+    return { tpl: list, csm: srt(csm), tier: srt(tier), def: latestId || (list[0] && list[0][0]) || "" };
+  }, [surveys, accountsById]);
+  const tid = f.templateId && opts.tpl.some(t => t[0] === f.templateId) ? f.templateId : opts.def;
+  const base = { csm: f.csm, tier: f.tier };
+  const range = svValidDay(f.from) && svValidDay(f.to) && f.from <= f.to;
+  const model = useMemo(() => {
+    const mine = filterSurveys(surveys, accountsById, { ...base, templateId: tid });
+    const cur = filterSurveys(mine, accountsById, { from: f.from, to: f.to }).filter(s => s.submittedAt);
+    const results = questionResults(cur, tid);
+    let prevResults = null;
+    if (range) {
+      const p = previousPeriod(f.from, f.to);
+      prevResults = questionResults(filterSurveys(mine, accountsById, { from: p.from, to: p.to }).filter(s => s.submittedAt), tid);
+    }
+    const roles = split ? roleSplit(cur, tid) : [];
+    const years = npsByYear(mine, month, iso(Date.now()));
+    return { results, prevResults, roles, years, cur };
+  }, [surveys, accountsById, tid, f.csm, f.tier, f.from, f.to, split, month]);
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob([responsesCSV(model.cur, accountsById)], { type: "text/csv" }));
+    const el = Object.assign(document.createElement("a"), { href: url, download: "survey-report.csv" });
+    el.click(); URL.revokeObjectURL(url);
+  };
+  const opt = c => <option key={c} value={c}>{c}</option>;
+  const hasNps = model.results.some(r => r.type === "nps");
+  return (
+    <div data-sv-reports className="sv-stack">
+      <div className="sv-filters">
+        <label className="fn-flabel sv-flabel">Template
+          <select className="fn-field" data-sv-filter="report-template" value={tid} onChange={e => set("templateId", e.target.value)}>{opts.tpl.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</select>
+        </label>
+        <label className="fn-flabel sv-flabel">Date from<input type="date" className="fn-field fn-date-in" data-sv-filter="from" value={f.from} onChange={e => set("from", e.target.value)} /></label>
+        <label className="fn-flabel sv-flabel">to<input type="date" className="fn-field fn-date-in" data-sv-filter="to" value={f.to} onChange={e => set("to", e.target.value)} /></label>
+        <SvSelect k="tier" label="Segment" v={f.tier} all="All segments" set={set}>{opts.tier.map(opt)}</SvSelect>
+        <SvSelect k="csm" label="CSM" v={f.csm} all="All CSMs" set={set}>{opts.csm.map(opt)}</SvSelect>
+        <label className="sv-check"><input type="checkbox" data-sv-split checked={split} onChange={e => setSplit(e.target.checked)} />Split by role</label>
+        <button type="button" className="nm-btn sv-export" data-sv-export onClick={exportCsv} disabled={!model.cur.length}>Export CSV</button>
+      </div>
+      {f.from && f.to && !range && <div className="sv-meta" role="status">Check the dates: the start must be on or before the end. Showing no previous-period comparison.</div>}
+      {!model.results.length ? <div data-sv-resp-empty className="sv-note">No answers match these filters. Clear a filter to see more.</div>
+        : model.results.map((r, i) => {
+          const prev = model.prevResults && model.prevResults.find(x => x.key === r.key);
+          const roles = model.roles.map(g => ({ role: g.role, r: g.results.find(x => x.key === r.key) }));
+          return <SvQuestionCard key={r.key} r={r} index={i} prev={prev} roles={roles} split={split} years={model.years} accountsById={accountsById} compare={range && r.type !== "nps"} />;
+        })}
+      <p className="sv-meta sv-foot">{hasNps ? "NPS questions always compare by yearly campaign. " : ""}Imported answers count and are marked imported in lists.</p>
+    </div>);
+}
+
 function SurveysPage({ st, user, accounts, openAccount }) {
   const [tab, setTab] = useState(readSvTab);
   const pick = k => { setTab(k); try { localStorage.setItem(SV_TAB_KEY, k); } catch (e) { /* storage blocked: the tab just is not remembered */ } };
@@ -246,7 +406,8 @@ function SurveysPage({ st, user, accounts, openAccount }) {
         {tab === "overview" && <SurveysOverview m={m} openAccount={openAccount} />}
         {tab === "responses" && (m.state === "ok" ? <SurveysResponses surveys={st.surveys} accountsById={m.byId} openAccount={openAccount} />
           : <div data-sv-responses className="sv-note">{m.state === "failed" ? "Survey data could not be loaded. Reload the page, or try again in a moment. Nothing has been lost." : "No survey responses yet. Send a survey from an account, or import past answers, and the results will show here."}</div>)}
-        {tab === "reports" && <div data-sv-reports className="sv-note">Reports will appear here.</div>}
+        {tab === "reports" && (m.state === "ok" ? <SurveysReports surveys={st.surveys} accountsById={m.byId} month={m.month} />
+          : <div data-sv-reports className="sv-note">{m.state === "failed" ? "Survey data could not be loaded. Reload the page, or try again in a moment. Nothing has been lost." : "No survey responses yet. Send a survey from an account, or import past answers, and the results will show here."}</div>)}
       </div>
     </div>);
 }
