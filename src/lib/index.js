@@ -28,3 +28,4 @@ export * from "./renewals.js";
 export * from "./contacts-import.js";
 export * from "./surveys.js";
 export * from "./survey-templates.js";
+export * from "./survey-reports.js";
