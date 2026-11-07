@@ -424,3 +424,14 @@ test("surveys page: long names and text stay inside a 390px page, on every tab",
     await fits("reports");
   } finally { await browser.close(); }
 });
+
+test("surveys page: no My book / Whole team toggle, and the follow-up figures say all campaigns", async () => {
+  const { page, browser } = await open(seed());
+  try {
+    await page.waitForSelector("[data-sv-overview]");
+    assert(await page.locator("[data-scope-toggle]").count() === 0, "scope toggle hidden on Surveys");
+    const fu = (await page.locator('[data-sv-kpi="followup"]').innerText()).replace(/\s+/g, " ");
+    assert(/all campaigns/.test(fu), "kpi sub: " + fu);
+    assert(/all campaigns/i.test(await page.locator("[data-sv-csm] thead").innerText()), "column header");
+  } finally { await browser.close(); }
+});

@@ -77,7 +77,14 @@ export function npsByYear(surveys, month, _today) {
   });
 }
 
-export function followUpStats(surveys, tasks) {
+// A detractor is the survey's CURRENT NPS answer being an integer 0-6: an answer edited to 7+, removed, or
+// a custom rule that matched another score does not count.
+const isDetractor = v => Number.isInteger(v) && v >= 0 && v <= 6;
+
+// An open task younger than the 7-day window can still be done on time, so it stays out of `total` (the
+// denominator) but counts in `open`. `today` (YYYY-MM-DD, default now) uses the same day maths as the on-time check.
+export function followUpStats(surveys, tasks, today) {
+  const nowNum = dayNum(today || new Date().toISOString());
   const byId = new Map((surveys || []).map(s => [s.id, s]));
   const groups = new Map();
   let total = 0, onTime = 0, open = 0;
@@ -86,8 +93,10 @@ export function followUpStats(surveys, tasks) {
     const s = byId.get(t.surveyId);
     if (!s || !s.submittedAt) continue;
     const q = questionsOf(s).find(x => x.id === t.questionId);
-    if (!q || q.type !== "nps") continue;
+    if (!q || q.type !== "nps" || !isDetractor((s.answers || {})[q.id])) continue;
     const isDone = t.status === "Done";
+    if (!isDone) open++;
+    if (!isDone && nowNum - dayNum(t.createdAt) <= 7) continue;
     const gap = dayNum(t.doneAt) - dayNum(t.createdAt);
     const ok = isDone && gap >= 0 && gap <= 7;
     const csm = String(t.owner || "").trim() || "Unassigned";
@@ -95,7 +104,7 @@ export function followUpStats(surveys, tasks) {
     const g = groups.get(csm);
     total++; g.total++;
     if (ok) { onTime++; g.onTime++; }
-    if (!isDone) { open++; g.open++; }
+    if (!isDone) g.open++;
   }
   const rate = (a, b) => (b ? Math.round((a / b) * 100) : null);
   return {
@@ -107,7 +116,7 @@ export function followUpStats(surveys, tasks) {
 // Per-CSM rows for the Overview. `win` ({ start: "YYYY-MM-DD" } of a campaign window, as npsByYear
 // reports it) picks the campaign; without it the latest campaign with any NPS activity is used.
 // Sent counts only emailed surveys; follow-up is per task owner and, like the KPI card, all-time.
-export function surveyStatsByCsm(surveys, accountsById, tasks, win) {
+export function surveyStatsByCsm(surveys, accountsById, tasks, win, today) {
   const accts = accountsById || {};
   const csmOf = s => String((accts[s.accountId] || {}).csm || "").trim() || "Unassigned";
   const list = surveys || [];
@@ -123,7 +132,7 @@ export function surveyStatsByCsm(surveys, accountsById, tasks, win) {
     if (!groups.has(k)) groups.set(k, []);
     groups.get(k).push(s);
   }
-  const fu = new Map(followUpStats(list, tasks).byCsm.map(g => [g.csm, g]));
+  const fu = new Map(followUpStats(list, tasks, today).byCsm.map(g => [g.csm, g]));
   const rows = new Map();
   const blankRow = csm => ({ csm, sent: 0, answered: 0, rate: null, nps: null, n: 0, followUp: { total: 0, onTime: 0, rate: null } });
   for (const [csm, ss] of groups) {
@@ -152,7 +161,7 @@ export function detractorsAwaiting(surveys, tasks) {
     if (!q || q.type !== "nps") continue;
     const answers = s.answers || {};
     const score = answers[q.id];
-    if (!Number.isInteger(score)) continue;
+    if (!isDetractor(score)) continue;
     const tq = qs.find(x => x.type === "text" && !blank(answers[x.id]));
     out.push({ survey: s, task: t, score, comment: tq ? String(answers[tq.id]) : "" });
   }

@@ -147,3 +147,26 @@ test("text items carry the survey source so imported answers can be marked", () 
   ], "t");
   assert.deepEqual(r[0].items.map(i => [i.text, i.source]), [["b", "sent"], ["a", "import"]]);
 });
+
+test("detractor means the current NPS answer is 0-6: edited, removed and rule-matched-at-8 are excluded", () => {
+  const L = [sv({ id: "S", submittedAt: "2026-03-09", answers: { nps: 9 } }), sv({ id: "E", submittedAt: "2026-03-09", answers: { nps: 8 } }), sv({ id: "R", submittedAt: "2026-03-09", answers: {} })];
+  const ts = ["S", "E", "R"].map(id => task({ id: "t" + id, surveyId: id, status: "Open", doneAt: null, createdAt: "2026-03-01" }));
+  assert.deepEqual(detractorsAwaiting(L, ts), []);
+  const f = followUpStats(L, ts, "2026-04-01");
+  assert.equal(f.total, 0); assert.equal(f.open, 0);
+  assert.deepEqual(surveyStatsByCsm(L, ACC, ts, WIN, "2026-04-01").map(x => x.followUp.total), [0]);
+  const done = followUpStats(L, [task({ surveyId: "S" })], "2026-04-01");
+  assert.equal(done.total, 0);
+  assert.equal(followUpStats([sv({ id: "S", submittedAt: "2026-03-09", answers: { nps: 6 } })], [task()], "2026-04-01").total, 1);
+});
+test("followUpStats keeps young open tasks out of the denominator", () => {
+  const open = o => task({ status: "Open", doneAt: null, ...o });
+  const young = followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-20");
+  assert.equal(young.total, 0); assert.equal(young.open, 1); assert.equal(young.rate, null);
+  assert.equal(followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-27").total, 0, "7 days old can still be on time");
+  const old = followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-28");
+  assert.equal(old.total, 1); assert.equal(old.onTime, 0); assert.equal(old.open, 1); assert.equal(old.rate, 0);
+  const late = followUpStats(S, [task({ createdAt: "2026-03-20", doneAt: "2026-03-30" })], "2026-03-30");
+  assert.equal(late.total, 1); assert.equal(late.onTime, 0);
+  assert.equal(late.byCsm[0].total, 1);
+});

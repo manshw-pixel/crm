@@ -23,9 +23,9 @@ function svOverviewModel(st, accounts) {
   const years = npsByYear(surveys, month, today);
   const latest = years.length ? years[years.length - 1] : null;
   const prev = latest ? years.find(y => +y.start.slice(0, 4) === +latest.start.slice(0, 4) - 1) : null;
-  const fu = followUpStats(surveys, tasks);
+  const fu = followUpStats(surveys, tasks, today);
   const awaiting = detractorsAwaiting(surveys, tasks);
-  const csms = surveyStatsByCsm(surveys, byId, tasks, latest ? { start: latest.start } : undefined);
+  const csms = surveyStatsByCsm(surveys, byId, tasks, latest ? { start: latest.start } : undefined, today);
   return { state: "ok", month, years, latest, prev, fu, awaiting, csms, byId };
 }
 
@@ -67,7 +67,7 @@ function SurveysOverview({ m, openAccount }) {
         <SvKpi k="nps" label="Customer NPS" value={latest ? svSign(latest.nps) : "—"} sub={ly ? `Campaign ${ly} · ${npsSub}` : npsSub} />
         <SvKpi k="rate" label="Response rate" value={latest ? svPct(latest.responseRate) : "—"} sub={latest && latest.sent ? `${latest.submitted} of ${latest.sent} sent` : "No surveys sent in this campaign"} />
         <SvKpi k="awaiting" label="Detractors awaiting follow-up" value={awaiting.length} sub={awaiting.length ? "Open follow-up tasks" : "Nothing waiting"} tone={awaiting.length ? "bad" : undefined} />
-        <SvKpi k="followup" label="Followed up within 7 days" value={svPct(fu.rate)} sub={fu.total ? `${fu.onTime} of ${fu.total} detractors` : "No follow-ups yet"} />
+        <SvKpi k="followup" label="Followed up within 7 days" value={svPct(fu.rate)} sub={fu.total ? `${fu.onTime} of ${fu.total} detractors · all campaigns` : "No follow-ups yet · all campaigns"} />
       </div>
       <div className="sv-two">
         <section data-sv-years aria-label="NPS by year" className="sv-panel">
@@ -99,7 +99,7 @@ function SurveysOverview({ m, openAccount }) {
         <div className="sv-panel-head"><h2 className="sv-h2">By CSM</h2><span className="sv-meta">{latest ? `Campaign ${ly}` : ""}</span></div>
         <div className="sv-scroll">
           <table className="sv-table">
-            <thead><tr><th scope="col">CSM</th><th scope="col" className="r">Sent</th><th scope="col" className="r">Answered</th><th scope="col" className="r">Response rate</th><th scope="col" className="r">NPS</th><th scope="col">Detractors followed up in 7 days</th></tr></thead>
+            <thead><tr><th scope="col">CSM</th><th scope="col" className="r">Sent</th><th scope="col" className="r">Answered</th><th scope="col" className="r">Response rate</th><th scope="col" className="r">NPS</th><th scope="col">Detractors followed up in 7 days (all campaigns)</th></tr></thead>
             <tbody>{csms.map(c => {
               const f = c.followUp;
               const text = f.total ? `${f.onTime} of ${f.total} · ${f.rate}%` : "No follow-ups";

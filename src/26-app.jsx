@@ -540,7 +540,7 @@ function App({ user, onBackToClients }) {
         ) : <h1 title={view === "Accounts" && acctId ? (st.accounts.find(x => x.id === acctId)?.name || "Account") : undefined} className="min-w-0 max-w-full truncate text-[26px] font-extrabold leading-tight tracking-[-0.02em] text-slate-900">{view === "Accounts" && acctId
           ? <><button data-crumb-accounts className="text-slate-500 hover:text-indigo-600 hover:underline" onClick={() => setAcctId(null)}>Accounts</button><span className="mx-1.5 text-slate-400">›</span>{st.accounts.find(x => x.id === acctId)?.name || "Account"}</>
           : view}</h1>}
-        {view !== "Tasks" && view !== "Settings" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className={`nm-inset flex items-center ${view === "Dashboard" && !acctId ? "lg:ml-auto" : "lg:ml-3"}`}>
+        {view !== "Tasks" && view !== "Settings" && view !== "Surveys" && user.role !== "lead" && !isImplRole(user) && <div data-scope-toggle className={`nm-inset flex items-center ${view === "Dashboard" && !acctId ? "lg:ml-auto" : "lg:ml-3"}`}>
           {[["mine", `My book${myCount ? ` (${myCount})` : ""}`], ["all", "Whole team"]].map(([k, label]) => (
             <button key={k} aria-pressed={scope === k} onClick={() => setScopeSel(k)}
               className={scope === k ? "" : "hover:text-slate-900"}>{label}</button>

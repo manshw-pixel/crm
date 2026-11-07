@@ -51,3 +51,23 @@ test("a failed second page keeps surveys unknown", async () => {
     assert(s === null, "surveys must stay null on a partial read, got " + (s && s.length));
   } finally { await browser.close(); }
 });
+
+test("a later page without rows keeps surveys unknown", async () => {
+  const { page, browser } = await launch(`${rows} window.__seedRows.surveys = ${JSON.stringify(many)}; window.__rangeNullFrom = { surveys: 1000 };`);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.some(a => a.id === "ld1"), null, { timeout: 15000 });
+    await page.waitForTimeout(1000);
+    const s = await page.evaluate(() => window.__store.getState().surveys);
+    assert(s === null, "surveys must stay null when a later page has no rows, got " + (s && s.length));
+  } finally { await browser.close(); }
+});
+
+test("a row repeated across pages is kept once", async () => {
+  const dup = many.map((x, i) => (i === 1000 ? { ...x, id: many[0].id } : x));
+  const { page, browser } = await launch(`${rows} window.__seedRows.surveys = ${JSON.stringify(dup)};`);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().surveys && window.__store.getState().surveys.length >= 1000, null, { timeout: 15000 });
+    const n = await page.evaluate(() => window.__store.getState().surveys.length);
+    assert(n === 1001, "expected 1001 distinct surveys, got " + n);
+  } finally { await browser.close(); }
+});

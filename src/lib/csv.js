@@ -90,7 +90,8 @@ export function parseCsvNumber(v) {
 const BUILTIN_IMPORT_KEYS = new Set(["accountno", "name", "tier", "arr", "currency", "arrusd", "industry", "csm", "startdate",
   "transitiondate", "renewaldate", "daystorenewal", "score", "risk", "contractstatus", "modules", "licenses", "totallicenses",
   "deployedlicenses", "dedicatedsupport", "billingcompleted", "billingcompleteddate", "casestudy", "approvedsavings",
-  "approvedroi", "usage", "sentiment", "tickets", "nps"]);
+  "approvedroi", "usage", "sentiment", "tickets", "nps",
+  "surveynps", "surveynpsresponses", "lastsurveysent", "lastsurveyanswered"]);
 const letters = s => String(s || "").toLowerCase().replace(/[^a-z]/g, "");
 const labelKey = s => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 // header row -> [{ index, def }] for every active custom field that has a column (first match wins)

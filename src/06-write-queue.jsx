@@ -33,15 +33,16 @@ function implRows(r) {
 // Reads every survey in pages of 1,000 (PostgREST caps a response), ordered by id so pages never overlap.
 // Any failed page returns { error }, never a partial list: surveyRows must still report a failed read as null.
 async function readAllSurveys() {
-  const PAGE = 1000, all = [];
+  const PAGE = 1000, all = [], seen = new Set();
   for (let from = 0; ; from += PAGE) {
     let r;
     try {
       r = await sb.from("surveys").select("id,account_id,contact_id,contact_name,contact_role,template_id,template_snapshot,source,sent_at,expires_at,submitted_at,survey_answers(question_id,value_num,value_text,value_choices)").order("id").range(from, from + PAGE - 1);
     } catch (error) { return { error }; }
     if (!r || r.error) return { error: (r && r.error) || new Error("surveys read failed") };
-    const rows = Array.isArray(r.data) ? r.data : [];
-    all.push(...rows);
+    if (!Array.isArray(r.data)) { if (from === 0) return { data: all }; return { error: new Error("surveys read failed: page without rows") }; }
+    const rows = r.data;
+    for (const x of rows) { if (x && x.id != null) { if (seen.has(x.id)) continue; seen.add(x.id); } all.push(x); }
     if (rows.length < PAGE) return { data: all };
   }
 }

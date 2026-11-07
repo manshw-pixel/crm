@@ -9,6 +9,7 @@
 // name, so nothing is added to Settings and filters can pick this run's answer out of any others.
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import { parseCSV } from "../../../src/lib/csv.js";
 import { openAccount } from "./_accounts.mjs";
 import { nav } from "./_users-card.mjs";
 import { SkipScenario } from "../core.mjs";
@@ -103,8 +104,9 @@ export const scenarios = [
       await requireSurveysSql(page);
       await openAccount(page, ACCT(runId));
       await addContact(page, CONTACT(thisRunId), MAIL(thisRunId));
-      if (!S.sent) S.sent = await send(page, CONTACT(thisRunId), thisRunId);
-      await answer(context, env, S.sent.token, COMMENT(thisRunId));
+      const sent = S.sent || await send(page, CONTACT(thisRunId), thisRunId);
+      await answer(context, env, sent.token, COMMENT(thisRunId));
+      S.sent = sent; // only once the answer is in, so later scenarios do not run against an unanswered survey
       await reloadUntilSurvey(page, S.sent.surveyId);
       await nav(page, "Surveys").click();
       await page.locator("[data-surveys-page]").waitFor({ timeout: 15000 });
@@ -134,7 +136,7 @@ export const scenarios = [
       const text = await flat(row);
       assert.ok(text.includes(CONTACT(thisRunId)), "contact name");
       assert.ok(text.includes(COMMENT(thisRunId)), "comment shown");
-      assert.ok(text.includes("Sent"), "source shown");
+      assert.equal((await flat(row.locator("[data-sv-source]"))), "Sent", "source shown");
       await row.getByRole("button", { name: ACCT(runId), exact: true }).click();
       await page.getByRole("heading", { level: 1, name: ACCT(runId), exact: true }).waitFor({ timeout: 15000 });
     } },

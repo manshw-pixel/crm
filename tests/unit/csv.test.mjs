@@ -72,3 +72,9 @@ test("account CSV import ignores the survey columns", async () => {
   assert.deepEqual(customImportColumns(rows[0], []), []);
   assert.deepEqual(customImportColumns(rows[0], [{ id: "cf", label: "Zed", type: "text" }]), []);
 });
+
+test("a custom field named like a survey column is never imported into it", () => {
+  const labels = ["Survey NPS", "Survey NPS responses", "Last survey sent", "Last survey answered"];
+  const defs = labels.map((label, i) => ({ id: "cf" + i, label, type: "text" }));
+  assert.deepEqual(lib.customImportColumns(labels, defs), []);
+});
