@@ -74,7 +74,7 @@ function useWindowedRows(items, overscan = WINDOW_OVERSCAN) {
   return { scrollRef, rowRef, windowed: true, ...windowRange(total, rowHeight, metrics.scrollTop, metrics.viewportH, overscan) };
 }
 
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings, contacts = [] }) {
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings, contacts = [], surveys }) {
   const [adding, setAdding] = useState(false);
   const [importContacts, setImportContacts] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -220,7 +220,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           {churnedCount > 0 && !showChurned ? ` · ${churnedCount} churned hidden` : ""}</p>
         {canEdit && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
         {canEdit && <Btn data-open-contacts-import onClick={() => setImportContacts(true)}>Import contacts</Btn>}
-        <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
+        <Btn onClick={() => exportCSV(rows, settings && settings.customFields, surveys)}>Export CSV</Btn>
         {canEdit && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
         <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
           onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />

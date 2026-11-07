@@ -28,3 +28,26 @@ test("fetchAll maps survey rows to camelCase and never asks for the token", asyn
     assert(!("token" in s), "token must not be loaded");
   } finally { await browser.close(); }
 });
+
+const mkSurvey = i => ({ id: "s" + String(i).padStart(5, "0"), account_id: "a1", contact_id: null, contact_name: "N", contact_role: "", template_id: "t", template_snapshot: {}, source: "manual",
+  sent_at: "2026-11-01T00:00:00Z", expires_at: null, submitted_at: null, survey_answers: [] });
+const many = Array.from({ length: 1002 }, (_, i) => mkSurvey(i));
+
+test("surveys read pages past 1000", async () => {
+  const { page, browser } = await launch(`${rows} window.__seedRows.surveys = ${JSON.stringify(many)};`);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().surveys && window.__store.getState().surveys.length >= 1000, null, { timeout: 15000 });
+    const n = await page.evaluate(() => window.__store.getState().surveys.length);
+    assert(n === 1002, "expected 1002 surveys, got " + n);
+  } finally { await browser.close(); }
+});
+
+test("a failed second page keeps surveys unknown", async () => {
+  const { page, browser } = await launch(`${rows} window.__seedRows.surveys = ${JSON.stringify(many)}; window.__rangeFailFrom = { surveys: 1000 };`);
+  try {
+    await page.waitForFunction(() => window.__store && window.__store.getState().accounts.some(a => a.id === "ld1"), null, { timeout: 15000 });
+    await page.waitForTimeout(1000);
+    const s = await page.evaluate(() => window.__store.getState().surveys);
+    assert(s === null, "surveys must stay null on a partial read, got " + (s && s.length));
+  } finally { await browser.close(); }
+});

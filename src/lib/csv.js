@@ -22,13 +22,17 @@ export const csvCell = v => {
   if (FORMULA_LEAD.test(s) && !NUMERIC.test(s)) s = "'" + s;
   return `"${s.replace(/"/g, '""')}"`;
 };
-export function accountsCSVText(rows, customFields = []) {
+export function accountsCSVText(rows, customFields = [], surveyCols) {
   const cols = ["accountNo", "name", "tier", "arr", "currency", "arrUSD", "industry", "csm", "startDate", "transitionDate", "renewalDate", "daysToRenewal", "score", "risk", "contractStatus", "modules", "licenses", "deployedLicenses", "dedicatedSupport", "billingCompleted", "billingCompletedDate", "caseStudy", "approvedSavings", "approvedRoi"];
   const esc = csvCell;
   const cell = (a, c) => c === "daysToRenewal" ? daysUntil(a.renewalDate) : c === "arrUSD" ? Math.round(a.arrUSD) : c === "dedicatedSupport" ? (a.dedicatedSupport ? "Yes" : "No") : c === "billingCompleted" ? (a.billingCompleted ? "Yes" : "No") : VALUE_COL[c] ? ((a.inputs && a.inputs.value && a.inputs.value[VALUE_COL[c]]) ? "yes" : "no") : a[c];
   const cfs = activeCustomFields(customFields);
-  const head = [cols.join(","), ...cfs.map(d => esc(d.label))].join(",");
-  return [head, ...rows.map(a => [...cols.map(c => esc(cell(a, c))), ...cfs.map(d => esc(formatCustomValue(d.type, a.custom && a.custom[d.id])))].join(","))].join("\n");
+  // survey columns sit between the standard ones and the custom fields; export-only (the import ignores them)
+  const svCols = surveyCols ? ["Survey NPS", "Survey NPS responses", "Last survey sent", "Last survey answered"] : [];
+  const svCells = a => { const n = a.surveyNps, d = surveyCols && surveyCols.get(a.id) || {};
+    return [n && n.enough ? n.nps : "", n ? n.n : "", d.lastSent || "", d.lastAnswered || ""]; };
+  const head = [cols.join(","), ...svCols.map(esc), ...cfs.map(d => esc(d.label))].join(",");
+  return [head, ...rows.map(a => [...cols.map(c => esc(cell(a, c))), ...(surveyCols ? svCells(a).map(esc) : []), ...cfs.map(d => esc(formatCustomValue(d.type, a.custom && a.custom[d.id])))].join(","))].join("\n");
 }
 /* ---- CSV dates ----
  * The app exports YYYY-MM-DD, but a CSV re-saved in Excel on an Indian-locale machine comes

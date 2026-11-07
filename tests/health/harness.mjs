@@ -34,6 +34,8 @@ const MOCK = `window.__sbFactory = () => {
       const p = delay
         ? new Promise(res => setTimeout(() => res(out), delay))
         : Promise.resolve(out);
+      // paged reads: select().order().range(a, b) slices the seed; __rangeFailFrom[t] = offset fails that page
+      p.order = () => ({ range: (a, b) => Promise.resolve(window.__rangeFailFrom?.[t] === a ? { data: null, error: { message: "page failed" } } : out.error ? out : { data: (window.__seedRows?.[t] || []).slice(a, b + 1), error: null }) });
       p.eq = () => Promise.resolve({ data: window.__seedRows?.[t] || [], error: null, single: () => Promise.resolve({ data: (window.__seedRows?.[t] || [])[0] || null, error: null }) });
       return p;
     },

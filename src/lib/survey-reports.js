@@ -170,3 +170,18 @@ export function responsesCSV(surveys, accountsById) {
   }
   return [head, ...out.map(r => r.map(csvCell).join(","))].join("\n");
 }
+
+/* accountId -> { lastSent, lastAnswered } (YYYY-MM-DD), for the account CSV. "Sent" counts only surveys the
+ * app emailed (source "sent"); a manually entered answer is not a send. */
+export function surveyDatesByAccount(surveys) {
+  const m = new Map();
+  for (const s of surveys || []) {
+    if (!s || !s.accountId) continue;
+    const e = m.get(s.accountId) || { lastSent: "", lastAnswered: "" };
+    const sent = s.source === "sent" ? day(s.sentAt) : "", ans = day(s.submittedAt);
+    if (sent > e.lastSent) e.lastSent = sent;
+    if (ans > e.lastAnswered) e.lastAnswered = ans;
+    m.set(s.accountId, e);
+  }
+  return m;
+}
