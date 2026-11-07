@@ -151,3 +151,106 @@ test("surveys page: no horizontal scroll at 390px", async () => {
     }
   } finally { await browser.close(); }
 });
+
+// ---- Task 4: Responses tab ----
+const RT = { id: "qbr", name: "QBR feedback", questions: [{ id: "val", type: "rating", scale: 7, text: "Value?" }, { id: "why", type: "text", text: "Why?" }] };
+const RA = [seedAccount({ id: "a1", name: "Alpha Co", csm: "Priya", tier: "Enterprise" }), seedAccount({ id: "a2", name: "Beta Co", csm: "Ravi", tier: "Mid" })];
+const rs = (id, acct, role, source, date, tpl, answers) => ({ id, account_id: acct, contact_id: null, contact_name: "P " + id, contact_role: role, template_id: tpl.id, template_snapshot: tpl, source,
+  sent_at: source === "sent" ? date + "T00:00:00Z" : null, expires_at: "2030-01-01T00:00:00Z", submitted_at: date + "T00:00:00Z", survey_answers: answers });
+const nA = (n, t) => [{ question_id: "nps", value_num: n }, ...(t ? [{ question_id: "reason", value_text: t }] : [])];
+const RS = [
+  rs("r1", "a1", "CIO", "sent", "2026-03-06", TPL, nA(3, "Too slow")),
+  rs("r2", "a1", "User", "sent", "2026-03-07", TPL, nA(9)),
+  rs("r3", "a2", "CIO", "import", "2025-11-14", RT, [{ question_id: "val", value_num: 4 }, { question_id: "why", value_text: "<img src=x onerror=window.__xss=1>" }]),
+  rs("r4", "a2", "", "sent", "2026-05-01", RT, [{ question_id: "val", value_num: 6 }]),
+  { ...rs("r5", "a1", "CIO", "sent", "2026-03-05", TPL, []), submitted_at: null },
+];
+const rseed = (surveys = RS, extra = "") => `window.__seedRows = { accounts: ${rows(RA)}, contacts: [], activities: [], tasks: [], opportunities: [], team: [],
+  settings: [], surveys: ${JSON.stringify(surveys)}, profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] }; ${extra}`;
+async function openResponses(script, width = 1280) {
+  const r = await open(script, width);
+  await r.page.waitForSelector("[data-sv-overview]");
+  await r.page.click('[data-sv-tab="responses"]');
+  await r.page.waitForSelector("[data-sv-responses]");
+  return r;
+}
+const rowIds = page => page.$$eval("[data-sv-resp-row]", els => els.map(e => e.getAttribute("data-sv-resp-row")));
+
+test("responses lists submitted surveys only, newest first", async () => {
+  const { page, browser } = await openResponses(rseed());
+  try {
+    const ids = await rowIds(page);
+    assert(JSON.stringify(ids) === JSON.stringify(["r4", "r2", "r1", "r3"]), "rows " + ids);
+    const c = (await page.locator("[data-sv-count]").innerText()).replace(/\s+/g, " ");
+    assert(/4 responses · 3 sent, 1 imported/.test(c), "count: " + c);
+    const r1 = (await page.locator('[data-sv-resp-row="r1"]').innerText()).replace(/\s+/g, " ");
+    assert(/NPS 3 · Detractor/.test(r1) && /Too slow/.test(r1) && /Alpha Co/.test(r1) && /Priya/.test(r1) && /6 Mar 2026/.test(r1), "r1: " + r1);
+    const r4 = (await page.locator('[data-sv-resp-row="r4"]').innerText()).replace(/\s+/g, " ");
+    assert(/6\/7/.test(r4) && /No comment/.test(r4), "r4: " + r4);
+  } finally { await browser.close(); }
+});
+
+test("responses: each filter narrows the list", async () => {
+  const { page, browser } = await openResponses(rseed());
+  try {
+    const sel = async (k, v) => { await page.selectOption(`[data-sv-filter="${k}"]`, v); return rowIds(page); };
+    const eq = (a, b, m) => assert(JSON.stringify(a) === JSON.stringify(b), m + ": " + a);
+    eq(await sel("templateId", "qbr"), ["r4", "r3"], "template"); await sel("templateId", "");
+    eq(await sel("csm", "Priya"), ["r2", "r1"], "csm"); await sel("csm", "");
+    eq(await sel("tier", "Mid"), ["r4", "r3"], "tier"); await sel("tier", "");
+    eq(await sel("role", "CIO"), ["r1", "r3"], "role"); eq(await sel("role", "(none)"), ["r4"], "no role"); await sel("role", "");
+    eq(await sel("source", "import"), ["r3"], "imported"); eq(await sel("source", "sent"), ["r4", "r2", "r1"], "sent"); await sel("source", "");
+    await page.fill('[data-sv-filter="from"]', "2026-03-07"); await page.fill('[data-sv-filter="to"]', "2026-03-31");
+    eq(await rowIds(page), ["r2"], "date");
+    await page.fill('[data-sv-filter="from"]', "2030-01-01");
+    await page.waitForSelector("[data-sv-resp-empty]");
+    assert(/No responses match/.test(await page.locator("[data-sv-resp-empty]").innerText()), "empty message");
+  } finally { await browser.close(); }
+});
+
+test("responses: row opens its account, imported rows are marked, text answers render as text", async () => {
+  const { page, browser } = await openResponses(rseed());
+  try {
+    assert(/Imported/.test(await page.locator('[data-sv-resp-row="r3"] [data-sv-source]').innerText()), "imported mark");
+    assert(/Sent/.test(await page.locator('[data-sv-resp-row="r1"] [data-sv-source]').innerText()), "sent mark");
+    assert(await page.locator("[data-sv-responses] img").count() === 0, "no img element");
+    assert(/<img src=x/.test(await page.locator('[data-sv-resp-row="r3"]').innerText()), "shown as text");
+    assert(await page.evaluate(() => window.__xss) === undefined, "no script ran");
+    await page.locator('[data-sv-resp-row="r1"] button').first().click();
+    await page.waitForSelector('nav[aria-label="Main"] button[title="Accounts"][aria-current="page"]');
+  } finally { await browser.close(); }
+});
+
+test("responses: paging shows 25 per page and filters reset to page 1", async () => {
+  const many = Array.from({ length: 30 }, (_, i) => rs("m" + String(i).padStart(2, "0"), "a1", "CIO", "sent", `2026-04-${String(i + 1).padStart(2, "0")}`, TPL, nA(9)));
+  const { page, browser } = await openResponses(rseed([...many, ...RS]));
+  try {
+    assert((await rowIds(page)).length === 25, "25 rows");
+    assert(/Showing 1–25 of 34/.test(await page.locator("[data-sv-paging]").innerText()), "paging text");
+    await page.click("[data-sv-next]");
+    assert((await rowIds(page)).length === 9, "second page");
+    assert(/Showing 26–34 of 34/.test(await page.locator("[data-sv-paging]").innerText()), "page 2 text");
+    await page.selectOption('[data-sv-filter="source"]', "import");
+    assert(/Showing 1–1 of 1/.test(await page.locator("[data-sv-paging]").innerText()), "reset");
+  } finally { await browser.close(); }
+});
+
+test("responses: CSV export uses the filtered rows", async () => {
+  const { page, browser } = await openResponses(rseed());
+  try {
+    await page.selectOption('[data-sv-filter="source"]', "import");
+    await page.evaluate(() => { window.__csv = null; const b = window.Blob; window.Blob = function (parts, o) { if (o && o.type === "text/csv") window.__csv = parts.join(""); return new b(parts, o); }; });
+    await page.click("[data-sv-export]");
+    const csv = await page.evaluate(() => window.__csv);
+    assert(csv && /^Date,Account,CSM,Tier,Template/.test(csv), "header: " + csv);
+    assert(/Beta Co/.test(csv) && !/Alpha Co/.test(csv), "only the filtered rows: " + csv);
+  } finally { await browser.close(); }
+});
+
+test("responses: no sideways page scroll at 390px", async () => {
+  const { page, browser } = await openResponses(rseed(), 390);
+  try {
+    const w = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, win: window.innerWidth }));
+    assert(w.doc <= w.win, "page scrolls sideways: " + JSON.stringify(w));
+  } finally { await browser.close(); }
+});

@@ -860,7 +860,16 @@
   .sv-table tbody th { font-size: 13.5px; text-transform: none; letter-spacing: 0; color: var(--f-fg); font-weight: 600; }
   .sv-table td { padding: 12px 10px; font-variant-numeric: tabular-nums; } .sv-table tbody tr { border-top: 1px solid var(--f-row); }
   .sv-table tbody th, .sv-table thead th:first-child { padding-left: 18px; } .sv-table th.r, .sv-table td.r { text-align: right; } .sv-bold { font-weight: 700; }
-  @media (max-width: 640px) { .sv-seg-btn, .sv-aw-top .fn-link { min-height: 44px; } }
+  .sv-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px; }
+  .sv-flabel { flex-direction: column; align-items: flex-start; gap: 4px; } .sv-flabel .fn-field { min-height: 40px; min-width: 140px; } .sv-flabel .fn-date-in { min-width: 0; width: 9.5rem; }
+  .sv-count-line { margin-left: auto; align-self: center; } .sv-export { min-height: 40px; padding: 0 14px; font-size: 13.5px; } .sv-export:disabled, .sv-pg:disabled { opacity: .5; cursor: default; }
+  .sv-resp { min-width: 980px; } .sv-resp td { vertical-align: top; } .sv-resp td:first-child, .sv-resp thead th:first-child { padding-left: 18px; } .sv-nowrap { white-space: nowrap; color: var(--f-label); }
+  .sv-ans { max-width: 360px; } .sv-ans-text { font-size: 13px; color: var(--f-label); margin-top: 4px; overflow-wrap: anywhere; }
+  .sv-src { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px; background: var(--f-row); color: var(--f-label); }
+  .sv-paging { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 12px 18px 4px; border-top: 1px solid var(--f-row); font-size: 13px; color: var(--f-meta); } .sv-paging span { margin-right: auto; }
+  .sv-pg { min-height: 36px; padding: 0 12px; font-size: 13px; }
+  .sv-flabel .fn-field:focus-visible, .sv-export:focus-visible, .sv-pg:focus-visible { outline: 2px solid rgb(var(--indigo-500)); outline-offset: 2px; }
+  @media (max-width: 640px) { .sv-seg-btn, .sv-aw-top .fn-link { min-height: 44px; } .sv-export, .sv-pg, .sv-flabel .fn-field { min-height: 44px; } }
   @media (prefers-reduced-motion: reduce) { .sv-page *, .sv-page { transition: none !important; animation: none !important; } }
   @media (forced-colors: active) { .sv-kpi, .sv-panel, .sv-note, .sv-count { border: 1px solid CanvasText; } .sv-split, .sv-legend i { forced-color-adjust: none; border: 1px solid CanvasText; } .sv-seg-btn[aria-selected=true] { border: 3px solid Highlight; } }
   @media print { .sv-seg { display: none !important; } .sv-kpi, .sv-panel { box-shadow: none; border: 1px solid #cbd5e1; break-inside: avoid; } }

@@ -118,6 +118,104 @@ function SurveysOverview({ m, openAccount }) {
     </div>);
 }
 
+// ---- Responses tab ----
+const SV_PAGE_SIZE = 25;
+const svDate = d => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(d || "")); return m ? `${+m[3]} ${svMonths[+m[2] - 1]} ${m[1]}` : ""; };
+// First rating or NPS answer as pill text and severity, plus the first text answer.
+function svAnswerCells(s) {
+  const qs = (s.template && Array.isArray(s.template.questions) ? s.template.questions : []).filter(Boolean);
+  const ans = s.answers || {};
+  const blank = v => v == null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0);
+  let pill = null;
+  const sc = qs.find(q => (q.type === "nps" || q.type === "rating") && typeof ans[q.id] === "number");
+  if (sc) {
+    const v = ans[sc.id];
+    if (sc.type === "nps") pill = { text: `NPS ${v} · ${v >= 9 ? "Promoter" : v >= 7 ? "Passive" : "Detractor"}`, sev: v >= 9 ? "green" : v >= 7 ? undefined : "red" };
+    else { const r = v / (sc.scale || 5); pill = { text: `Rating ${answerLabel(sc, v)}`, sev: r <= 0.4 ? "red" : r < 0.75 ? "amber" : "green" }; }
+  }
+  const tq = qs.find(q => q.type === "text" && !blank(ans[q.id]));
+  return { pill, text: tq ? String(ans[tq.id]) : "" };
+}
+
+function SvSelect({ k, label, v, all, set, children }) {
+  return (
+    <label className="fn-flabel sv-flabel">{label}
+      <select className="fn-field" data-sv-filter={k} value={v} onChange={e => set(k, e.target.value)}><option value="">{all}</option>{children}</select>
+    </label>);
+}
+
+function SurveysResponses({ surveys, accountsById, openAccount }) {
+  const [f, setF] = useState({ templateId: "", csm: "", tier: "", role: "", from: "", to: "", source: "" });
+  const [page, setPage] = useState(0);
+  const set = (k, v) => { setF(o => ({ ...o, [k]: v })); setPage(0); };
+  const done = useMemo(() => (surveys || []).filter(s => s && s.submittedAt).sort((a, b) => String(b.submittedAt).localeCompare(String(a.submittedAt))), [surveys]);
+  const opts = useMemo(() => {
+    const tpl = new Map(), csm = new Set(), tier = new Set(), role = new Set();
+    let noRole = false;
+    for (const s of done) {
+      const a = accountsById[s.accountId] || {};
+      tpl.set(s.templateId, (s.template && s.template.name) || s.templateId);
+      if (a.csm) csm.add(a.csm);
+      if (a.tier) tier.add(a.tier);
+      const r = String(s.contactRole || "").trim();
+      if (r) role.add(r); else noRole = true;
+    }
+    const srt = x => [...x].sort((p, q) => String(p).localeCompare(String(q)));
+    return { tpl: [...tpl].sort((p, q) => String(p[1]).localeCompare(String(q[1]))), csm: srt(csm), tier: srt(tier), role: srt(role), noRole };
+  }, [done, accountsById]);
+  const list = useMemo(() => filterSurveys(done, accountsById, f), [done, accountsById, f]);
+  const nSent = list.filter(s => s.source === "sent").length, nImp = list.filter(s => s.source === "import").length;
+  const pages = Math.max(1, Math.ceil(list.length / SV_PAGE_SIZE));
+  const cur = Math.min(page, pages - 1);
+  const shown = list.slice(cur * SV_PAGE_SIZE, (cur + 1) * SV_PAGE_SIZE);
+  const exportCsv = () => {
+    const url = URL.createObjectURL(new Blob([responsesCSV(list, accountsById)], { type: "text/csv" }));
+    const el = Object.assign(document.createElement("a"), { href: url, download: "survey-responses.csv" });
+    el.click(); URL.revokeObjectURL(url);
+  };
+  const opt = c => <option key={c} value={c}>{c}</option>;
+  return (
+    <div data-sv-responses className="sv-stack">
+      <div className="sv-filters">
+        <SvSelect k="templateId" label="Template" v={f.templateId} all="All templates" set={set}>{opts.tpl.map(([id, n]) => <option key={id} value={id}>{n}</option>)}</SvSelect>
+        <SvSelect k="csm" label="CSM" v={f.csm} all="All CSMs" set={set}>{opts.csm.map(opt)}</SvSelect>
+        <SvSelect k="tier" label="Segment" v={f.tier} all="All segments" set={set}>{opts.tier.map(opt)}</SvSelect>
+        <SvSelect k="role" label="Role" v={f.role} all="All roles" set={set}>{opts.role.map(opt)}{opts.noRole && <option value="(none)">No role</option>}</SvSelect>
+        <label className="fn-flabel sv-flabel">Date from<input type="date" className="fn-field fn-date-in" data-sv-filter="from" value={f.from} onChange={e => set("from", e.target.value)} /></label>
+        <label className="fn-flabel sv-flabel">to<input type="date" className="fn-field fn-date-in" data-sv-filter="to" value={f.to} onChange={e => set("to", e.target.value)} /></label>
+        <SvSelect k="source" label="Source" v={f.source} all="All" set={set}><option value="sent">Sent</option><option value="import">Imported</option></SvSelect>
+        <span className="sv-meta sv-count-line" data-sv-count>{list.length} response{list.length === 1 ? "" : "s"} · {nSent} sent, {nImp} imported</span>
+        <button type="button" className="nm-btn sv-export" data-sv-export onClick={exportCsv} disabled={!list.length}>Export CSV</button>
+      </div>
+      {!list.length ? <div data-sv-resp-empty className="sv-note">No responses match these filters. Clear a filter to see more.</div> : (
+        <section aria-label="Responses" className="sv-panel">
+          <div className="sv-scroll">
+            <table className="sv-table sv-resp">
+              <thead><tr><th scope="col">Date</th><th scope="col">Account</th><th scope="col">Contact</th><th scope="col">Template</th><th scope="col">Answers</th><th scope="col">Source</th><th scope="col">CSM</th></tr></thead>
+              <tbody>{shown.map(s => {
+                const a = accountsById[s.accountId], c = svAnswerCells(s);
+                return (
+                  <tr key={s.id} data-sv-resp-row={s.id}>
+                    <td className="sv-nowrap">{svDate(s.submittedAt)}</td>
+                    <td>{a ? <button type="button" className="fn-link" onClick={() => openAccount(s.accountId)}>{a.name}</button> : <span className="sv-meta">Account removed</span>}</td>
+                    <td><div className="sv-bold">{s.contactName || "Unnamed contact"}</div><div className="sv-meta">{s.contactRole || "No role"}</div></td>
+                    <td className="sv-nowrap">{(s.template && s.template.name) || s.templateId}</td>
+                    <td className="sv-ans">{c.pill && <span className="ad-pill ad-pill-sm" data-sev={c.pill.sev}>{c.pill.text}</span>}<div className="sv-ans-text">{c.text || "No comment"}</div></td>
+                    <td><span className="sv-src" data-sv-source>{s.source === "import" ? "Imported" : "Sent"}</span></td>
+                    <td>{(a && a.csm) || ""}</td>
+                  </tr>);
+              })}</tbody>
+            </table>
+          </div>
+          <div className="sv-paging" data-sv-paging>
+            <span>Showing {cur * SV_PAGE_SIZE + 1}–{cur * SV_PAGE_SIZE + shown.length} of {list.length}</span>
+            <button type="button" className="nm-btn sv-pg" data-sv-prev disabled={cur === 0} onClick={() => setPage(cur - 1)}>Previous</button>
+            <button type="button" className="nm-btn sv-pg" data-sv-next disabled={cur >= pages - 1} onClick={() => setPage(cur + 1)}>Next</button>
+          </div>
+        </section>)}
+    </div>);
+}
+
 function SurveysPage({ st, user, accounts, openAccount }) {
   const [tab, setTab] = useState(readSvTab);
   const pick = k => { setTab(k); try { localStorage.setItem(SV_TAB_KEY, k); } catch (e) { /* storage blocked: the tab just is not remembered */ } };
@@ -146,7 +244,8 @@ function SurveysPage({ st, user, accounts, openAccount }) {
       </div>
       <div role="tabpanel" id="sv-panel" aria-labelledby={`sv-tab-${tab}`} className="sv-stack">
         {tab === "overview" && <SurveysOverview m={m} openAccount={openAccount} />}
-        {tab === "responses" && <div data-sv-responses className="sv-note">Responses will appear here.</div>}
+        {tab === "responses" && (m.state === "ok" ? <SurveysResponses surveys={st.surveys} accountsById={m.byId} openAccount={openAccount} />
+          : <div data-sv-responses className="sv-note">{m.state === "failed" ? "Survey data could not be loaded. Reload the page, or try again in a moment. Nothing has been lost." : "No survey responses yet. Send a survey from an account, or import past answers, and the results will show here."}</div>)}
         {tab === "reports" && <div data-sv-reports className="sv-note">Reports will appear here.</div>}
       </div>
     </div>);
