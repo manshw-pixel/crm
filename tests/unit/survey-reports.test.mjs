@@ -163,6 +163,7 @@ test("followUpStats keeps young open tasks out of the denominator", () => {
   const open = o => task({ status: "Open", doneAt: null, ...o });
   const young = followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-20");
   assert.equal(young.total, 0); assert.equal(young.open, 1); assert.equal(young.rate, null);
+  assert.equal(young.byCsm[0].open, 1); assert.equal(young.byCsm[0].total, 0);
   assert.equal(followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-27").total, 0, "7 days old can still be on time");
   const old = followUpStats(S, [open({ createdAt: "2026-03-20" })], "2026-03-28");
   assert.equal(old.total, 1); assert.equal(old.onTime, 0); assert.equal(old.open, 1); assert.equal(old.rate, 0);

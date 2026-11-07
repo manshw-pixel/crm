@@ -95,16 +95,15 @@ export function followUpStats(surveys, tasks, today) {
     const q = questionsOf(s).find(x => x.id === t.questionId);
     if (!q || q.type !== "nps" || !isDetractor((s.answers || {})[q.id])) continue;
     const isDone = t.status === "Done";
-    if (!isDone) open++;
-    if (!isDone && nowNum - dayNum(t.createdAt) <= 7) continue;
-    const gap = dayNum(t.doneAt) - dayNum(t.createdAt);
-    const ok = isDone && gap >= 0 && gap <= 7;
     const csm = String(t.owner || "").trim() || "Unassigned";
     if (!groups.has(csm)) groups.set(csm, { csm, total: 0, onTime: 0, open: 0 });
     const g = groups.get(csm);
+    if (!isDone) { open++; g.open++; }
+    if (!isDone && nowNum - dayNum(t.createdAt) <= 7) continue;
+    const gap = dayNum(t.doneAt) - dayNum(t.createdAt);
+    const ok = isDone && gap >= 0 && gap <= 7;
     total++; g.total++;
     if (ok) { onTime++; g.onTime++; }
-    if (!isDone) g.open++;
   }
   const rate = (a, b) => (b ? Math.round((a / b) * 100) : null);
   return {

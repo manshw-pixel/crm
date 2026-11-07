@@ -161,11 +161,12 @@ export const scenarios = [
       await search.fill(ACCT(runId));
       const [dl] = await Promise.all([page.waitForEvent("download", { timeout: 20000 }), page.getByRole("button", { name: "Export CSV" }).click()]);
       const csv = fs.readFileSync(await dl.path(), "utf8").replace(/^﻿/, "");
-      const head = csv.split("\n")[0].split(",");
+      const rows = parseCSV(csv);
+      const head = rows[0];
       for (const c of ["Survey NPS", "Survey NPS responses", "Last survey sent", "Last survey answered"]) assert.ok(head.includes(c), `column ${c}`);
-      const line = csv.split("\n").find(l => l.includes(ACCT(runId)));
-      assert.ok(line, "this run's account is in the export");
-      const answered = line.split(",")[head.indexOf("Last survey answered")];
+      const row = rows.find(r => r.some(c => c.includes(ACCT(runId))));
+      assert.ok(row, "this run's account is in the export");
+      const answered = row[head.indexOf("Last survey answered")];
       assert.match(answered || "", /\d/, "last-answered date filled in");
     } },
 
