@@ -31,6 +31,9 @@ async function open(script, width = 1280) {
   const r = await launch(script);
   await r.page.setViewportSize({ width, height: 900 });
   await r.page.waitForSelector('nav[aria-label="Main"] button[title="Dashboard"]');
+  // <main> has transition-all, so after shrinking from the 1280 launch size its desktop margin slides
+  // away over 150ms. Widths read during the slide are not the phone layout: wait for it to land.
+  if (width < 1024) await r.page.waitForFunction(() => document.querySelector("main[data-main]").getBoundingClientRect().left === 0);
   // the sidebar is a drawer on a phone, so open the page with its number key (6 for an admin)
   if (await nav(r.page, "Surveys").count()) await r.page.keyboard.press("6");
   return r;
@@ -396,5 +399,28 @@ test("reports: no sideways page scroll at 390px, with comparison and role split 
     await page.check("[data-sv-split]");
     const w = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, win: window.innerWidth }));
     assert(w.doc <= w.win, "page scrolls sideways: " + JSON.stringify(w));
+  } finally { await browser.close(); }
+});
+
+test("surveys page: long names and text stay inside a 390px page, on every tab", async () => {
+  const L = "Averylongunbrokenname".repeat(5);
+  const LT = { ...TPL, name: L, questions: [{ id: "nps", type: "nps", text: L }, { id: "reason", type: "text", text: L }, { id: "pick", type: "multi", text: L, options: [L, "SSO"] }, { id: "val", type: "rating", scale: 10, text: L }] };
+  const accts = [seedAccount({ id: "a1", name: L, csm: L, tier: L })];
+  const list = [0, 1, 2].map(i => ({ ...sv("x" + i, "a1", "c" + i, L, "2026-03-05", `2026-03-0${i + 6}`, 2, L), contact_role: L, template_snapshot: LT,
+    survey_answers: [{ question_id: "nps", value_num: 2 }, { question_id: "reason", value_text: L }, { question_id: "pick", value_choices: [L] }, { question_id: "val", value_num: 7 }] }));
+  const tasks = list.map((s, i) => T({ id: "k" + i, surveyId: s.id, owner: L, due: "2030-01-01", createdAt: "2026-03-07T00:00:00Z" }));
+  const script = `window.__seedRows = { accounts: ${rows(accts)}, contacts: [], activities: [], tasks: ${rows(tasks)}, opportunities: [], team: [],
+    settings: [], surveys: ${JSON.stringify(list)}, profiles: [{ id: "u1", org_id: "org-a", name: "Test User", role: "admin" }] };`;
+  const { page, browser } = await open(script, 390);
+  const fits = async tab => { const w = await page.evaluate(() => ({ doc: document.documentElement.scrollWidth, win: window.innerWidth })); assert(w.doc <= w.win, tab + " scrolls sideways: " + JSON.stringify(w)); };
+  try {
+    await page.waitForSelector("[data-sv-awaiting-row]");
+    await fits("overview");
+    await page.click('[data-sv-tab="responses"]'); await page.waitForSelector("[data-sv-resp-row]");
+    await fits("responses");
+    await page.click('[data-sv-tab="reports"]'); await page.waitForSelector("[data-sv-question]");
+    await page.fill('[data-sv-filter="from"]', "2026-01-01"); await page.fill('[data-sv-filter="to"]', "2026-12-31"); await page.check("[data-sv-split]");
+    await page.waitForSelector("[data-sv-role]");
+    await fits("reports");
   } finally { await browser.close(); }
 });
