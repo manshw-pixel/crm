@@ -104,6 +104,61 @@ export function followUpStats(surveys, tasks) {
   };
 }
 
+// Per-CSM rows for the Overview. `win` ({ start: "YYYY-MM-DD" } of a campaign window, as npsByYear
+// reports it) picks the campaign; without it the latest campaign with any NPS activity is used.
+// Sent counts only emailed surveys; follow-up is per task owner and, like the KPI card, all-time.
+export function surveyStatsByCsm(surveys, accountsById, tasks, win) {
+  const accts = accountsById || {};
+  const csmOf = s => String((accts[s.accountId] || {}).csm || "").trim() || "Unassigned";
+  const list = surveys || [];
+  let start = win && win.start;
+  if (!start) {
+    const all = npsByYear(list, 3);
+    start = all.length ? all[all.length - 1].start : "";
+  }
+  const month = start ? +start.slice(5, 7) : 3;
+  const groups = new Map();
+  for (const s of list) {
+    const k = csmOf(s);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(s);
+  }
+  const fu = new Map(followUpStats(list, tasks).byCsm.map(g => [g.csm, g]));
+  const rows = new Map();
+  const blankRow = csm => ({ csm, sent: 0, answered: 0, rate: null, nps: null, n: 0, followUp: { total: 0, onTime: 0, rate: null } });
+  for (const [csm, ss] of groups) {
+    const w = npsByYear(ss, month).find(r => r.start === start);
+    if (!w) continue;
+    rows.set(csm, { csm, sent: w.sent, answered: w.submitted, rate: w.responseRate, nps: w.nps, n: w.n, followUp: { total: 0, onTime: 0, rate: null } });
+  }
+  for (const [csm, g] of fu) {
+    if (!rows.has(csm)) rows.set(csm, blankRow(csm));
+    rows.get(csm).followUp = { total: g.total, onTime: g.onTime, rate: g.rate };
+  }
+  return [...rows.values()].sort((a, b) => (a.csm === "Unassigned" ? 1 : b.csm === "Unassigned" ? -1 : a.csm.localeCompare(b.csm)));
+}
+
+// Open follow-up tasks tied to an answered NPS question, oldest first, with the score and the
+// first free-text answer on the same survey (the "why" comment), if any.
+export function detractorsAwaiting(surveys, tasks) {
+  const byId = new Map((surveys || []).map(s => [s.id, s]));
+  const out = [];
+  for (const t of tasks || []) {
+    if (!t || t.source !== "survey" || t.status === "Done") continue;
+    const s = byId.get(t.surveyId);
+    if (!s || !s.submittedAt) continue;
+    const qs = questionsOf(s);
+    const q = qs.find(x => x.id === t.questionId);
+    if (!q || q.type !== "nps") continue;
+    const answers = s.answers || {};
+    const score = answers[q.id];
+    if (!Number.isInteger(score)) continue;
+    const tq = qs.find(x => x.type === "text" && !blank(answers[x.id]));
+    out.push({ survey: s, task: t, score, comment: tq ? String(answers[tq.id]) : "" });
+  }
+  return out.sort((a, b) => String(a.task.createdAt || "").localeCompare(String(b.task.createdAt || "")));
+}
+
 export function questionResults(surveys, templateId) {
   const list = (surveys || []).filter(s => s.templateId === templateId);
   const order = [];

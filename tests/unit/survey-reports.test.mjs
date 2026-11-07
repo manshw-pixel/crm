@@ -92,3 +92,50 @@ test("responsesCSV neutralises formulas", () => {
   assert.ok(!csv.includes('"=HYPERLINK'));
   assert.ok(csv.includes("'=HYPERLINK"));
 });
+
+// ---- Surveys page Overview helpers ----
+import { surveyStatsByCsm, detractorsAwaiting } from "../../src/lib/survey-reports.js";
+const ACC = { a1: { csm: "Priya" }, a2: { csm: "Ravi" }, a3: { csm: "" } };
+const WIN = { start: "2026-03-01" };
+test("surveyStatsByCsm groups by account CSM, blank is Unassigned, imported not counted as sent", () => {
+  const L = [
+    sv({ id: "1", accountId: "a1", contactId: "c1", submittedAt: "2026-03-06", answers: { nps: 10 } }),
+    sv({ id: "2", accountId: "a1", contactId: "c2" }),
+    sv({ id: "3", accountId: "a1", contactId: "c3", source: "imported", submittedAt: "2026-03-07", answers: { nps: 2 } }),
+    sv({ id: "4", accountId: "a2", contactId: "c4", submittedAt: "2026-03-08", answers: { nps: 3 } }),
+    sv({ id: "5", accountId: "a3", contactId: "c5" }),
+    sv({ id: "6", accountId: "a1", contactId: "c6", sentAt: "2025-03-05T00:00:00Z", submittedAt: "2025-03-06", answers: { nps: 9 } }),
+  ];
+  const r = surveyStatsByCsm(L, ACC, [], WIN);
+  assert.deepEqual(r.map(x => x.csm), ["Priya", "Ravi", "Unassigned"]);
+  const p = r[0];
+  assert.equal(p.sent, 2); assert.equal(p.answered, 1); assert.equal(p.rate, 50);
+  assert.equal(p.n, 2); assert.equal(p.nps, 0); // 10 promoter, 2 detractor; the 2025 answer is another campaign
+  assert.equal(r[1].nps, -100); assert.equal(r[1].rate, 100);
+  assert.equal(r[2].sent, 1); assert.equal(r[2].rate, 0); assert.equal(r[2].nps, null);
+});
+test("surveyStatsByCsm defaults to the latest campaign and carries follow-up per owner", () => {
+  const L = [sv({ id: "S", accountId: "a1", submittedAt: "2026-03-09", answers: { nps: 2 } })];
+  const r = surveyStatsByCsm(L, ACC, [task({ owner: "Priya" }), task({ owner: "Priya", status: "Open", doneAt: null })]);
+  assert.equal(r.length, 1);
+  assert.deepEqual(r[0].followUp, { total: 2, onTime: 1, rate: 50 });
+});
+test("surveyStatsByCsm keeps a CSM who only owns follow-ups", () => {
+  const L = [sv({ id: "S", accountId: "a1", submittedAt: "2026-03-09", answers: { nps: 2 } })];
+  const r = surveyStatsByCsm(L, ACC, [task({ owner: "Zed" })], WIN);
+  assert.deepEqual(r.map(x => x.csm), ["Priya", "Zed"]);
+  assert.equal(r[1].sent, 0); assert.equal(r[1].followUp.total, 1);
+});
+test("surveyStatsByCsm on nothing", () => {
+  assert.deepEqual(surveyStatsByCsm([], {}, []), []);
+  assert.deepEqual(surveyStatsByCsm(null, null, null), []);
+});
+test("detractorsAwaiting lists open NPS follow-ups with score and comment", () => {
+  const t = { questions: [{ id: "nps", type: "nps", text: "R" }, { id: "why", type: "text", text: "Why" }] };
+  const L = [sv({ id: "S", template: t, submittedAt: "2026-03-09", answers: { nps: 2, why: "Slow support" } }), sv({ id: "T", submittedAt: "2026-03-09", answers: { nps: 4 } })];
+  const open = task({ id: "t1", status: "Open", doneAt: null });
+  const r = detractorsAwaiting(L, [open, task({ id: "t2" }), task({ id: "t3", source: "manual", status: "Open" }), task({ id: "t4", surveyId: "T", status: "In progress", doneAt: null }), task({ id: "t5", surveyId: "nope", status: "Open" })]);
+  assert.deepEqual(r.map(x => [x.task.id, x.score, x.comment]), [["t1", 2, "Slow support"], ["t4", 4, ""]]);
+  assert.equal(r[0].survey.id, "S");
+  assert.deepEqual(detractorsAwaiting(null, null), []);
+});

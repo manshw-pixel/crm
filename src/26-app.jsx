@@ -9,6 +9,7 @@ const NAV_ICONS = {
   Renewals: <NavIcon><rect x="3" y="4" width="18" height="18" rx="2" /><line x1="16" y1="2" x2="16" y2="6" /><line x1="8" y1="2" x2="8" y2="6" /><line x1="3" y1="10" x2="21" y2="10" /></NavIcon>,
   Settings: <NavIcon><line x1="4" y1="21" x2="4" y2="14" /><line x1="4" y1="10" x2="4" y2="3" /><line x1="12" y1="21" x2="12" y2="12" /><line x1="12" y1="8" x2="12" y2="3" /><line x1="20" y1="21" x2="20" y2="16" /><line x1="20" y1="12" x2="20" y2="3" /><line x1="1" y1="14" x2="7" y2="14" /><line x1="9" y1="8" x2="15" y2="8" /><line x1="17" y1="16" x2="23" y2="16" /></NavIcon>,
   Implementation: <NavIcon><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" /></NavIcon>,
+  Surveys: <NavIcon><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" /><line x1="8" y1="9" x2="16" y2="9" /><line x1="8" y1="13" x2="13" y2="13" /></NavIcon>,
   Finance: <NavIcon><rect x="2" y="5" width="20" height="14" rx="2" /><line x1="2" y1="10" x2="22" y2="10" /><line x1="6" y1="15" x2="10" y2="15" /></NavIcon>,
 };
 // Bell alerts for implementation projects, derived from project history (no store). Same 30-day
@@ -69,9 +70,9 @@ const isSurveyAlert = a => a.id.startsWith("survey-");
 const alertOrder = (x, y) => (isSurveyAlert(y) - isSurveyAlert(x)) || (isSurveyAlert(x) ? y.days - x.days : x.days - y.days);
 
 // Sidebar views per role. Implementation roles get only the Implementation view and
-// Accounts (read-only): no Settings, no Finance, no Dashboard/Tasks/Renewals.
+// Accounts (read-only): no Settings, no Surveys, no Finance, no Dashboard/Tasks/Renewals.
 const viewsFor = user => isImplRole(user) ? ["Implementation", "Accounts"]
-  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings"));
+  : (user.role === "admin" ? VIEWS : VIEWS.filter(v => v !== "Settings" && v !== "Surveys"));
 /* --------------------------- command palette --------------------------- */
 /* case-insensitive subsequence match: "nrw" matches "Northwind" */
 function subseqMatch(q, text) {
@@ -146,7 +147,7 @@ function SyncStatus({ quietSaved }) {
     title="Your last change could not be saved and was rolled back. Check your connection and try again.">
     Not saved</span>;
 }
-const VIEWS = ["Dashboard", "Implementation", "Tasks", "Accounts", "Renewals", "Finance", "Settings"];
+const VIEWS = ["Dashboard", "Implementation", "Tasks", "Accounts", "Renewals", "Surveys", "Finance", "Settings"];
 // Catches render/lifecycle errors in the view area only, so a crash costs one screen
 // instead of the session. Does NOT catch errors in event handlers or async callbacks --
 // those already route through the try/catch blocks and the error toast.
@@ -606,6 +607,7 @@ function App({ user, onBackToClients }) {
           ? <AccountDetail st={st} scored={scored} id={acctId} dispatch={dispatch} back={() => setAcctId(null)} user={user} team={st.team} openAccount={openAccount} initialForm={pendingForm} clearInitialForm={() => setPendingForm(null)} openProject={openProject} orgName={orgName} />
           : <AccountList scored={visible} allAccounts={st.accounts} openAccount={openAccount} searchRef={searchRef} dispatch={dispatch} team={st.team} initialFilter={acctFilter} user={user} settings={st.settings} contacts={st.contacts} surveys={st.surveys} />)}
         {view === "Renewals" && !isImplRole(user) && <Renewals scored={active} openAccount={openAccount} dispatch={dispatch} allBook={scored} rates={st.settings.rates} snapshots={st.settings.snapshots || []} tasks={st.tasks} user={user} />}
+        {view === "Surveys" && user.role === "admin" && <SurveysPage st={st} user={user} accounts={scored} openAccount={openAccount} />}
         {view === "Finance" && !isImplRole(user) && <FinancePage st={st} user={user} openAccount={openAccount} />}
         {view === "Settings" && user.role === "admin" && <Settings st={st} dispatch={dispatch} user={user} scored={scored} theme={theme} feed={feed} orgName={orgName} />}
         </>}

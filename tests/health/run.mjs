@@ -102,6 +102,8 @@ import "./accounts-stage3.test.mjs";
 import "./account-detail-stage4.test.mjs";
 import "./implementation-stage5.test.mjs";
 import "./survey-page.test.mjs";
+import "./surveys-page.test.mjs";
+import "./number-keys.test.mjs";
 
 // run.mjs is the CLI entry point (not intended to be imported by other modules — test
 // files import test/assert from framework.mjs instead, see comment above), so the
