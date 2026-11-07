@@ -74,7 +74,7 @@ function useWindowedRows(items, overscan = WINDOW_OVERSCAN) {
   return { scrollRef, rowRef, windowed: true, ...windowRange(total, rowHeight, metrics.scrollTop, metrics.viewportH, overscan) };
 }
 
-function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings, contacts = [] }) {
+function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, team, initialFilter, user, settings, contacts = [], surveys }) {
   const [adding, setAdding] = useState(false);
   const [importContacts, setImportContacts] = useState(false);
   const [showChurned, setShowChurned] = useState(false);
@@ -220,7 +220,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
           {churnedCount > 0 && !showChurned ? ` · ${churnedCount} churned hidden` : ""}</p>
         {canEdit && <Btn onClick={() => fileRef.current && fileRef.current.click()}>Import CSV</Btn>}
         {canEdit && <Btn data-open-contacts-import onClick={() => setImportContacts(true)}>Import contacts</Btn>}
-        <Btn onClick={() => exportCSV(rows, settings && settings.customFields)}>Export CSV</Btn>
+        <Btn onClick={() => exportCSV(rows, settings && settings.customFields, surveys)}>Export CSV</Btn>
         {canEdit && <Btn kind="primary" onClick={() => setAdding(a => !a)}>+ New account</Btn>}
         <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden"
           onChange={e => { const f = e.target.files[0]; e.target.value = ""; if (f) importAccountsCSV(f, allAccounts, dispatch, setImportMsg, user, settings && settings.customFields); }} />
@@ -343,7 +343,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                     {/* Account cell: avatar + name + industry line. Name and industry both truncate:
                         a wrapped row is a taller row, which would break the single measured row
                         height windowing depends on. */}
-                    <td className="acct-name-cell max-w-[160px] px-2 py-1.5" title={a.name}>
+                    <td className="acct-name-cell max-w-[148px] px-2 py-1.5" title={a.name}>
                       <span className="flex min-w-0 items-center gap-2.5">
                         {a._sub && <span className="acct-meta shrink-0"><span aria-hidden="true">↳</span><span className="sr-only">Sub-account: </span></span>}
                         <span aria-hidden="true" data-avatar className="acct-av" data-av={avatarSlot(a.id)}>{initialsOf(a.name)}</span>
@@ -374,7 +374,7 @@ function AccountList({ scored, allAccounts, openAccount, searchRef, dispatch, te
                               {a._ret.delta > 0 ? "▲" : "▼"} {a._ret.pct === null ? "—" : `${a._ret.pct > 0 ? "+" : ""}${a._ret.pct.toFixed(1)}%`}
                             </span>}
                     </td>
-                    <td className="px-2"><span className="block acct-label">{fmtDate(a.renewalDate)}</span><span className="mt-0.5 inline-block"><DaysChip days={d} /></span></td>
+                    <td className="px-2"><span className="block tabular-nums acct-label">{fmtDate(a.renewalDate)}</span><span className="mt-0.5 inline-block"><DaysChip days={d} /></span></td>
                     {qbrDue && <td className="px-2">{(() => { const qd = a.nextQbrDate ? daysUntil(a.nextQbrDate) : null;
                       return qd === null ? <span className="text-xs text-slate-500">—</span>
                         : <span className={`text-xs font-semibold ${qd < 0 ? "text-rose-600" : "text-amber-600"}`}>{fmtDate(a.nextQbrDate)} · {qd < 0 ? `${-qd}d overdue` : `in ${qd}d`}</span>; })()}</td>}

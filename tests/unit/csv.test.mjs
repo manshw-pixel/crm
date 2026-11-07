@@ -42,3 +42,39 @@ test("custom values are csvCell-escaped: formula guard, quoting, numerics", () =
   const tail = ',"\'=HYPERLINK(""x"")","a,b","-5"';
   assert.ok(line.endsWith(tail), "custom cells must be csvCell-escaped (guard, quoting, numeric): " + line);
 });
+
+test("survey columns stay out of the template", () => {
+  const plain = lib.accountsCSVText([]).split("\n")[0];
+  assert.ok(!plain.includes("Survey"), plain);
+  assert.equal(lib.accountsCSVText([], [], undefined).split("\n")[0], plain);
+});
+
+test("survey columns: values, blank NPS when not enough, n still shown", async () => {
+  const { surveyDatesByAccount } = await import("../../src/lib/survey-reports.js");
+  const mk = (id, surveyNps) => ({ id, name: id, arr: 0, arrUSD: 0, renewalDate: "2027-01-01", surveyNps });
+  const rows = [mk("a", { nps: 40, n: 6, enough: true }), mk("b", { nps: 100, n: 1, enough: false }), mk("c", undefined)];
+  const cols = surveyDatesByAccount([{ accountId: "a", source: "sent", sentAt: "2026-10-01T10:00:00Z", submittedAt: "2026-10-03T00:00:00Z" },
+    { accountId: "a", source: "sent", sentAt: "2026-09-01T00:00:00Z" }]);
+  const [head, ...lines] = lib.accountsCSVText(rows, [{ id: "cf", label: "Zed", type: "text" }], cols).split("\n");
+  const h = head.split(",");
+  const i = h.indexOf('"Survey NPS"');
+  assert.equal(h.slice(i, i + 5).join(","), '"Survey NPS","Survey NPS responses","Last survey sent","Last survey answered","Zed"');
+  assert.equal(h[i - 1], "approvedRoi");
+  const tail = l => l.split(",").slice(i, i + 4).join(",");
+  assert.equal(tail(lines[0]), '"40","6","2026-10-01","2026-10-03"');
+  assert.equal(tail(lines[1]), '"","1","",""');
+  assert.equal(tail(lines[2]), '"","","",""');
+});
+
+test("account CSV import ignores the survey columns", async () => {
+  const rows = lib.parseCSV(lib.accountsCSVText([{ id: "a", name: "Acme", arr: 5, arrUSD: 5, renewalDate: "2027-01-01", surveyNps: { nps: 40, n: 6, enough: true } }], [], new Map()));
+  const { customImportColumns } = lib;
+  assert.deepEqual(customImportColumns(rows[0], []), []);
+  assert.deepEqual(customImportColumns(rows[0], [{ id: "cf", label: "Zed", type: "text" }]), []);
+});
+
+test("a custom field named like a survey column is never imported into it", () => {
+  const labels = ["Survey NPS", "Survey NPS responses", "Last survey sent", "Last survey answered"];
+  const defs = labels.map((label, i) => ({ id: "cf" + i, label, type: "text" }));
+  assert.deepEqual(lib.customImportColumns(labels, defs), []);
+});
